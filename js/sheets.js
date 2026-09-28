@@ -1,8 +1,7 @@
 /* ARK Mobile — bottom sheets: pairing, sync & settings, and the quick logs. */
 import {
   L, state, view, emit, changed, esc, icon, today, shiftDay, fmt1, fmtDay, fmtMins, ago,
-  openSheet, closeSheet, topSheet, toast, haptic, pair, unpair, syncNow, syncLabel, hubBase, syncState, pcAsOf, pcAgeMin,
-} from './core.js';
+  openSheet, closeSheet, topSheet, toast, haptic, pair, unpair, syncNow, syncLabel, hubBase, syncState, pcAsOf, pcAgeMin, onPublicCopy } from './core.js';
 import { vitalsCard, pillarColor, journalRow } from './views.js';
 import { weighList, practiceList, appearanceChips } from './more.js';
 
@@ -12,7 +11,7 @@ export function pairSheet() {
   pairMsg = '';
   openSheet({
     id: 'pair', title: 'Connect to your PC',
-    render: () => `
+    render: () => onPublicCopy() ? publicPair() : `
       <ol class="steps">
         <li><span>On your PC, open ARK and click <b>📱 Phone</b> in the top bar.</span></li>
         <li><span>Type the 6-digit code it shows. Codes last 10 minutes.</span></li>
@@ -27,6 +26,23 @@ export function pairSheet() {
       </details>`,
   });
   setTimeout(() => document.getElementById('pair-code')?.focus(), 450);
+}
+
+/* The GitHub copy (https) reaches the PC over https:7789, which needs ARK's certificate trusted once. */
+function publicPair() {
+  const host = state.hub ? state.hub.replace(/^https?:\/\//, '').replace(/[:/].*$/, '') : '';
+  const ca = host ? 'http://' + host + ':7788/ark-ca.crt' : null;
+  return `<ol class="steps">
+      <li><span>Your PC's name — shown in ARK on the PC under <b>📱 Phone</b> (like <i>mypc.local</i>):</span></li></ol>
+    <input class="inp" id="pair-hub" value="${esc(host)}" placeholder="yourpc.local" autocapitalize="off" autocorrect="off" spellcheck="false" style="margin-bottom:12px">
+    <ol class="steps" start="2">
+      <li><span>Once per iPhone: ${ca ? `<a href="${esc(ca)}">download ARK's certificate</a>` : "download ARK's certificate (enter the name first)"}, then Settings → <b>Profile Downloaded</b> → Install, and Settings → General → About → <b>Certificate Trust Settings</b> → turn on "ARK local certificate".</span></li>
+      <li><span>Type the 6-digit code from <b>📱 Phone</b> on the PC. Be on home Wi-Fi with ARK open.</span></li>
+    </ol>
+    <div class="code"><input id="pair-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="••••••" aria-label="Pairing code"></div>
+    ${pairMsg ? `<p style="color:var(--red);text-align:center;font-size:.9rem;margin:-6px 0 14px;line-height:1.45">${esc(pairMsg)}</p>` : ''}
+    <button class="btn btn-prominent block" data-act="pair-go">Connect</button>
+    <p class="sub" style="text-align:center;margin-top:12px;line-height:1.5">Easiest: scan the QR code in 📱 Phone on the PC — it fills in the name.</p>`;
 }
 
 /* ── sync & settings ── */
@@ -167,6 +183,7 @@ export const actions = {
     const hub = document.getElementById('pair-hub')?.value.trim();
     if (code.replace(/\D/g, '').length !== 6) { pairMsg = 'Enter the 6 digits shown on your PC.'; topSheet()?.refresh(); return; }
     const r = await pair(code, hub && hub !== hubBase() ? hub : null);
+    if (!r.ok) topSheet()?.refresh();
     if (r.ok) { closeSheet(topSheet()); haptic(); toast('Connected to ARK ✓'); }
     else { pairMsg = r.msg; topSheet()?.refresh(); }
   },

@@ -231,8 +231,17 @@ export async function checkCa() {
 }
 
 /** Exchange the 6-digit code shown on the PC for this phone's token. */
+/** What the person typed as the PC's address → the hub URL. On the GitHub copy it is always https:7789. */
+export function hubFrom(input) {
+  const s = String(input || '').trim(); if (!s) return null;
+  if (onPublicCopy()) {
+    const host = s.replace(/^[a-z]+:\/\//i, '').replace(/[:/].*$/, '');
+    return host ? 'https://' + (/\./.test(host) ? host : host + '.local') + ':7789' : null;
+  }
+  return /^https?:\/\//.test(s) ? s.replace(/\/+$/, '') : 'http://' + s.replace(/\/+$/, '');
+}
 export async function pair(code, hub) {
-  if (hub) state.hub = /^https?:\/\//.test(hub) ? hub : 'http://' + hub;
+  if (hub) state.hub = hubFrom(hub) || state.hub;
   try {
     const { status, json } = await post('/api/pair', { code: String(code).replace(/\D/g, ''), device: state.device, name: state.deviceName }, false);
     if (status === 200 && json && json.token) {
@@ -242,7 +251,9 @@ export async function pair(code, hub) {
     }
     return { ok: false, msg: status === 429 ? 'Too many tries — make a new code on the PC.' : 'That code did not match. Codes last 10 minutes.' };
   } catch (e) {
-    return { ok: false, msg: 'Could not reach ARK at ' + hubBase() + '. Is the desktop app open?' };
+    return { ok: false, msg: onPublicCopy()
+      ? 'Could not reach your PC securely at ' + hubBase() + '. Install ARK\'s certificate (step 1), be on home Wi-Fi, and keep ARK open on the PC.'
+      : 'Could not reach ARK at ' + hubBase() + '. Is the desktop app open?' };
   }
 }
 export function unpair() {

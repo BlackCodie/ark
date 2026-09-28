@@ -175,11 +175,10 @@ document.addEventListener('keydown', e => {
   const m = /[#&]pair=([a-f0-9]{16,128})/i.exec(location.hash);
   const dv = /[#&]dev=([\w-]{4,64})/.exec(location.hash);
   const hb = /[#&]hub=([^&]+)/.exec(location.hash);
-  if (m) {
-    state.token = m[1]; if (dv) state.device = dv[1];
-    if (hb) { try { const u = new URL(decodeURIComponent(hb[1])); if (/^https?:$/.test(u.protocol)) state.hub = u.origin; } catch (e) { /* ignore a bad address */ } }
-    history.replaceState(null, '', location.pathname + location.search); changed({ now: true });
-  }
+  // #hub= alone comes from the PC's QR code for the GitHub copy: it only names the PC.
+  if (hb) { try { const u = new URL(decodeURIComponent(hb[1])); if (/^https?:$/.test(u.protocol)) state.hub = u.origin; } catch (e) { /* ignore a bad address */ } }
+  if (m) { state.token = m[1]; if (dv) state.device = dv[1]; }
+  if (m || hb) { history.replaceState(null, '', location.pathname + location.search); changed({ now: true }); }
 })();
 
 /* ── notifications open the tab they are about (?tab= on a cold start, a message when running) ── */
