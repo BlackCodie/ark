@@ -6,7 +6,7 @@
    and says when it is waiting for a fresh one.
    ══════════════════════════════════════════════════════════════════════ */
 import {
-  L, state, view, emit, changed, esc, icon, today, shiftDay, fmt1, fmtMins, fmtDay, daysBetween, homeMove, anywhere, caState, checkCa, onPublicCopy,
+  L, state, view, emit, changed, esc, icon, today, shiftDay, fmt1, fmtMins, fmtDay, daysBetween, homeMove, anywhere, caState, checkCa, onPublicCopy, pair,
   ringsSvg, ringSvg, sparkSvg, barsSvg, syncLabel, paired, haptic, toast, scheduleSync,
 } from './core.js';
 import { staleNote } from './more.js';
@@ -76,7 +76,43 @@ export function syncButton() {
 const longDate = () => new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
 
 /* ══════════════ TODAY ══════════════ */
+/* Opened from the PC's QR code: link this phone by itself. On the GitHub copy the first try needs the
+   PC's certificate trusted (iPhone's rule for a secure local connection), so until then the screen
+   shows that one step and keeps retrying every 3 s — the moment it is trusted, it connects. */
+let autoTm = null, autoMsg = '';
+function autoConnect() {
+  if (autoTm || !state.qrCode || state.token) return;
+  const tryOnce = async () => {
+    const q = state.qrCode;
+    if (!q || state.token) { clearInterval(autoTm); autoTm = null; return; }
+    if (Date.now() - q.at > 30 * 60e3) { autoMsg = 'This QR code has expired — scan the new one on your PC.'; state.qrCode = null; clearInterval(autoTm); autoTm = null; changed(); return; }
+    const r = await pair(q.code, null);
+    if (r.ok) { state.qrCode = null; clearInterval(autoTm); autoTm = null; toast('Connected to ARK ✓'); return; }
+    if (!/reach/.test(r.msg || '')) { autoMsg = 'That QR code was already used or expired — scan the new one on your PC.'; state.qrCode = null; clearInterval(autoTm); autoTm = null; }
+    else autoMsg = 'waiting';
+    changed();
+  };
+  autoTm = setInterval(tryOnce, 3000); tryOnce();
+}
+function connectScreen() {
+  autoConnect();
+  const host = (state.hub || '').replace(/^https?:\/\//, '').replace(/[:/].*$/, '');
+  const needCert = onPublicCopy() && autoMsg === 'waiting';
+  return hdr('ARK', 'Connecting…', '') + `<section class="card glass" style="margin-top:6px">
+    <h2 style="margin:0 0 6px;font-size:1.3rem">${needCert ? 'One step on this iPhone' : 'Linking to your PC…'}</h2>
+    ${needCert ? `<p class="muted" style="margin:0 0 12px;line-height:1.5">iPhone only lets an app talk securely to your PC after you trust ARK's certificate — once, ever.</p>
+      <ol class="steps">
+        <li><span>Tap <b>Install certificate</b> → <b>Allow</b>.</span></li>
+        <li><span>Settings app → <b>Profile Downloaded</b> → <b>Install</b>.</span></li>
+        <li><span>Settings → General → About → <b>Certificate Trust Settings</b> → turn on <b>ARK local certificate</b>.</span></li>
+        <li><span>Come back — ARK connects by itself.</span></li>
+      </ol>
+      <a class="btn btn-prominent block" style="text-decoration:none" href="http://${esc(host)}:7788/ark-ca.crt">Install certificate</a>`
+    : `<p class="muted" style="margin:0;line-height:1.5">${autoMsg && autoMsg !== 'waiting' ? esc(autoMsg) : 'Be on home Wi-Fi with ARK open on the PC.'}</p>`}
+  </section>`;
+}
 function onboarding() {
+  if (state.qrCode || (autoMsg && autoMsg !== 'waiting')) return connectScreen();
   return hdr('ARK', 'Welcome', '')
     + `<section class="card glass" style="margin-top:6px">
       <div style="width:56px;height:56px;border-radius:17px;display:grid;place-items:center;margin-bottom:14px;color:#03130d;
@@ -85,10 +121,10 @@ function onboarding() {
       <p class="muted" style="margin:0 0 16px;line-height:1.5;font-size:.95rem">Your data lives on your PC. This app is a
         pocket window into it: log workouts, habits, weigh-ins and practice here, and they land in ARK the next time the two can reach each other — even if you logged offline at the gym.</p>
       <ol class="steps">
-        <li><span>On your PC, open ARK and click <b>📱 Phone</b> in the top bar.</span></li>
-        <li><span>Tap <b>Connect</b> below and enter the 6-digit code it shows.</span></li>
+        <li><span>On your PC, open ARK and click <b>📱 Phone</b>.</span></li>
+        <li><span>Scan the QR code with the iPhone camera. That's it.</span></li>
       </ol>
-      <button class="btn btn-prominent block" data-act="pair-sheet">Connect</button>
+      <button class="btn btn-glass block" data-act="pair-sheet">Enter a code instead</button>
     </section>`;
 }
 

@@ -178,7 +178,10 @@ document.addEventListener('keydown', e => {
   // #hub= alone comes from the PC's QR code for the GitHub copy: it only names the PC.
   if (hb) { try { const u = new URL(decodeURIComponent(hb[1])); if (/^https?:$/.test(u.protocol)) state.hub = u.origin; } catch (e) { /* ignore a bad address */ } }
   if (m) { state.token = m[1]; if (dv) state.device = dv[1]; }
-  if (m || hb) { history.replaceState(null, '', location.pathname + location.search); changed({ now: true }); }
+  // #code= comes from the one QR code on the PC: this app links itself with it (views.js autoConnect).
+  const cd = /[#&]code=(\d{6})/.exec(location.hash);
+  if (cd && !state.token) state.qrCode = { code: cd[1], at: Date.now() };
+  if (m || hb || cd) { history.replaceState(null, '', location.pathname + location.search); changed({ now: true }); }
 })();
 
 /* ── notifications open the tab they are about (?tab= on a cold start, a message when running) ── */
