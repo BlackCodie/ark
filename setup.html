@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Connect ARK</title>
+<style>
+  :root{color-scheme:dark}
+  body{margin:0;min-height:100dvh;font:16px/1.45 -apple-system,system-ui,sans-serif;color:#eef3f7;
+    background:radial-gradient(ellipse at 50% 0%,rgba(46,230,166,.16),transparent 60%),#07090d;
+    padding:calc(env(safe-area-inset-top) + 28px) 20px calc(env(safe-area-inset-bottom) + 28px)}
+  h1{font-size:1.7rem;margin:0 0 6px}
+  .sub{color:rgba(235,240,245,.6);font-size:.92rem}
+  .step{display:grid;grid-template-columns:34px 1fr;gap:12px;padding:16px;border-radius:18px;background:rgba(255,255,255,.06);margin-top:14px}
+  .n{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-weight:800;background:rgba(255,255,255,.12)}
+  .step.done .n{background:#30d158;color:#03130d}
+  .step.now{box-shadow:inset 0 0 0 1.5px #2ee6a6}
+  .step.wait{opacity:.45}
+  .t{font-weight:700;margin:4px 0 2px}
+  ol{margin:8px 0 0;padding-left:20px}
+  li{margin:6px 0}
+  .btn{display:block;text-align:center;margin-top:12px;padding:14px;border-radius:14px;background:#2ee6a6;color:#03130d;font-weight:700;text-decoration:none;border:0;font-size:1rem;width:100%}
+  .btn.sec{background:rgba(255,255,255,.12);color:#eef3f7}
+  .err{color:#ff6b5a;margin-top:10px}
+  b{color:#fff}
+</style>
+</head>
+<body>
+<h1>Connect ARK</h1>
+<div class="sub">One time. Afterwards ARK opens on this iPhone whenever you want — even with your PC off — and syncs by itself on your home Wi-Fi.</div>
+<div id="steps"></div>
+<script>
+/* One flow, from one QR code on the PC (http://<pc>.local:7788/setup.html#code=123456):
+   1. pair with the code in the link (no typing),
+   2. trust ARK's certificate — checked every 2 s, so the page moves on by itself,
+   3. open the app on GitHub (https, works offline) with the pairing carried over. */
+var KEY = 'ark-setup';
+var PUBLIC = 'https://blackcodie.github.io/ark/';
+var httpsBase = 'https://' + location.hostname + ':' + ((Number(location.port) || 80) + 1);
+var st = {}; try { st = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) {}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) {} }
+if (!st.device) { st.device = 'i' + Math.random().toString(36).slice(2, 12); save(); }
+var code = (/[#&]code=(\d{6})/.exec(location.hash) || [])[1] || '';
+var msg = '', trusted = false;
+
+function draw() {
+  var paired = !!st.token;
+  var s1 = '<div class="step ' + (paired ? 'done' : 'now') + '"><div class="n">' + (paired ? '✓' : '1') + '</div><div><div class="t">Link this iPhone</div>'
+    + (paired ? '<div class="sub">Linked.</div>' : '<div class="sub">' + (code ? 'Linking…' : 'Open this page from the QR code in ARK on your PC (📱 Phone).') + '</div>')
+    + (msg ? '<div class="err">' + msg + '</div>' : '') + '</div></div>';
+  var s2 = '<div class="step ' + (trusted ? 'done' : paired ? 'now' : 'wait') + '"><div class="n">' + (trusted ? '✓' : '2') + '</div><div><div class="t">Trust ARK\'s certificate</div>'
+    + (trusted ? '<div class="sub">Trusted.</div>' : '<ol>'
+      + '<li>Tap <b>Install certificate</b> below, then <b>Allow</b>.</li>'
+      + '<li>Open the <b>Settings</b> app → <b>Profile Downloaded</b> (at the top) → <b>Install</b> → Install.</li>'
+      + '<li>Settings → <b>General</b> → <b>About</b> → scroll to the bottom → <b>Certificate Trust Settings</b> → turn on <b>ARK local certificate</b> → Continue.</li>'
+      + '<li>Come back here — this page notices by itself.</li></ol>'
+      + (paired ? '<a class="btn" href="/ark-ca.crt">Install certificate</a>' : '')) + '</div></div>';
+  var s3 = '<div class="step ' + (trusted && paired ? 'now' : 'wait') + '"><div class="n">3</div><div><div class="t">Open ARK</div>'
+    + '<div class="sub">Then tap Share → <b>Add to Home Screen</b>. Delete any older ARK icon.</div>'
+    + (trusted && paired ? '<a class="btn" href="' + openUrl() + '">Open ARK</a>' : '') + '</div></div>';
+  document.getElementById('steps').innerHTML = s1 + s2 + s3;
+}
+function openUrl() {
+  return PUBLIC + '#pair=' + st.token + '&dev=' + encodeURIComponent(st.device) + '&hub=' + encodeURIComponent(httpsBase);
+}
+function pair() {
+  if (st.token || !code) return;
+  fetch('/api/pair', { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: code, device: st.device, name: 'iPhone' }) })
+    .then(function (r) { return r.json().then(function (j) { return { s: r.status, j: j }; }); })
+    .then(function (x) {
+      if (x.s === 200 && x.j && x.j.token) { st.token = x.j.token; save(); msg = ''; }
+      else msg = 'That QR code has expired or was already used — on the PC, open 📱 Phone again and scan the new one.';
+      draw();
+    }).catch(function () { msg = 'Could not reach ARK on your PC. Be on home Wi-Fi with ARK open.'; draw(); });
+}
+function check() {
+  fetch(httpsBase + '/api/ping', { cache: 'no-store' })
+    .then(function (r) { var was = trusted; trusted = r.ok; if (trusted !== was) draw(); })
+    .catch(function () { if (trusted) { trusted = false; draw(); } });
+}
+draw(); pair(); check();
+setInterval(check, 2000);
+document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
+</script>
+</body>
+</html>
