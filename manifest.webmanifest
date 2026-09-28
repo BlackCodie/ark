@@ -1,0 +1,16 @@
+{
+  "name": "ARK",
+  "short_name": "ARK",
+  "description": "Your ARK dashboard in your pocket — log workouts, habits, weigh-ins and practice; synced with ARK on your PC.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#020406",
+  "theme_color": "#020406",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

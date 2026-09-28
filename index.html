@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ARK">
+<meta name="theme-color" content="#020406">
+<meta name="color-scheme" content="dark">
+<meta name="format-detection" content="telephone=no">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+<title>ARK</title>
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="body.css">
+</head>
+<body data-tab="today">
+<div class="ambient" aria-hidden="true"><i class="o1"></i><i class="o2"></i><i class="o3"></i></div>
+<div id="edge-top" class="edge-top" aria-hidden="true"></div>
+<div id="edge-title" class="edge-title" aria-hidden="true"></div>
+<main id="view" class="view"></main>
+<nav id="tabbar" class="tabbar glass" role="tablist" aria-label="Sections"></nav>
+<div id="sheet-root"></div>
+<div id="toast" class="toast glass" role="status" aria-live="polite"></div>
+<noscript><p style="padding:40px;color:#fff">ARK needs JavaScript.</p></noscript>
+<script src="ark-logic.js"></script>
+<script src="body-data.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
