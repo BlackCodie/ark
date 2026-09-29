@@ -181,10 +181,13 @@ document.addEventListener('keydown', e => {
   const rl = /[#&]relay=([\w-]+)/.exec(location.hash);
   const rp = rl && L.relayUnpack(rl[1]);
   if (rp) {
-    state.relay = { repo: rp.r, token: rp.t, key: rp.k, sent: null, etag: null };
-    state.token = 'relay'; state.hub = null; state.qrCode = null; state.lastError = null;
-    history.replaceState(null, '', location.pathname + location.search); changed({ now: true });
-    setTimeout(() => { syncNow(); toast('Connected to ARK ✓'); }, 300);
+    const again = state.relay && state.relay.key === rp.k && state.relay.token === rp.t;
+    if (!again) {
+      state.relay = { repo: rp.r, token: rp.t, key: rp.k, sent: null, etag: null };
+      state.token = 'relay'; state.hub = null; state.qrCode = null; state.lastError = null;
+      changed({ now: true });
+      setTimeout(() => { syncNow(); toast('Connected to ARK ✓'); }, 300);
+    }
   }
   // #code= comes from the one QR code on the PC: this app links itself with it (views.js autoConnect).
   const cd = /[#&]code=(\d{6})/.exec(location.hash);
@@ -192,10 +195,27 @@ document.addEventListener('keydown', e => {
   if (m || hb || cd) { history.replaceState(null, '', location.pathname + location.search); changed({ now: true }); }
 })();
 
+/* ── the home-screen icon keeps the connection ──
+   iOS gives an app added to the Home Screen its own storage, empty — the pairing made in Safari does not
+   come along, so it asked for a code again. The only thing that does come along is the address it was
+   added from (or the manifest's start_url on newer iOS), so while connected, both carry #relay=. */
+function carryRelay() {
+  if (!state.relay) return;
+  const hash = '#relay=' + L.relayPack({ r: state.relay.repo, t: state.relay.token, k: state.relay.key });
+  if (location.hash !== hash) history.replaceState(null, '', location.pathname + location.search + hash);
+  const base = new URL('./', location.href).href;
+  const man = { name: 'ARK', short_name: 'ARK', start_url: base + hash, scope: base, display: 'standalone', orientation: 'portrait',
+    background_color: '#020406', theme_color: '#020406',
+    icons: [{ src: base + 'icons/icon-192.png', sizes: '192x192', type: 'image/png' }, { src: base + 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }] };
+  const link = document.querySelector('link[rel="manifest"]');
+  if (link) link.href = 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify(man));
+}
+carryRelay();
+
 /* ── notifications open the tab they are about (?tab= on a cold start, a message when running) ── */
 (function () {
   const m = /[?&]tab=([a-z]+)/.exec(location.search);
-  if (m && TABS.some(t => t[0] === m[1])) { state.tab = m[1]; history.replaceState(null, '', location.pathname); }
+  if (m && TABS.some(t => t[0] === m[1])) { state.tab = m[1]; history.replaceState(null, '', location.pathname); carryRelay(); }
 })();
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', e => {
