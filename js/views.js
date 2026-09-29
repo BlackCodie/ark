@@ -122,9 +122,10 @@ function onboarding() {
         pocket window into it: log workouts, habits, weigh-ins and practice here, and they land in ARK the next time the two can reach each other — even if you logged offline at the gym.</p>
       <ol class="steps">
         <li><span>On your PC, open ARK and click <b>📱 Phone</b>.</span></li>
-        <li><span>Scan the QR code with the iPhone camera. That's it.</span></li>
+        <li><span>${onPublicCopy() ? 'Tap <b>Scan the QR code</b> below and point the camera at it.' : "Scan the QR code with the iPhone camera. That's it."}</span></li>
       </ol>
-      <button class="btn btn-glass block" data-act="pair-sheet">Enter a code instead</button>
+      ${onPublicCopy() ? `<button class="btn btn-prominent block" data-act="pair-scan">${icon('camera', 17)} Scan the QR code</button>`
+        : `<button class="btn btn-glass block" data-act="pair-sheet">Enter a code instead</button>`}
     </section>`;
 }
 

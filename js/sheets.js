@@ -28,21 +28,55 @@ export function pairSheet() {
   setTimeout(() => document.getElementById('pair-code')?.focus(), 450);
 }
 
-/* The GitHub copy (https) reaches the PC over https:7789, which needs ARK's certificate trusted once. */
+/* The GitHub copy connects through the PC's QR code (#relay=…). A Home Screen app starts with empty
+   storage and no link to follow, so it scans that same QR code itself with the camera. */
 function publicPair() {
-  const host = state.hub ? state.hub.replace(/^https?:\/\//, '').replace(/[:/].*$/, '') : '';
-  const ca = host ? 'http://' + host + ':7788/ark-ca.crt' : null;
-  return `<ol class="steps">
-      <li><span>Your PC's name — shown in ARK on the PC under <b>📱 Phone</b> (like <i>mypc.local</i>):</span></li></ol>
-    <input class="inp" id="pair-hub" value="${esc(host)}" placeholder="yourpc.local" autocapitalize="off" autocorrect="off" spellcheck="false" style="margin-bottom:12px">
-    <ol class="steps" start="2">
-      <li><span>Once per iPhone: ${ca ? `<a href="${esc(ca)}">download ARK's certificate</a>` : "download ARK's certificate (enter the name first)"}, then Settings → <b>Profile Downloaded</b> → Install, and Settings → General → About → <b>Certificate Trust Settings</b> → turn on "ARK local certificate".</span></li>
-      <li><span>Type the 6-digit code from <b>📱 Phone</b> on the PC. Be on home Wi-Fi with ARK open.</span></li>
-    </ol>
-    <div class="code"><input id="pair-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="••••••" aria-label="Pairing code"></div>
-    ${pairMsg ? `<p style="color:var(--red);text-align:center;font-size:.9rem;margin:-6px 0 14px;line-height:1.45">${esc(pairMsg)}</p>` : ''}
-    <button class="btn btn-prominent block" data-act="pair-go">Connect</button>
-    <p class="sub" style="text-align:center;margin-top:12px;line-height:1.5">Easiest: scan the QR code in 📱 Phone on the PC — it fills in the name.</p>`;
+  return `<p class="sub" style="line-height:1.5;margin:0 0 14px">On your PC open ARK → <b>📱 Phone</b>, then scan the QR code shown there.</p>
+    <div id="qr-box" style="position:relative;border-radius:18px;overflow:hidden;background:#000;aspect-ratio:1;margin-bottom:14px;display:none">
+      <video id="qr-video" playsinline muted autoplay style="width:100%;height:100%;object-fit:cover"></video>
+      <div style="position:absolute;inset:18%;border:2px solid rgba(255,255,255,.8);border-radius:14px;pointer-events:none"></div></div>
+    ${pairMsg ? `<p style="color:var(--red);text-align:center;font-size:.9rem;margin:0 0 14px;line-height:1.45">${esc(pairMsg)}</p>` : ''}
+    <button class="btn btn-prominent block" data-act="qr-scan">${icon('camera', 17)} Scan QR code</button>`;
+}
+
+let qrStream = null;
+function qrStop() { if (qrStream) { qrStream.getTracks().forEach(t => t.stop()); qrStream = null; } }
+function loadJsQR() {
+  return window.jsQR ? Promise.resolve(window.jsQR) : new Promise((res, rej) => {
+    const sc = document.createElement('script'); sc.src = 'vendor/jsQR.js';
+    sc.onload = () => res(window.jsQR); sc.onerror = () => rej(new Error('scanner did not load'));
+    document.head.appendChild(sc);
+  });
+}
+async function qrScan() {
+  const fail = msg => { qrStop(); pairMsg = msg; const box = document.getElementById('qr-box'); if (box) box.style.display = 'none'; changed(); };
+  try {
+    const [jsQR, stream] = await Promise.all([loadJsQR(), navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })]);
+    qrStop(); qrStream = stream; pairMsg = '';
+    const video = document.getElementById('qr-video'), box = document.getElementById('qr-box');
+    if (!video) return qrStop();
+    box.style.display = ''; video.srcObject = stream; await video.play().catch(() => {});
+    const cv = document.createElement('canvas'), cx = cv.getContext('2d', { willReadFrequently: true });
+    const started = Date.now();
+    const tick = () => {
+      if (!qrStream) return;
+      if (!document.contains(video) || Date.now() - started > 120000) return qrStop();   // sheet closed or 2 min idle
+      if (video.videoWidth) {
+        const w = 480, h = Math.round(w * video.videoHeight / video.videoWidth);
+        cv.width = w; cv.height = h; cx.drawImage(video, 0, 0, w, h);
+        const hit = jsQR(cx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
+        const m = hit && /#relay=([w-]+)/.exec(hit.data);
+        if (m) { qrStop(); haptic(); location.hash = 'relay=' + m[1]; location.reload(); return; }
+        if (hit) { pairMsg = 'That is not ARK's QR code — use the one in 📱 Phone on the PC.'; }
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  } catch (e) {
+    fail(/NotAllowed|denied/i.test(String(e && (e.name || e.message)))
+      ? 'Camera access is off. Allow it in Settings → Safari → Camera (or tap Scan again and choose Allow).'
+      : 'Could not start the camera: ' + String(e && e.message || e));
+  }
 }
 
 /* ── sync & settings ── */
@@ -178,6 +212,8 @@ export function journalSheet() {
 export const actions = {
   'journal-sheet'() { journalSheet(); },
   'pair-sheet'() { pairSheet(); },
+  'qr-scan'() { qrScan(); },
+  'pair-scan'() { pairSheet(); setTimeout(qrScan, 350); },
   async 'pair-go'() {
     const code = document.getElementById('pair-code')?.value || '';
     const hub = document.getElementById('pair-hub')?.value.trim();
