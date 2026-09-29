@@ -67,7 +67,7 @@ async function qrScan() {
         const hit = jsQR(cx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
         const m = hit && /#relay=([w-]+)/.exec(hit.data);
         if (m) { qrStop(); haptic(); location.hash = 'relay=' + m[1]; location.reload(); return; }
-        if (hit) { pairMsg = 'That is not ARK's QR code — use the one in 📱 Phone on the PC.'; }
+        if (hit) { pairMsg = "That is not ARK's QR code — use the one in 📱 Phone on the PC."; }
       }
       requestAnimationFrame(tick);
     };
