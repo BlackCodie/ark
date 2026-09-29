@@ -40,6 +40,7 @@ function publicPair() {
 }
 
 let qrStream = null;
+const WRONG_QR = "That is not ARK's QR code — use the one in 📱 Phone on the PC.";
 function qrStop() { if (qrStream) { qrStream.getTracks().forEach(t => t.stop()); qrStream = null; } }
 function loadJsQR() {
   return window.jsQR ? Promise.resolve(window.jsQR) : new Promise((res, rej) => {
@@ -51,23 +52,29 @@ function loadJsQR() {
 async function qrScan() {
   const fail = msg => { qrStop(); pairMsg = msg; const box = document.getElementById('qr-box'); if (box) box.style.display = 'none'; changed(); };
   try {
-    const [jsQR, stream] = await Promise.all([loadJsQR(), navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })]);
+    const [jsQR, stream] = await Promise.all([loadJsQR(), navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false })]);
     qrStop(); qrStream = stream; pairMsg = '';
     const video = document.getElementById('qr-video'), box = document.getElementById('qr-box');
     if (!video) return qrStop();
     box.style.display = ''; video.srcObject = stream; await video.play().catch(() => {});
+    // Read the centre square at the camera's full resolution: a dense code on a screen needs every pixel
+    // (a shrunk frame left ~3 px per square and nothing decoded). Alternate a zoomed-in centre crop and the
+    // whole square, so both a near and a far code are caught; ~6 reads a second keeps the phone cool.
     const cv = document.createElement('canvas'), cx = cv.getContext('2d', { willReadFrequently: true });
-    const started = Date.now();
-    const tick = () => {
+    const started = Date.now(); let n = 0, last = 0;
+    const tick = t => {
       if (!qrStream) return;
-      if (!document.contains(video) || Date.now() - started > 120000) return qrStop();   // sheet closed or 2 min idle
-      if (video.videoWidth) {
-        const w = 480, h = Math.round(w * video.videoHeight / video.videoWidth);
-        cv.width = w; cv.height = h; cx.drawImage(video, 0, 0, w, h);
-        const hit = jsQR(cx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
+      if (!document.contains(video) || Date.now() - started > 180000) return qrStop();   // sheet closed or 3 min idle
+      if (video.videoWidth && t - last > 150) {
+        last = t; n++;
+        const vw = video.videoWidth, vh = video.videoHeight, side = Math.min(vw, vh) * (n % 2 ? 1 : 0.6);
+        const sz = Math.min(1000, Math.round(side));
+        cv.width = cv.height = sz;
+        cx.drawImage(video, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, sz, sz);
+        const hit = jsQR(cx.getImageData(0, 0, sz, sz).data, sz, sz, { inversionAttempts: 'attemptBoth' });
         const m = hit && /#relay=([w-]+)/.exec(hit.data);
         if (m) { qrStop(); haptic(); location.hash = 'relay=' + m[1]; location.reload(); return; }
-        if (hit) { pairMsg = "That is not ARK's QR code — use the one in 📱 Phone on the PC."; }
+        if (hit && pairMsg !== WRONG_QR) { pairMsg = WRONG_QR; changed(); }
       }
       requestAnimationFrame(tick);
     };

@@ -1,6 +1,6 @@
 /* ARK Mobile — boot, navigation, event wiring. */
 import {
-  state, changed, onChange, icon, esc, syncNow, scheduleSync, syncLabel, closeSheet, topSheet, refreshSheets, paired, haptic, toast, applyTheme, L } from './core.js';
+  state, changed, onChange, icon, esc, syncNow, scheduleSync, syncLabel, closeSheet, topSheet, refreshSheets, paired, haptic, toast, applyTheme, L, onPublicCopy } from './core.js';
 import { renderToday, renderHabits, renderGrow, actions as viewActions } from './views.js';
 import { renderTrain, actions as trainActions, onSetInput, pickerSearch, restTick, openWorkout, onPlatesInput } from './train.js';
 import { actions as sheetActions, onWeighInput } from './sheets.js';
@@ -211,6 +211,7 @@ function carryRelay() {
   if (link) link.href = 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify(man));
 }
 carryRelay();
+if (!state.token && onPublicCopy()) setTimeout(() => ACT['pair-scan'] && ACT['pair-scan'](), 600);
 
 /* ── notifications open the tab they are about (?tab= on a cold start, a message when running) ── */
 (function () {
