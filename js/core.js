@@ -158,6 +158,7 @@ export async function syncNow({ keepalive = false } = {}) {
     const now = Date.now();
     const held = state.pending.filter(e => !e.seq && e.hold > now);
     if (held.length) scheduleSync(Math.min(...held.map(e => e.hold)) - now + 300);
+    if (state.relay) { ok = await relaySync(now); return ok; }
     const events = state.pending.filter(e => !e.seq && !(e.hold > now)).map(({ id, ts, type, data }) => ({ id, ts, type, data }));
     const { status, json } = await post('/api/sync', {
       device: state.device, name: state.deviceName,
@@ -230,6 +231,36 @@ export async function checkCa() {
   changed();
 }
 
+/* ── sync through GitHub (logic/src/relay.ts) ──
+   Set up by the PC's QR code (#relay=…): a private repository, access and an encryption key. This
+   phone writes every event not yet acknowledged to its own branch and reads the PC's snapshot;
+   the PC lists the ids it applied (relayApplied) and those leave the queue. Works on any network. */
+async function relaySync(now) {
+  const R = state.relay, c = { repo: R.repo, token: R.token };
+  try {
+    const events = state.pending.filter(e => !(e.hold > now)).map(({ id, ts, type, data }) => ({ id, ts, type, data }));
+    const sig = JSON.stringify(events);
+    if (sig !== R.sent && (events.length || R.sent)) {
+      await L.relayWrite(c, 'phone-' + state.device, 'inbox.json', await L.relayEncrypt(R.key, { events, name: state.deviceName }));
+      R.sent = sig;
+    }
+    const r = await L.relayRead(c, 'pc', 'snapshot.json', R.etag);
+    if (r && r.text) { state.snapshot = await L.relayDecrypt(R.key, r.text); R.etag = r.etag; }
+    const done = new Set((state.snapshot && state.snapshot.relayApplied) || []);
+    const before = state.pending.length;
+    state.pending = state.pending.filter(e => !done.has(e.id));
+    if (state.pending.length !== before) R.sent = null;
+    state.lastSync = Date.now(); state.lastError = r ? null : 'waiting-pc';
+    // the PC applies within ~15 s; look again soon while anything is waiting
+    clearTimeout(followTm);
+    if (state.pending.length) followTm = setTimeout(syncNow, 20000);
+    return true;
+  } catch (e) {
+    state.lastError = /unauthorized|401/.test(String(e && e.message)) ? 'unpaired' : navigator.onLine === false ? 'offline' : 'relay';
+    return false;
+  }
+}
+
 /** Exchange the 6-digit code shown on the PC for this phone's token. */
 /** What the person typed as the PC's address → the hub URL. On the GitHub copy it is always https:7789. */
 export function hubFrom(input) {
@@ -267,6 +298,8 @@ export function syncLabel() {
   if (!state.token) return { tone: 'err', text: 'Not connected' };
   if (syncState.busy) return { tone: '', text: 'Syncing…' };
   if (state.lastError === 'unpaired') return { tone: 'err', text: 'Pairing expired — reconnect' };
+  if (state.lastError === 'waiting-pc') return { tone: '', text: 'Connected — waiting for your PC to upload (open ARK on it)' };
+  if (state.lastError === 'relay') return { tone: 'err', text: (n ? n + ' saved on this phone · ' : '') + 'GitHub not reachable — retrying' };
   if (state.lastError === 'away') return { tone: '', text: (n ? n + ' saved on this phone · ' : '') + 'syncs at home, with ARK open' };
   if (state.lastError) return { tone: 'err', text: (n ? n + ' change' + (n === 1 ? '' : 's') + ' waiting · ' : '') + 'PC not reachable' };
   if (waiting) return { tone: '', text: 'Saving to your PC…' };

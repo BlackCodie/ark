@@ -1,7 +1,6 @@
 /* ARK Mobile — boot, navigation, event wiring. */
 import {
-  state, changed, onChange, icon, esc, syncNow, scheduleSync, syncLabel, closeSheet, topSheet, refreshSheets, paired, haptic, toast, applyTheme,
-} from './core.js';
+  state, changed, onChange, icon, esc, syncNow, scheduleSync, syncLabel, closeSheet, topSheet, refreshSheets, paired, haptic, toast, applyTheme, L } from './core.js';
 import { renderToday, renderHabits, renderGrow, actions as viewActions } from './views.js';
 import { renderTrain, actions as trainActions, onSetInput, pickerSearch, restTick, openWorkout, onPlatesInput } from './train.js';
 import { actions as sheetActions, onWeighInput } from './sheets.js';
@@ -178,6 +177,15 @@ document.addEventListener('keydown', e => {
   // #hub= alone comes from the PC's QR code for the GitHub copy: it only names the PC.
   if (hb) { try { const u = new URL(decodeURIComponent(hb[1])); if (/^https?:$/.test(u.protocol)) state.hub = u.origin; } catch (e) { /* ignore a bad address */ } }
   if (m) { state.token = m[1]; if (dv) state.device = dv[1]; }
+  // #relay= is the PC's QR code: everything needed to sync through GitHub. Nothing to type.
+  const rl = /[#&]relay=([\w-]+)/.exec(location.hash);
+  const rp = rl && L.relayUnpack(rl[1]);
+  if (rp) {
+    state.relay = { repo: rp.r, token: rp.t, key: rp.k, sent: null, etag: null };
+    state.token = 'relay'; state.hub = null; state.qrCode = null; state.lastError = null;
+    history.replaceState(null, '', location.pathname + location.search); changed({ now: true });
+    setTimeout(() => { syncNow(); toast('Connected to ARK ✓'); }, 300);
+  }
   // #code= comes from the one QR code on the PC: this app links itself with it (views.js autoConnect).
   const cd = /[#&]code=(\d{6})/.exec(location.hash);
   if (cd && !state.token) state.qrCode = { code: cd[1], at: Date.now() };

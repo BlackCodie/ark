@@ -1393,6 +1393,7 @@ __exportStar(require("./readiness"), exports);
 __exportStar(require("./review"), exports);
 __exportStar(require("./bloodwork"), exports);
 __exportStar(require("./hourly"), exports);
+__exportStar(require("./relay"), exports);
 
   },
   "./merge": function (exports, module, require) {
@@ -2288,6 +2289,145 @@ function readiness(d, goals, tagDefs = []) {
         return null;
     const pct = Math.max(0, Math.min(100, (score / max) * 100 + tagDelta(d, tagDefs)));
     return Math.round(pct);
+}
+
+  },
+  "./relay": function (exports, module, require) {
+"use strict";
+/**
+ * THE GITHUB RELAY — how the phone and the PC sync without a local connection.
+ *
+ * The phone app is hosted on GitHub Pages (https), and iPhone will not let an https page talk to a
+ * plain-http PC on the home network. So both sides meet in a private GitHub repository instead:
+ * the PC writes the snapshot there, the phone writes its queued events there, and each reads the
+ * other's file. Everything is encrypted before it leaves the device (AES-256-GCM, a key made on the
+ * PC and handed to the phone inside the QR code), so GitHub only ever stores ciphertext.
+ *
+ * Files in the repository:
+ *   snapshot.json          written by the PC — the same snapshot the Wi-Fi hub serves, plus
+ *                          `relayApplied`: ids of phone events already applied (the phone's ack)
+ *   inbox/<device>.json    written by one phone — every event it has not seen acknowledged yet
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.b64ToText = exports.textToB64 = void 0;
+exports.b64 = b64;
+exports.unb64 = unb64;
+exports.relayKey = relayKey;
+exports.relayEncrypt = relayEncrypt;
+exports.relayDecrypt = relayDecrypt;
+exports.relayPack = relayPack;
+exports.relayUnpack = relayUnpack;
+exports.relayWrite = relayWrite;
+exports.relayRead = relayRead;
+exports.relayBranches = relayBranches;
+exports.relayEnsureRepo = relayEnsureRepo;
+const enc = new TextEncoder(), dec = new TextDecoder();
+const subtle = () => globalThis.crypto.subtle;
+function b64(bytes) {
+    let s = '';
+    for (let i = 0; i < bytes.length; i += 0x8000)
+        s += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + 0x8000)));
+    return btoa(s);
+}
+function unb64(s) {
+    const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++)
+        out[i] = bin.charCodeAt(i);
+    return out;
+}
+/** UTF-8 text → base64, for the GitHub contents API. */
+const textToB64 = (t) => b64(enc.encode(t));
+exports.textToB64 = textToB64;
+const b64ToText = (s) => dec.decode(unb64(s.replace(/\s+/g, '')));
+exports.b64ToText = b64ToText;
+/** A fresh 256-bit key, base64url, for the QR code. */
+function relayKey() {
+    const k = new Uint8Array(32);
+    globalThis.crypto.getRandomValues(k);
+    return b64(k).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function importKey(key) {
+    return subtle().importKey('raw', unb64(key), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+/** Object → `{"v":1,"iv":…,"ct":…}` text. */
+async function relayEncrypt(key, obj) {
+    const iv = new Uint8Array(12);
+    globalThis.crypto.getRandomValues(iv);
+    const ct = new Uint8Array(await subtle().encrypt({ name: 'AES-GCM', iv }, await importKey(key), enc.encode(JSON.stringify(obj))));
+    return JSON.stringify({ v: 1, iv: b64(iv), ct: b64(ct) });
+}
+/** The reverse; throws if the key is wrong or the text was changed. */
+async function relayDecrypt(key, text) {
+    const o = JSON.parse(text);
+    const pt = await subtle().decrypt({ name: 'AES-GCM', iv: unb64(o.iv) }, await importKey(key), unb64(o.ct));
+    return JSON.parse(dec.decode(new Uint8Array(pt)));
+}
+/** What the QR code carries after `#relay=`: repository, access token and key. */
+function relayPack(p) {
+    return (0, exports.textToB64)(JSON.stringify(p)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function relayUnpack(s) {
+    try {
+        const o = JSON.parse((0, exports.b64ToText)(s));
+        return o && o.r && o.t && o.k ? o : null;
+    }
+    catch (e) {
+        return null;
+    }
+}
+const API = 'https://api.github.com';
+function gh(c, path, opt = {}) {
+    const h = { Authorization: 'Bearer ' + c.token, Accept: opt.raw ? 'application/vnd.github.raw' : 'application/vnd.github+json' };
+    if (opt.body !== undefined)
+        h['Content-Type'] = 'application/json';
+    if (opt.etag)
+        h['If-None-Match'] = opt.etag;
+    return fetch(API + path, { method: opt.method || 'GET', headers: h, body: opt.body !== undefined ? JSON.stringify(opt.body) : undefined, cache: 'no-store' });
+}
+async function json(r) {
+    if (!r.ok)
+        throw new Error('GitHub ' + r.status + ' ' + (await r.text()).slice(0, 120));
+    return r.json();
+}
+/** Replace `branch` with a single commit holding one file. */
+async function relayWrite(c, branch, path, text) {
+    const R = '/repos/' + c.repo + '/git/';
+    const blob = await json(await gh(c, R + 'blobs', { method: 'POST', body: { content: (0, exports.textToB64)(text), encoding: 'base64' } }));
+    const tree = await json(await gh(c, R + 'trees', { method: 'POST', body: { tree: [{ path, mode: '100644', type: 'blob', sha: blob.sha }] } }));
+    const commit = await json(await gh(c, R + 'commits', { method: 'POST', body: { message: 'sync', tree: tree.sha, parents: [] } }));
+    const r = await gh(c, R + 'refs/heads/' + branch, { method: 'PATCH', body: { sha: commit.sha, force: true } });
+    if (r.status === 422 || r.status === 404)
+        await json(await gh(c, R + 'refs', { method: 'POST', body: { ref: 'refs/heads/' + branch, sha: commit.sha } }));
+    else if (!r.ok)
+        await json(r);
+}
+/** One file from a branch; null when it does not exist yet; `{text: null}` when unchanged since `etag`. */
+async function relayRead(c, branch, path, etag) {
+    const r = await gh(c, '/repos/' + c.repo + '/contents/' + path + '?ref=' + encodeURIComponent(branch), { raw: true, etag });
+    if (r.status === 404)
+        return null;
+    if (r.status === 304)
+        return { text: null, etag: etag || null };
+    if (r.status === 401)
+        throw new Error('unauthorized');
+    if (!r.ok)
+        throw new Error('GitHub ' + r.status);
+    return { text: await r.text(), etag: r.headers.get('etag') };
+}
+async function relayBranches(c) {
+    const list = await json(await gh(c, '/repos/' + c.repo + '/branches?per_page=100'));
+    return (list || []).map((b) => ({ name: b.name, sha: b.commit && b.commit.sha }));
+}
+/** Create the private repository once (an existing one is fine). */
+async function relayEnsureRepo(token) {
+    const me = await json(await fetch(API + '/user', { headers: { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json' } }));
+    const repo = me.login + '/ark-sync';
+    const r = await fetch(API + '/user/repos', { method: 'POST', headers: { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'ark-sync', private: true, auto_init: true, description: 'ARK phone sync — end-to-end encrypted. Do not edit.' }) });
+    if (r.status !== 201 && r.status !== 422)
+        throw new Error('could not create ' + repo + ' (' + r.status + ')');
+    return repo;
 }
 
   },
