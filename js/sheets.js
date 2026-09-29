@@ -72,7 +72,7 @@ async function qrScan() {
         cv.width = cv.height = sz;
         cx.drawImage(video, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, sz, sz);
         const hit = jsQR(cx.getImageData(0, 0, sz, sz).data, sz, sz, { inversionAttempts: 'attemptBoth' });
-        const m = hit && /#relay=([w-]+)/.exec(hit.data);
+        const m = hit && /#relay=([\w-]+)/.exec(hit.data);
         if (m) { qrStop(); haptic(); location.hash = 'relay=' + m[1]; location.reload(); return; }
         if (hit && pairMsg !== WRONG_QR) { pairMsg = WRONG_QR; changed(); }
       }
