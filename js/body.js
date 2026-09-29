@@ -22,8 +22,8 @@ import { standing, fmtAmt } from './doses.js';
 import { hormoneRows } from './hormones.js';
 
 const ui = { face: 'front', mode: 'status', tl: 0, sel: null, open: {} };
-const MODES = [['status', 'Status'], ['strength', 'Strength'], ['mobility', 'Mobility'], ['soreness', 'Soreness'], ['volume', 'Thermal']];
-const SECTIONS = [['ba-scan', 'Scanner'], ['ba-rec', 'Recovery'], ['ba-prof', 'Profile'], ['ba-vit', 'Vitals'], ['ba-mind', 'Mind'], ['ba-mic', 'Micros'], ['ba-endo', 'Endocrine']];
+const MODES = [['status', 'Status'], ['strength', 'Strength'], ['mobility', 'Mobility'], ['soreness', 'Soreness'], ['volume', 'Thermal'], ['range', 'Range']];
+const SECTIONS = [['ba-scan', 'Scanner'], ['ba-rec', 'Recovery'], ['ba-dev', 'Develop'], ['ba-prof', 'Profile'], ['ba-vit', 'Vitals'], ['ba-mind', 'Mind'], ['ba-mic', 'Micros'], ['ba-endo', 'Endocrine']];
 const STATE_LBL = {
   fresh: ['Fresh', '#30d158'], recovering: ['Recovering', '#ffb340'], ready: ['Ready', '#40c8e0'],
   detrained: ['Detrained', '#ff6b5a'], untouched: ['Untouched', 'rgba(235,240,245,.5)'],
@@ -89,7 +89,7 @@ function paint() {
   figEl.querySelectorAll('g.mus').forEach(g => {
     const s = g.dataset.slug, m = by[s] || {};
     const last = tlE ? ((tlE.muscles || {})[s] || {}).last : m.last;
-    const p = L.muscleFill(ui.mode, m.metric || {}, last || null, m.vol30 || 0, v.body.peak || 1, now, s === ui.sel);
+    const p = L.muscleFill(ui.mode, m.metric || {}, last || null, m.vol30 || 0, v.body.peak || 1, now, s === ui.sel, volOf(v, s, m).zone);
     g.style.fill = p ? p.fill : '';
     g.style.stroke = p ? p.stroke : '';
     g.classList.toggle('sel', s === ui.sel);
@@ -104,6 +104,7 @@ function paint() {
 function legend() {
   if (ui.mode === 'status') return `<span><i style="background:rgba(34,197,94,.6)"></i>Fresh ≤48 h</span><span><i style="background:rgba(245,158,11,.6)"></i>Recovering → 7 d</span><span><i style="background:rgba(112,140,178,.35)"></i>Idle</span><span><i style="background:rgba(239,68,68,.6)"></i>Sore (your verdict)</span>`;
   if (ui.mode === 'soreness') return SORE_LBL.map((l, i) => `<span><i style="background:${SORE_COLORS[i]}"></i>${l}</span>`).join('');
+  if (ui.mode === 'range') return ['under', 'low', 'optimal', 'high', 'over'].map(k => `<span><i style="background:${L.VOLUME_ZONE[k].color}"></i>${L.VOLUME_ZONE[k].label.replace(/ —.*/, '')}</span>`).join('');
   if (ui.mode === 'volume') return `<span>30-day tonnage · none</span><span class="ramp"></span><span>your hardest-hit</span>`;
   const c = ui.mode === 'strength' ? '34,197,94' : '34,211,238';
   return `<span><i style="background:rgba(${c},.15)"></i>1</span><span><i style="background:rgba(${c},.45)"></i>5</span><span><i style="background:rgba(${c},.78)"></i>10 · your rating</span>`;
@@ -124,7 +125,8 @@ function tlLabel() { return ui.tl === 0 ? 'Live' : ui.tl === 1 ? 'Yesterday' : u
 
 function secScanner(v) {
   const t = today();
-  const tn = v.body.muscles.filter(m => m.priority > 0.05).slice(0, 3);
+  const inj = injNow(v);
+  const tn = v.body.muscles.filter(m => m.priority > 0.05 && !(inj[m.slug] && inj[m.slug].sev >= 2)).slice(0, 3);
   let H = `<section class="scan frost">
     <div class="scan-top"><div class="seg sm">
       <button class="${ui.face === 'front' ? 'on' : ''}" data-act="ba-face" data-face="front">Anterior</button>
@@ -141,10 +143,11 @@ function secScanner(v) {
 
   H += `<div class="ba-h"><h2 style="font-size:1.05rem">Train next</h2><span class="k">readiness × volume deficit × imprint</span></div>`;
   H += tn.length ? `<div class="tn">${tn.map(m => {
-    const why = m.deficit > 0 ? m.deficit + ' set' + (m.deficit === 1 ? '' : 's') + ' below target' : 'ready to load';
+    const V = volOf(v, m.slug, m);
+    const why = inj[m.slug] ? 'mild injury — train around it' : V.need > 0 ? V.need + ' set' + (V.need === 1 ? '' : 's') + ' to your range' : 'ready to load';
     const sc = (STATE_LBL[m.state] || STATE_LBL.untouched)[1];
     return `<button class="frost" data-act="train-slug" data-slug="${m.slug}"><b>${esc(m.name)}</b><span class="w">${why}</span>
-      <span class="m"><span style="color:${sc}">●</span> ${esc(m.state.toUpperCase())} · ${m.weekSets}/${m.target} sets</span>
+      <span class="m"><span style="color:${sc}">●</span> ${esc(m.state.toUpperCase())} · ${fmt1(m.weekSets)} / ${V.mavLo}–${V.mavHi} sets</span>
       <span class="go">Start ${icon('chev', 14)}</span></button>`;
   }).join('')}</div>` : card(`<div class="empty" style="padding:6px">Everything is inside its recovery window — rest is the correct move.</div>`);
 
@@ -482,6 +485,7 @@ export function renderBodyArch() {
 const SEC_DEFS = [
   ['ba-scan', 'Scanner', 'biomechanical matrix', secScanner],
   ['ba-rec', 'Bio-Regen Matrix', 'muscle telemetry · 72 h cycle', secRecovery],
+  ['ba-dev', 'Body Development', 'volume · injuries · tape · balance', secDevelop],
   ['ba-prof', 'Specimen Profile', 'biometry · composition', secProfile],
   ['ba-vit', 'Biometric Status', '', secVitals],
   ['ba-mind', 'Mental State', 'neural link', secMind],
@@ -575,13 +579,14 @@ function muscleSheet(slug) {
         ${tile('#40c8e0', 'Mobility', met.mobility ? met.mobility : '—', met.mobility ? '/10' : '', met.mobility ? (log.length ? log.length + ' stretch readings' : 'your rating') : 'not rated yet', met.mobility ? met.mobility * 10 : null)}
         <button class="mt-btn" data-act="tendon-why" data-slug="${slug}" aria-label="How tendon capacity is estimated">${tile(tCap === null ? 'rgba(235,240,245,.5)' : tCap >= 65 ? '#30d158' : tCap >= 52 ? '#40c8e0' : '#ffb340', 'Tendon capacity', tCap === null ? '—' : tCap, tCap === null ? '' : '/100', tens.length ? (tCap <= 51 ? 'untrained baseline · ' : '') + esc(tens.map(x => x.name.replace(/ tendon$/i, '')).join(' · ')) : 'no tendon mapped', tCap)}</button>
         <button class="mt-btn" data-act="ar-why" data-slug="${slug}" aria-label="Why this androgen-receptor estimate">${tile('#bf5af2', 'AR sensitivity', tm ? tm.ar : '—', tm ? '/100' : '', tm && tm.arDrivers[0] ? (tm.arDrivers[0].d > 0 ? '▲ ' : '▼ ') + esc(tm.arDrivers[0].label) : 'estimate · tap for why', tm ? tm.ar : null)}</button>
-        ${tile(zc, 'Weekly volume', tm ? fmt1(tm.weekSets) : (m.weekSets || 0), ' sets', tm ? esc(tm.zone) : 'hard sets, 7 days', tm ? tm.weekSets / 20 * 100 : null)}
+        ${(() => { const V = volOf(v, slug, m); return tile(V.color, 'Weekly volume', fmt1(m.weekSets || 0), ' / ' + V.mavLo + '–' + V.mavHi, esc(V.label), V.mrv ? (m.weekSets || 0) / V.mrv * 100 : null); })()}
         ${tile(st[1], 'Recovery', m.hoursSince == null ? '—' : ago(m.hoursSince).replace(' ago', ''), '', 'since last trained · ' + st[0].toLowerCase(), null)}
       </div>
       ${tm && tm.lag ? `<div class="target hint" style="margin:10px 0 0">${icon('bolt', 16)}<div><b>Strength is ahead of the tendons</b><span>Muscle adapts in weeks, tendon in months. Add load slowly here and keep some slow, heavy reps; collagen + vitamin C before training may help.</span></div></div>` : ''}
       ${tens.length ? `<div class="grp-h" style="margin-top:16px">Tendons & joints</div><section class="list frost">${tens.map(x => `<div class="li"><span class="tx"><div class="tt">${esc(x.name)}</div>
         <div class="st"><span style="color:${TST[x.status][1]}">${TST[x.status][0]}</span>${x.acwr !== null ? ' · load ratio ' + x.acwr : ''}${x.collagenSessions ? ' · ' + x.collagenSessions + '× collagen + C' : ''}</div></span>
         <b class="num">${x.capacity}</b></div>`).join('')}</section>` : ''}
+      ${injBlock(v, slug)}
       <div class="hist7" style="margin-top:14px">${days.map(k => `<span class="${hits.has(k) ? 'hit' : ''} ${k === t ? 't' : ''}"><i></i>${fmtDay(k, { weekday: 'narrow' })}</span>`).join('')}</div>
       <div class="blk"><div class="blk-h"><span class="eyebrow">Soreness</span><span class="val">${SORE_LBL[met.soreness || 0]}</span></div>
         <div class="sore">${SORE_LBL.map((l, i) => `<button class="${(met.soreness || 0) === i && (i > 0 || met.soreTs) ? 'on' : ''}" style="--sc:${SORE_COLORS[i]}" data-act="ms-sore" data-slug="${slug}" data-v="${i}">${l.toUpperCase()}</button>`).join('')}</div>
@@ -674,10 +679,153 @@ function profileSheet(k) {
   setTimeout(() => document.querySelector('[data-prof-input]')?.focus(), 450);
 }
 
+/* ══════════════ body development (logic/src/physique.ts) ══════════════
+   Weekly sets against each muscle's landmarks, injuries that last until cleared, the tape (Navy body fat +
+   recomposition trend) and strength balance between your own lifts. The PC's body state carries `vol`;
+   a muscle it has not re-ranked yet falls back to the same maths here. */
+const volOf = (v, slug, m) => (m && m.vol) || L.volumePlan(slug, (m && m.weekSets) || 0);
+const injNow = v => L.activeInjuries(v.injuries || [], today());
+const SEV_C = ['', '#ffd60a', '#ff9f0a', '#ff453a'];
+const mName = s => (window.ARK_MNAME || {})[s] || s;
+
+function injBlock(v, slug) {
+  const j = injNow(v)[slug];
+  if (!j) return `<button class="btn btn-glass block" style="margin-top:12px" data-act="inj-open" data-slug="${slug}">${icon('plus', 16)} Log an injury here</button>`;
+  return `<div class="target hint${j.sev >= 2 ? " sore" : ""}" style="margin:12px 0 0" data-act="inj-open" data-id="${esc(j.id)}" role="button">
+    ${icon('bolt', 16)}<div><b>${L.INJURY_SEV[j.sev]} ${esc((L.INJURY_KINDS[j.kind] || j.kind).toLowerCase())} · day ${j.days + 1}${j.side && j.side !== 'both' ? ' · ' + (j.side === 'L' ? 'left' : 'right') : ''}</b>
+    <span>${esc(j.advice)}${j.note ? '<br>' + esc(j.note) : ''}</span></div></div>`;
+}
+
+function secDevelop(v) {
+  const inj = injNow(v), by = bySlug(v);
+  let H = '';
+  /* weekly sets vs range */
+  const notes = new Set();
+  const rows = Object.keys(L.VOLUME_LANDMARKS).filter(s => by[s]).map(s => {
+    const m = by[s], V = volOf(v, s, m); (V.notes || []).forEach(n => notes.add(n));
+    const top = Math.max(V.mrv * 1.15, m.weekSets || 0, 1), pc = x => Math.min(100, x / top * 100).toFixed(1) + '%';
+    return `<button class="dv-r" data-act="ba-muscle" data-slug="${s}"><span class="n">${esc(m.name || mName(s))}${inj[s] ? ` <b style="color:${SEV_C[inj[s].sev]}">✚</b>` : ''}</span>
+      <span class="dv-t"><i class="band" style="left:${pc(V.mavLo)};width:calc(${pc(V.mavHi)} - ${pc(V.mavLo)})"></i><i class="fill" style="width:${pc(m.weekSets || 0)};background:${V.color}"></i><i class="tick" style="left:${pc(V.mrv)}"></i></span>
+      <span class="v num"><b>${fmt1(m.weekSets || 0)}</b>/${V.mavLo}–${V.mavHi}</span></button>`;
+  }).join('');
+  H += `<div class="ba-h"><h2 style="font-size:1.05rem">Weekly sets vs your range</h2><span class="k">last 7 days</span></div>`
+    + card(`<div class="dv-vol">${rows}</div>
+      <div class="fig-legend" style="margin-top:10px">${['under', 'low', 'optimal', 'high', 'over'].map(k => `<span><i style="background:${L.VOLUME_ZONE[k].color}"></i>${L.VOLUME_ZONE[k].label.replace(/ —.*/, '')}</span>`).join('')}</div>
+      <p class="sub" style="line-height:1.45;margin:8px 0 0">Green band = productive range, red tick = the most you can recover from${notes.size ? ' (now: ' + esc([...notes].join(' · ').toLowerCase()) + ')' : ''}. Practitioner landmarks built on the dose–response research — guides, not measurements.</p>`);
+  /* injuries */
+  const open = (v.injuries || []).filter(j => !j.cleared);
+  H += `<div class="ba-h"><h2 style="font-size:1.05rem">Injuries</h2><span class="k">until you clear them</span></div>`
+    + (open.length ? `<section class="list frost">${open.map(j => { const a = inj[j.slug] && inj[j.slug].id === j.id ? inj[j.slug] : L.activeInjuries([j], today())[j.slug];
+      return `<button class="li" data-act="inj-open" data-id="${esc(j.id)}" style="--c:${SEV_C[j.sev]}"><span class="ic">${icon('bolt', 17)}</span><span class="tx">
+        <div class="tt">${esc(mName(j.slug))} · ${L.INJURY_SEV[j.sev].toLowerCase()} ${esc((L.INJURY_KINDS[j.kind] || j.kind).toLowerCase())}</div>
+        <div class="st">${a ? 'day ' + (a.days + 1) + ' · ' + esc(a.advice) : 'from ' + esc(j.start)}</div></span><span class="chev">${icon('chev', 16)}</span></button>`; }).join('')}</section>`
+      : card(`<div class="empty" style="padding:6px">Nothing logged. Hurt beyond normal soreness? Log it — TRAIN NEXT routes around it until you mark it healed.</div>`))
+    + `<button class="btn btn-glass block" style="margin-top:10px" data-act="inj-open">${icon('plus', 16)} Log an injury</button>`;
+  /* tape */
+  const R = L.measureReport(v.measures || {}, v.weights || {}, { height: +(v.profile || {}).height || null, sex: (v.profile || {}).sex || null });
+  const Lt = R.latest;
+  const kpi = (k, val, u, d) => `<div class="frost"><div class="v num">${val == null ? '—' : val}<small style="font-size:.7rem;color:var(--t3)">${val == null ? '' : u}</small></div><div class="k">${k}</div>
+    ${d != null && d !== 0 ? `<div class="s" style="color:${d > 0 ? '#ff9f0a' : '#30d158'}">${d > 0 ? '+' : ''}${d} since ${esc(R.from.day.slice(5))}</div>` : ''}</div>`;
+  H += `<div class="ba-h"><h2 style="font-size:1.05rem">Tape measurements</h2><span class="k">${R.count ? R.count + ' day' + (R.count === 1 ? '' : 's') : 'cm'}</span></div>`
+    + (Lt ? `<div class="stat4">${kpi('Body fat · Navy ±3–4', Lt.bf, '%', R.deltas.bf)}${kpi('Lean mass', Lt.lean, ' kg', R.deltas.lean)}${kpi('Waist', Lt.m.waist, ' cm', R.deltas.waist)}${kpi('Weight', Lt.weight, ' kg', R.deltas.weight)}</div>` : '')
+    + (R.verdict ? card(`<div style="border-left:3px solid ${R.verdict.color};padding-left:10px"><b>${esc(R.verdict.title)}</b><div class="sub" style="line-height:1.45;margin-top:2px">${esc(R.verdict.text)}</div></div>`) : '')
+    + (!Lt ? card(`<div class="empty" style="padding:6px">Waist and neck${String((v.profile || {}).sex).toLowerCase() === 'female' ? ' and hips' : ''} give a body-fat estimate; two measurements 2+ weeks apart show whether you are gaining muscle, fat or both.</div>`) : '')
+    + `<button class="btn btn-glass block" style="margin-top:10px" data-act="tape-open">${icon('plus', 16)} Log measurements</button>`;
+  /* strength balance */
+  let rs = [];
+  try { rs = L.strengthRatios(tissueNow().lifts || [], today()); } catch (e) { rs = []; }
+  H += `<div class="ba-h"><h2 style="font-size:1.05rem">Strength balance</h2><span class="k">your best lifts · 4 months</span></div>`
+    + card(rs.length ? rs.map(r => {
+      const col = r.verdict === 'balanced' ? '#30d158' : r.verdict === 'low' ? '#ff9f0a' : '#64d2ff', top = Math.max(r.hi * 1.3, r.ratio * 1.1), pc = x => Math.min(100, x / top * 100).toFixed(1) + '%';
+      return `<div class="dv-rat"><span>${esc(r.name)}</span><span class="dv-t"><i class="band" style="left:${pc(r.lo)};width:calc(${pc(r.hi)} - ${pc(r.lo)})"></i><i class="tick" style="left:${pc(r.ratio)};background:${col};width:4px"></i></span><b class="num" style="color:${col}">${r.ratio.toFixed(2)}</b></div>
+        ${r.verdict !== 'balanced' ? `<p class="sub" style="margin:0 0 8px;line-height:1.4">${esc(r.note)}</p>` : ''}`;
+    }).join('') + `<p class="sub" style="margin:6px 0 0;line-height:1.4">Green band = the usual coaching range. A nudge, not a diagnosis.</p>`
+      : `<div class="empty" style="padding:6px">Shows once both lifts of a pair are logged — row &amp; bench, overhead &amp; bench, leg curl &amp; extension, squat &amp; deadlift.</div>`);
+  return H;
+}
+
+let injDraft = null;
+function injurySheet(d) {
+  const v = view(), ex = d.id ? (v.injuries || []).find(j => j.id === d.id) : null;
+  injDraft = ex ? { ...ex } : { id: 'inj' + Date.now().toString(36), slug: d.slug || ui.sel || 'chest', kind: 'pain', sev: 1, side: 'both', note: '', start: today(), cleared: null };
+  openSheet({
+    id: 'injury', title: ex ? 'Injury' : 'Log an injury',
+    render: () => {
+      const D = injDraft, chip = (f, val, lbl) => `<button class="chip ${D[f] === val ? 'on' : ''}" data-act="inj-f" data-f="${f}" data-v="${val}">${lbl}</button>`;
+      const a = L.activeInjuries([{ ...D, cleared: null }], today())[D.slug];
+      return `<label class="field"><span>Muscle</span><select class="inp" data-inj="slug">${Object.keys(L.VOLUME_LANDMARKS).map(s => `<option value="${s}" ${s === D.slug ? 'selected' : ''}>${esc(mName(s))}</option>`).join('')}</select></label>
+        <div class="field"><span>What it is</span><div class="chips">${Object.keys(L.INJURY_KINDS).map(k => chip('kind', k, L.INJURY_KINDS[k])).join('')}</div></div>
+        <div class="field"><span>How bad</span><div class="chips">${chip('sev', 1, 'Mild — train around it')}${chip('sev', 2, 'Moderate — rest it')}${chip('sev', 3, 'Severe — get it checked')}</div></div>
+        <div class="field"><span>Side</span><div class="chips">${chip('side', 'both', 'Both / middle')}${chip('side', 'L', 'Left')}${chip('side', 'R', 'Right')}</div></div>
+        <label class="field"><span>Started</span><input class="inp" type="date" max="${today()}" value="${esc(D.start)}" data-inj="start"></label>
+        <label class="field"><span>Note</span><input class="inp" maxlength="300" placeholder="Optional — what happened, what hurts" value="${esc(D.note || '')}" data-inj="note"></label>
+        ${a ? `<p class="sub" style="line-height:1.45;margin:-4px 0 14px">${esc(a.advice)}</p>` : ''}
+        <button class="btn btn-prominent block" data-act="inj-save">${ex ? 'Save' : 'Log injury'}</button>
+        ${ex ? `<div class="row" style="gap:8px;margin-top:10px"><button class="btn btn-tint" style="flex:1;--accent:#30d158" data-act="inj-heal">✓ Healed</button>
+          <button class="btn btn-glass" style="flex:1" data-act="inj-del">Delete</button></div>` : ''}`;
+    },
+  });
+}
+function injRead() {
+  const g = k => document.querySelector('[data-inj="' + k + '"]');
+  if (g('slug')) injDraft.slug = g('slug').value;
+  if (g('start') && g('start').value) injDraft.start = g('start').value;
+  if (g('note')) injDraft.note = g('note').value;
+}
+function tapeSheet() {
+  const v = view(), day0 = today();
+  openSheet({
+    id: 'tape', title: 'Tape measurements',
+    render: () => {
+      const cur = (v.measures || {})[day0] || {}, fem = String((v.profile || {}).sex).toLowerCase() === 'female';
+      return `<p class="sub" style="line-height:1.45;margin:0 0 12px">Centimetres. Morning, before eating, relaxed — same spot each time. Waist at the navel, neck just below the Adam's apple${fem ? ', hips at the widest point' : ''}.</p>
+        <div class="grid2">${L.MEASURE_FIELDS.filter(f => f[0] !== 'hip' || fem || cur.hip).map(f => `<label class="field"><span>${esc(f[1])}</span>
+          <input class="inp num" type="number" inputmode="decimal" step="0.1" min="${f[2][0]}" max="${f[2][1]}" value="${cur[f[0]] ?? ''}" data-tape="${f[0]}"></label>`).join('')}</div>
+        <label class="field"><span>Day</span><input class="inp" type="date" max="${day0}" value="${day0}" data-tape-day></label>
+        <button class="btn btn-prominent block" data-act="tape-save">Save</button>`;
+    },
+  });
+}
+const devActions = {
+  'ba-muscle'(d) { muscleSheet(d.slug); },
+  'inj-open'(d) { injurySheet(d); },
+  'inj-f'(d) { injRead(); injDraft[d.f] = d.f === 'sev' ? Number(d.v) : d.v; haptic(); changed(); },
+  'inj-save'() {
+    injRead();
+    const j = L.cleanInjury(injDraft);
+    if (!j) { toast('Pick a muscle, a severity and a start day'); return; }
+    emit('injury.set', { injury: j }); closeSheet(topSheet()); haptic();
+    toast(j.sev >= 2 ? '✚ Logged — TRAIN NEXT will leave it alone' : '✚ Logged — train around it');
+  },
+  'inj-heal'() {
+    injRead(); injDraft.cleared = today();
+    emit('injury.set', { injury: L.cleanInjury(injDraft) }); closeSheet(topSheet()); haptic(); toast('✓ Marked healed');
+  },
+  'inj-del'() {
+    const id = injDraft.id;
+    const evs = state.pending.filter(e => !e.seq && e.type === 'injury.set' && e.data.injury && e.data.injury.id === id);
+    const onPc = !!((state.snapshot && state.snapshot.injuries) || []).some(j => j.id === id);
+    closeSheet(topSheet());
+    if (!onPc) { evs.forEach(e => dropPending(e.id)); toast('Injury removed'); return; }
+    if (!confirm('Delete this injury record? Marking it healed keeps the history. ARK on your PC keeps a copy you can restore.')) return;
+    emitUndoable('injury.del', { id }, 'Injury deleted');
+  },
+  'tape-open'() { tapeSheet(); },
+  'tape-save'() {
+    const m = {}; document.querySelectorAll('[data-tape]').forEach(el => { if (el.value !== '') m[el.dataset.tape] = Number(el.value); });
+    const day = (document.querySelector('[data-tape-day]') || {}).value || today();
+    const c = L.cleanMeasure(m);
+    if (!Object.keys(c).length) { toast('Enter at least one measurement'); return; }
+    const prev = (view().measures || {})[day] || {};
+    emit('measure.set', { day, m: { ...prev, ...c } }); closeSheet(topSheet()); haptic(); toast('📏 Saved');
+  },
+};
+
 /* ══════════════ actions ══════════════ */
 const ROUND = Object.fromEntries(VIT.map(x => [x.f, x.round || 1]));
 const RANGE = { sleep: [0, 14], deep: [0, 6], prot: [0, 500], water: [0, 10], weight: [30, 250], steps: [0, 100000], cal: [0, 10000] };
 export const actions = {
+  ...devActions,
   'blood-add'() { bloodSheet(); },
   'blood-save'() {
     const g = k => (document.querySelector('[data-b="' + k + '"]')?.value || '').trim();

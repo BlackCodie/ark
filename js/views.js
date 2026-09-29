@@ -57,8 +57,10 @@ export function groupStates(v) {
 /** The desktop's TRAIN NEXT ranking, rolled up to groups (same as the desktop does). */
 export function trainNext(v) {
   const seen = [], ranked = v.body.muscles.slice().sort((a, b) => b.priority - a.priority);
+  // an injury logged on this phone counts at once, before the PC has re-ranked
+  const inj = L.activeInjuries(v.injuries || [], today());
   for (const m of ranked) {
-    if (!m.group || m.priority <= 0.05 || seen.some(s => s.group === m.group)) continue;
+    if (!m.group || m.priority <= 0.05 || (inj[m.slug] && inj[m.slug].sev >= 2) || seen.some(s => s.group === m.group)) continue;
     seen.push(m); if (seen.length === 3) break;
   }
   return seen;

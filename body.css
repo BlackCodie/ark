@@ -443,3 +443,18 @@ html[data-theme="light"] .br-cc{fill:rgba(40,44,90,.05);stroke:rgba(40,44,90,.18
 .bz-links{display:flex;flex-direction:column;gap:3px;margin-top:10px;padding-top:8px;border-top:.5px solid var(--sep)}
 .bz-links span{font-size:.74rem;color:var(--t3)}
 .bz-links span::before{content:"⟶ ";color:var(--rc,#67e8f9)}
+
+/* ── Body development (weekly sets vs range · strength balance) ── */
+.dv-vol{display:flex;flex-direction:column;gap:2px}
+.dv-r{display:grid;grid-template-columns:88px 1fr auto;align-items:center;gap:10px;padding:5px 0;width:100%;text-align:left;font-size:.8rem}
+.dv-r .n{color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dv-r .v{font-size:.74rem;color:var(--t3);min-width:62px;text-align:right}
+.dv-r .v b{color:var(--t1);font-weight:700}
+.dv-t{position:relative;height:8px;border-radius:4px;background:var(--fill-2)}
+.dv-t i{position:absolute;display:block}
+.dv-t .band{top:0;bottom:0;border-radius:4px;background:rgba(48,209,88,.18)}
+.dv-t .fill{left:0;top:1px;bottom:1px;border-radius:3px}
+.dv-t .tick{top:-2px;bottom:-2px;width:2px;border-radius:1px;background:rgba(255,69,58,.75)}
+.dv-rat{display:grid;grid-template-columns:118px 1fr 40px;align-items:center;gap:10px;font-size:.82rem;padding:6px 0}
+.dv-rat b{text-align:right;font-size:.86rem}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}

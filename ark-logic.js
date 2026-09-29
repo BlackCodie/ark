@@ -94,6 +94,7 @@ exports.derivedStrength = derivedStrength;
 exports.bodyState = bodyState;
 exports.systemicRecoveryFactor = systemicRecoveryFactor;
 const soreness_1 = require("./soreness");
+const physique_1 = require("./physique");
 /**
  * Per-muscle recovery window, parsed from ARK_MUSCLE_BIO.rec ("48-72h", "24h").
  *
@@ -212,14 +213,22 @@ function bodyState(input) {
                         : 1;
         const deficitN = target > 0 ? deficit / target : 0;
         const imprintGap = (10 - str.value) / 10;
-        const priority = readiness * (0.15 + deficitN) * (0.55 + 0.45 * imprintGap);
+        // Where the week's sets sit on the volume landmarks: past the recoverable ceiling more sets only dig
+        // a hole, near it they are worth less, and under the growth minimum a ready muscle is the best use
+        // of the next session.
+        const vol = (0, physique_1.volumePlan)(slug, t.weekSets, { factor: sys.factor, ...(input.volCtx || {}) });
+        const volMul = vol.zone === 'over' ? 0.15 : vol.zone === 'high' ? 0.6 : vol.zone === 'under' || vol.zone === 'none' ? 1.2 : 1;
+        // An injury lasts until cleared (soreness fades by itself): mild = train around it, worse = leave it.
+        const inj = input.injuries && input.injuries[slug] && input.injuries[slug].sev >= 1 ? { sev: input.injuries[slug].sev } : null;
+        const injMul = !inj ? 1 : inj.sev >= 2 ? 0 : 0.4;
+        const priority = readiness * (0.15 + deficitN) * (0.55 + 0.45 * imprintGap) * volMul * injMul;
         muscles[slug] = {
             slug, name: names[slug] || slug,
             last: t.last, hoursSince: hrs, recWindow: win, state,
             weekSets: t.weekSets, vol30: t.vol30, target, deficit,
             soreness: sore, strength: str.value, strengthManual: str.manual,
             strengthDerived: str.derived, mobility: mob, priority,
-            cat: cats[slug] || null,
+            cat: cats[slug] || null, vol, injury: inj,
         };
         if (state === 'fresh')
             fresh++;
@@ -233,7 +242,7 @@ function bodyState(input) {
             touched7++;
         if (sore >= 2)
             soreCount++;
-        if (sore >= 3)
+        if (sore >= 3 || (inj && inj.sev >= 2))
             injuredCount++;
         loadSum += sore;
         if (str.value > 0) {
@@ -1394,6 +1403,7 @@ __exportStar(require("./review"), exports);
 __exportStar(require("./bloodwork"), exports);
 __exportStar(require("./hourly"), exports);
 __exportStar(require("./relay"), exports);
+__exportStar(require("./physique"), exports);
 
   },
   "./merge": function (exports, module, require) {
@@ -1955,6 +1965,278 @@ exports.REGIONS = {
 };
 
   },
+  "./physique": function (exports, module, require) {
+"use strict";
+/**
+ * PHYSIQUE — four readouts the Body section was missing, all from what was actually logged.
+ *
+ *  • Weekly volume against landmarks. The body state already knew a single "target" per muscle; this
+ *    says where the week's hard sets sit on the whole ladder — maintenance (MV), the minimum that grows
+ *    (MEV), the productive range (MAV) and the most you can recover from (MRV). The numbers are the
+ *    widely used practitioner landmarks (Israetel / Renaissance Periodization), which sit on the
+ *    dose-response evidence (Schoenfeld 2017: more hard sets grow more, returns flatten past ~20;
+ *    Baz-Valle 2022). They are guidelines, not measurements, and the recoverable ceiling moves with
+ *    recovery: the endocrine estimate's systemic factor, short sleep and age lower it.
+ *  • Injuries that last until cleared. Soreness decays by itself in days; an injury does not, so it is
+ *    its own record and TRAIN NEXT routes around it (bodyState).
+ *  • Tape measurements → body fat by the US Navy circumference method (Hodgdon & Beckett 1984, typical
+ *    error ~3–4 points), lean mass, and what the trend says: recomposition, lean gain, fat gain…
+ *  • Strength balance: ratios between your own best lifts (row : bench, hamstring : quad…) against the
+ *    ranges coaches use. Coaching norms with modest evidence — shown as a nudge, never a diagnosis.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.MEASURE_FIELDS = exports.INJURY_SEV = exports.INJURY_KINDS = exports.VOLUME_ZONE = exports.VOLUME_LANDMARKS = void 0;
+exports.volumePlan = volumePlan;
+exports.activeInjuries = activeInjuries;
+exports.cleanMeasure = cleanMeasure;
+exports.navyBodyFat = navyBodyFat;
+exports.measureReport = measureReport;
+exports.strengthRatios = strengthRatios;
+exports.cleanInjury = cleanInjury;
+/** Weekly hard sets per muscle. The last few (obliques, tibialis, adductors, lower back) have no published
+ *  landmarks; they are set conservatively from how much indirect work they already get. */
+exports.VOLUME_LANDMARKS = {
+    chest: { mv: 4, mev: 8, mav: [12, 20], mrv: 22 },
+    'upper-back': { mv: 6, mev: 10, mav: [14, 22], mrv: 25 },
+    deltoids: { mv: 4, mev: 8, mav: [14, 22], mrv: 26 },
+    quadriceps: { mv: 6, mev: 8, mav: [12, 18], mrv: 20 },
+    hamstring: { mv: 4, mev: 6, mav: [10, 16], mrv: 20 },
+    gluteal: { mv: 0, mev: 4, mav: [6, 12], mrv: 16 },
+    biceps: { mv: 4, mev: 8, mav: [14, 20], mrv: 26 },
+    triceps: { mv: 4, mev: 6, mav: [10, 14], mrv: 18 },
+    trapezius: { mv: 0, mev: 4, mav: [12, 20], mrv: 26 },
+    calves: { mv: 6, mev: 8, mav: [12, 16], mrv: 20 },
+    abs: { mv: 0, mev: 4, mav: [12, 20], mrv: 25 },
+    forearm: { mv: 0, mev: 2, mav: [8, 16], mrv: 22 },
+    obliques: { mv: 0, mev: 2, mav: [6, 12], mrv: 16 },
+    adductors: { mv: 0, mev: 2, mav: [6, 12], mrv: 16 },
+    tibialis: { mv: 0, mev: 2, mav: [4, 8], mrv: 12 },
+    'lower-back': { mv: 0, mev: 2, mav: [4, 8], mrv: 12 },
+};
+exports.VOLUME_ZONE = {
+    none: { label: 'Not trained this week', color: 'rgba(235,240,245,.28)', fill: 'rgba(40,54,86,.30)', stroke: 'rgba(90,110,150,.35)' },
+    under: { label: 'Below the growth minimum', color: '#64d2ff', fill: 'rgba(100,210,255,.26)', stroke: 'rgba(100,210,255,.7)' },
+    low: { label: 'Growing — low end', color: '#a3e635', fill: 'rgba(163,230,53,.30)', stroke: 'rgba(163,230,53,.75)' },
+    optimal: { label: 'Productive range', color: '#30d158', fill: 'rgba(48,209,88,.45)', stroke: 'rgba(48,209,88,.9)' },
+    high: { label: 'High — near your limit', color: '#ff9f0a', fill: 'rgba(255,159,10,.42)', stroke: 'rgba(255,159,10,.9)' },
+    over: { label: 'Over what you can recover from', color: '#ff453a', fill: 'rgba(255,69,58,.5)', stroke: 'rgba(255,69,58,.95)' },
+};
+const r1 = (x) => Math.round(x * 10) / 10;
+function volumePlan(slug, sets, ctx = {}) {
+    const L = exports.VOLUME_LANDMARKS[slug] || { mv: 2, mev: 6, mav: [10, 16], mrv: 20 };
+    const notes = [];
+    // Recoverable ceiling (MAV top and MRV) shrinks when recovery is worse. Bounded — the landmarks are
+    // population guides and a model should shade them, not replace them.
+    let rec = 1;
+    const f = ctx.factor || 1;
+    if (Math.abs(f - 1) >= 0.03) {
+        rec *= 1 / f;
+        notes.push(f > 1 ? 'Recovery slower than usual (hormone estimate)' : 'Recovery faster than usual (hormone estimate)');
+    }
+    if (ctx.sleepAvg != null && ctx.sleepAvg > 0 && ctx.sleepAvg < 6.5) {
+        rec *= ctx.sleepAvg < 6 ? 0.85 : 0.92;
+        notes.push('Short sleep lowers the ceiling');
+    }
+    if (ctx.age != null && ctx.age > 40) {
+        rec *= Math.max(0.85, 1 - 0.005 * (ctx.age - 40));
+        notes.push('Age: recovery a little slower');
+    }
+    rec = Math.max(0.7, Math.min(1.15, rec));
+    // Beginners respond to far less volume (the first months are mostly neural and any stimulus grows).
+    const novice = ctx.months != null && ctx.months < 6;
+    if (novice)
+        notes.push('First months: less volume already grows');
+    const mev = novice ? Math.round(L.mev * 0.7) : L.mev;
+    const mavLo = Math.max(mev, novice ? Math.round(L.mav[0] * 0.75) : L.mav[0]);
+    const mrv = Math.max(mavLo + 2, Math.round(L.mrv * rec));
+    const mavHi = Math.max(mavLo + 1, Math.min(mrv - 1, Math.round(L.mav[1] * rec)));
+    const s = Math.max(0, sets || 0);
+    const zone = s < 0.5 ? 'none' : s < mev ? 'under' : s < mavLo ? 'low' : s <= mavHi ? 'optimal' : s <= mrv ? 'high' : 'over';
+    return { sets: r1(s), mv: L.mv, mev, mavLo, mavHi, mrv, zone, label: exports.VOLUME_ZONE[zone].label, color: exports.VOLUME_ZONE[zone].color,
+        need: Math.max(0, Math.ceil(mavLo - s)), room: Math.floor(mrv - s), notes };
+}
+exports.INJURY_KINDS = { pain: 'Pain', strain: 'Strain / pull', tendon: 'Tendon', joint: 'Joint', other: 'Other' };
+exports.INJURY_SEV = ['', 'Mild', 'Moderate', 'Severe'];
+const dayNum = (k) => { const [y, m, d] = String(k).split('-').map(Number); return Date.UTC(y, (m || 1) - 1, d || 1) / 864e5; };
+/** Active injuries by muscle (worst one wins). Guidance follows the pain-monitoring approach used in
+ *  tendon and muscle rehab (Silbernagel 2007): mild pain that settles by the next morning is acceptable. */
+function activeInjuries(list, today) {
+    const out = {};
+    (list || []).forEach(j => {
+        if (!j || !j.slug || j.cleared || !(j.sev >= 1) || j.start > today)
+            return;
+        const days = Math.max(0, Math.round(dayNum(today) - dayNum(j.start)));
+        const sev = Math.min(3, Math.round(j.sev));
+        const kind = String(j.kind || 'pain');
+        const checkUp = sev >= 3 || days >= 21;
+        const advice = sev >= 3 ? 'Stop loading it and get it checked by a physio or doctor.'
+            : sev === 2 ? 'Rest the area — train everything else. Gentle, pain-free movement only.'
+                : kind === 'tendon' ? 'Keep loading it slowly: pain up to ~3/10 during, settled by next morning, is fine.'
+                    : 'Train around it: pain-free range only, stop at more than ~3/10 pain.';
+        const cur = out[j.slug];
+        if (!cur || sev > cur.sev)
+            out[j.slug] = { id: j.id, sev, kind, days, note: j.note || '', side: j.side || '', checkUp,
+                advice: advice + (days >= 21 && sev < 3 ? ' It has lasted 3+ weeks — worth getting checked.' : '') };
+    });
+    return out;
+}
+exports.MEASURE_FIELDS = [
+    ['waist', 'Waist (at navel)', [40, 200]], ['neck', 'Neck', [20, 70]], ['hip', 'Hips (widest)', [50, 200]],
+    ['chest', 'Chest', [50, 200]], ['arm', 'Arm (flexed)', [15, 70]], ['thigh', 'Thigh', [30, 100]], ['calf', 'Calf', [20, 70]],
+];
+function cleanMeasure(m) {
+    const out = {};
+    exports.MEASURE_FIELDS.forEach(([k, , [lo, hi]]) => {
+        const v = m ? m[k] : undefined;
+        if (v === null || v === undefined || v === '')
+            return;
+        const n = Number(v);
+        if (isFinite(n) && n >= lo && n <= hi)
+            out[k] = Math.round(n * 10) / 10;
+    });
+    return out;
+}
+/** US Navy circumference body fat (%), centimetres. Null when an input is missing or implausible. */
+function navyBodyFat(p) {
+    const h = Number(p.height), w = Number(p.waist), n = Number(p.neck), hip = Number(p.hip);
+    if (!(h > 100) || !(w > 0) || !(n > 0))
+        return null;
+    const female = String(p.sex || '').toLowerCase() === 'female';
+    let bf;
+    if (female) {
+        if (!(hip > 0) || w + hip - n <= 0)
+            return null;
+        bf = 495 / (1.29579 - 0.35004 * Math.log10(w + hip - n) + 0.22100 * Math.log10(h)) - 450;
+    }
+    else {
+        if (w - n <= 0)
+            return null;
+        bf = 495 / (1.0324 - 0.19077 * Math.log10(w - n) + 0.15456 * Math.log10(h)) - 450;
+    }
+    return bf > 2 && bf < 60 ? Math.round(bf * 10) / 10 : null;
+}
+/** The weight nearest a day (±4 days), averaged so one heavy morning does not decide. */
+function weightNear(weights, day) {
+    const d0 = dayNum(day);
+    const near = Object.keys(weights || {}).filter(k => Math.abs(dayNum(k) - d0) <= 4 && weights[k] > 0);
+    if (!near.length)
+        return null;
+    return Math.round(near.reduce((a, k) => a + weights[k], 0) / near.length * 10) / 10;
+}
+function measureReport(measures, weights, prof) {
+    const days = Object.keys(measures || {}).filter(k => measures[k] && Object.keys(measures[k]).length).sort();
+    const at = (day) => {
+        const m = measures[day];
+        const bf = navyBodyFat({ sex: prof.sex, height: prof.height, waist: m.waist, neck: m.neck, hip: m.hip });
+        const weight = weightNear(weights, day);
+        return { day, m, bf, weight, lean: bf != null && weight != null ? Math.round(weight * (1 - bf / 100) * 10) / 10 : null };
+    };
+    if (!days.length)
+        return { latest: null, from: null, deltas: {}, verdict: null, count: 0 };
+    const latest = at(days[days.length - 1]);
+    // Compare with the measurement closest to 4 weeks earlier, at least 14 days back and at most ~10 weeks.
+    const back = days.filter(k => dayNum(latest.day) - dayNum(k) >= 14 && dayNum(latest.day) - dayNum(k) <= 70);
+    const pick = back.sort((a, b) => Math.abs(dayNum(latest.day) - dayNum(a) - 28) - Math.abs(dayNum(latest.day) - dayNum(b) - 28))[0];
+    if (!pick)
+        return { latest, from: null, deltas: {}, count: days.length,
+            verdict: { key: 'wait', title: 'One more measurement', text: 'Measure again at least 2 weeks after ' + (days.length > 1 ? 'the first' : 'this one') + ' — same time of day, same spot — to see the trend.', color: 'var(--t3)' } };
+    const from = at(pick);
+    const deltas = {};
+    ['waist', 'neck', 'hip', 'chest', 'arm', 'thigh', 'calf'].forEach(k => {
+        if (latest.m[k] != null && from.m[k] != null)
+            deltas[k] = r1(latest.m[k] - from.m[k]);
+    });
+    if (latest.weight != null && from.weight != null)
+        deltas.weight = r1(latest.weight - from.weight);
+    if (latest.bf != null && from.bf != null)
+        deltas.bf = r1(latest.bf - from.bf);
+    if (latest.lean != null && from.lean != null)
+        deltas.lean = r1(latest.lean - from.lean);
+    if (latest.lean != null && from.lean != null && latest.weight != null && from.weight != null)
+        deltas.fat = r1((latest.weight - latest.lean) - (from.weight - from.lean));
+    const dW = deltas.weight, dWaist = deltas.waist, limbs = (deltas.arm || 0) + (deltas.thigh || 0);
+    let v = null;
+    const weeks = Math.round((dayNum(latest.day) - dayNum(from.day)) / 7);
+    const span = ' over ' + weeks + ' week' + (weeks === 1 ? '' : 's');
+    if (dWaist == null || dW == null) {
+        v = { key: 'partial', title: 'Not enough to judge', text: 'The trend needs waist and a weigh-in near both measurement days.', color: 'var(--t3)' };
+    }
+    else if (dWaist <= -0.5 && dW >= -0.3) {
+        v = { key: 'recomp', title: 'Recomposition', text: 'Waist ' + dWaist + ' cm while weight held' + span + ' — fat down, muscle likely up.', color: '#30d158' };
+    }
+    else if (dW > 0.3 && dWaist < 0.5) {
+        v = { key: 'lean', title: 'Lean gain', text: 'Weight +' + dW + ' kg with the waist steady' + span + (limbs > 0 ? ', arms/thighs up' : '') + ' — mostly muscle.', color: '#30d158' };
+    }
+    else if (dW > 0.3 && dWaist >= 0.5) {
+        v = { key: 'fat-gain', title: 'Gaining, partly fat', text: 'Weight +' + dW + ' kg and waist +' + dWaist + ' cm' + span + '. A smaller surplus keeps more of the gain as muscle.', color: '#ff9f0a' };
+    }
+    else if (dW < -0.3 && dWaist <= -0.5) {
+        v = { key: 'cut', title: 'Losing fat', text: 'Weight ' + dW + ' kg and waist ' + dWaist + ' cm' + span + '.', color: '#30d158' };
+    }
+    else if (dW < -0.3) {
+        v = { key: 'muscle-risk', title: 'Weight down, waist not', text: 'Weight ' + dW + ' kg but the waist barely moved' + span + ' — some of it may be muscle. Keep protein and heavy training up.', color: '#ff9f0a' };
+    }
+    else {
+        v = { key: 'stable', title: 'Holding steady', text: 'Weight and waist within normal day-to-day noise' + span + '.', color: 'var(--t2)' };
+    }
+    return { latest, from, deltas, verdict: v, count: days.length };
+}
+/** [key, name, numerator patterns, denominator patterns, healthy low, high, note when low, note when high] */
+const RATIOS = [
+    ['row-bench', 'Row : Bench', ['row', 'srow'], ['hpress'], 0.85, 1.25,
+        'Pulling lags pressing — a common source of rounded shoulders and cranky shoulders. Add rows.', 'Rows well ahead of bench — fine; pressing has room to grow.'],
+    ['ohp-bench', 'Overhead : Bench', ['vpress'], ['hpress'], 0.55, 0.8,
+        'Overhead press is behind — shoulders are the weak link in pressing.', 'Overhead strong relative to bench — bench has room to grow.'],
+    ['ham-quad', 'Hamstring : Quad', ['legcurl'], ['legext'], 0.5, 0.9,
+        'Hamstrings weak next to quads — the imbalance linked to hamstring strains. Add curls and RDLs.', 'Hamstrings strong relative to quads.'],
+    ['squat-dead', 'Squat : Deadlift', ['squat'], ['hinge'], 0.72, 0.95,
+        'Squat lags the deadlift — quads/positioning are the limiter.', 'Squat close to the deadlift — posterior chain has room to grow.'],
+    ['front-back', 'Front : Back squat', ['fsquat'], ['squat'], 0.75, 0.92,
+        'Front squat is behind — upper back and quads are the limiter.', 'Front squat very close to back squat.'],
+];
+const EQUIV = { barbell: 1, smith: 1.05, ez: 0.95, trap: 1.08, machine: 1, cable: 0.75, dumbbell: 0.42, kettlebell: 0.42, plate: 0.4 };
+/** Ratios between your own best lifts (barbell-equivalent), where both sides were lifted in the last ~4 months. */
+function strengthRatios(lifts, today) {
+    const fresh = (lifts || []).filter(l => l && l.e1 > 0 && dayNum(today) - dayNum(l.day) <= 120);
+    const best = (pats) => {
+        let top = null, val = 0;
+        fresh.forEach(l => { var _a; if (!pats.includes(l.p))
+            return; const v = l.bw ? l.e1 : l.e1 / ((_a = EQUIV[l.e]) !== null && _a !== void 0 ? _a : 1); if (v > val) {
+            val = v;
+            top = l;
+        } });
+        return top ? { l: top, v: val } : null;
+    };
+    const out = [];
+    RATIOS.forEach(([key, name, pa, pb, lo, hi, low, high]) => {
+        const A = best(pa), B = best(pb);
+        if (!A || !B || B.v <= 0)
+            return;
+        const ratio = Math.round(A.v / B.v * 100) / 100;
+        const verdict = ratio < lo ? 'low' : ratio > hi ? 'high' : 'balanced';
+        out.push({ key, name, a: A.l.n, b: B.l.n, ratio, lo, hi, verdict,
+            note: verdict === 'low' ? low : verdict === 'high' ? high : 'Within the usual range.',
+            basis: A.l.n + ' ' + Math.round(A.v) + ' kg vs ' + B.l.n + ' ' + Math.round(B.v) + ' kg (est. 1RM, barbell-equivalent)' });
+    });
+    return out;
+}
+/** An injury record as a phone or form sends it, or null. `upd` is the edit time: a replayed older edit
+ *  never overwrites a newer one. */
+function cleanInjury(j, fallbackId, ts) {
+    if (!j || typeof j !== 'object')
+        return null;
+    const id = String(j.id || fallbackId || '').slice(0, 64), slug = String(j.slug || '').slice(0, 40);
+    const isDay = (k) => typeof k === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(k);
+    const sev = Math.round(Number(j.sev));
+    if (!id || !slug || !(sev >= 1 && sev <= 3) || !isDay(j.start))
+        return null;
+    const kind = exports.INJURY_KINDS[j.kind] ? j.kind : 'pain';
+    const side = ['L', 'R', 'both'].includes(j.side) ? j.side : '';
+    return { id, slug, sev, kind, side, start: j.start, cleared: isDay(j.cleared) ? j.cleared : null,
+        note: String(j.note || '').slice(0, 300), upd: String(ts || j.upd || '') };
+}
+
+  },
   "./pk": function (exports, module, require) {
 "use strict";
 /**
@@ -2245,8 +2527,17 @@ function builtEffect(dailyAmounts, fullDose, tau = 21) {
  * else) reads as good, not as a catastrophic 22%. Status effects then shift it.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.readinessBaseline = readinessBaseline;
 exports.tagDelta = tagDelta;
 exports.readiness = readiness;
+/** Median of the positive readings of one field, or null with fewer than three. */
+function readinessBaseline(days, field) {
+    const v = days.map(d => d ? Number(d[field]) : 0).filter(x => x > 0).sort((a, b) => a - b);
+    if (v.length < 3)
+        return null;
+    const m = v.length >> 1;
+    return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+}
 const set = (v) => v !== null && v !== undefined;
 /** Sum of the status-effect modifiers that apply. "Fasted" only helps when energy held up (≥7). */
 function tagDelta(d, tagDefs) {
@@ -2262,7 +2553,7 @@ function tagDelta(d, tagDefs) {
     return sum;
 }
 /** 0–100, or null when nothing that counts was logged. */
-function readiness(d, goals, tagDefs = []) {
+function readiness(d, goals, tagDefs = [], base = null) {
     if (!d)
         return null;
     let score = 0, max = 0, factors = 0;
@@ -2279,6 +2570,14 @@ function readiness(d, goals, tagDefs = []) {
         add(d.mood / 5, 13);
     if (d.steps)
         add(Math.min(1, d.steps / goals.steps), 8);
+    // HRV and resting HR against YOUR normal — the best-established overnight recovery markers (Plews 2013;
+    // Buchheit 2014). A raw number means nothing across people, so without a baseline they are left out,
+    // never scored. At your normal they read as a decent 0.75; ~20 % above normal HRV (or ~10 % below normal
+    // resting HR) is full marks, ~30 % down / ~20 % up is poor.
+    if (d.hrv && base && base.hrv)
+        add(Math.max(0, Math.min(1, 0.75 + (d.hrv / base.hrv - 1) * 1.25)), 16);
+    if (d.rhr && base && base.rhr)
+        add(Math.max(0, Math.min(1, 0.75 - (d.rhr / base.rhr - 1) * 2.5)), 10);
     if (set(d.stress))
         add((10 - d.stress) / 10, 12);
     if (d.cal) {
@@ -2854,12 +3153,6 @@ function decaySoreness(raw, ts, now = Date.now()) {
   },
   "./specimen": function (exports, module, require) {
 "use strict";
-/**
- * Specimen Profile maths and the body figure's overlay colours.
- *
- * Both the dashboard and the phone draw these, so they live here once. The
- * dashboard's renderSpecimenProfile and muscleFillStyle delegate to them.
- */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SORENESS_STROKES = exports.SORENESS_COLORS = exports.SORENESS_LABELS = exports.ACTIVITY_LABELS = exports.ACTIVITY_FACTORS = void 0;
 exports.ageFrom = ageFrom;
@@ -2867,6 +3160,13 @@ exports.bfCategory = bfCategory;
 exports.specimen = specimen;
 exports.thermal = thermal;
 exports.muscleFill = muscleFill;
+/**
+ * Specimen Profile maths and the body figure's overlay colours.
+ *
+ * Both the dashboard and the phone draw these, so they live here once. The
+ * dashboard's renderSpecimenProfile and muscleFillStyle delegate to them.
+ */
+const physique_1 = require("./physique");
 exports.ACTIVITY_FACTORS = {
     sedentary: 1.2, light: 1.375, moderate: 1.55, active: 1.725, athlete: 1.9,
 };
@@ -2941,7 +3241,12 @@ function thermal(t) {
  *   strength / mobility / soreness   the manual ratings
  *   volume    "thermal": 30-day tonnage against your own hardest-hit muscle
  */
-function muscleFill(mode, m, last, vol30, peak, now, isActive = false) {
+function muscleFill(mode, m, last, vol30, peak, now, isActive = false, zone) {
+    // range: this week's hard sets against the muscle's volume landmarks (physique.ts)
+    if (mode === 'range') {
+        const z = physique_1.VOLUME_ZONE[(zone || 'none')] || physique_1.VOLUME_ZONE.none;
+        return { fill: z.fill, stroke: z.stroke };
+    }
     if (mode === 'volume') {
         if (!vol30)
             return { fill: 'rgba(40,54,86,.30)', stroke: 'rgba(90,110,150,.35)' };
@@ -3292,6 +3597,7 @@ exports.e1rm = e1rm;
 exports.progressionTarget = progressionTarget;
 exports.goalProgress = goalProgress;
 exports.daysSinceCapture = daysSinceCapture;
+const physique_1 = require("./physique");
 const dates_1 = require("./dates");
 const gym_1 = require("./gym");
 const readiness_1 = require("./readiness");
@@ -3731,6 +4037,36 @@ function applyEvent(s, e) {
                 s.bloodwork.push(b);
             return;
         }
+        case 'measure.set': {
+            if (!isDay(d.day))
+                return;
+            const m = (0, physique_1.cleanMeasure)(d.m || {});
+            if (!s.measures || typeof s.measures !== 'object')
+                s.measures = {};
+            if (Object.keys(m).length)
+                s.measures[d.day] = m;
+            else
+                delete s.measures[d.day];
+            return;
+        }
+        case 'injury.set': {
+            const j = (0, physique_1.cleanInjury)(d.injury, e.id, e.ts);
+            if (!j)
+                return;
+            if (!Array.isArray(s.injuries))
+                s.injuries = [];
+            const i = s.injuries.findIndex((x) => x.id === j.id);
+            if (i < 0)
+                s.injuries.push(j);
+            else if (String(s.injuries[i].upd || '') <= j.upd)
+                s.injuries[i] = j;
+            return;
+        }
+        case 'injury.del': {
+            if (Array.isArray(s.injuries))
+                s.injuries = s.injuries.filter((x) => x.id !== d.id);
+            return;
+        }
         case 'bloodwork.del': {
             if (Array.isArray(s.bloodwork))
                 s.bloodwork = s.bloodwork.filter((x) => x.id !== d.id);
@@ -3791,7 +4127,7 @@ function projectSnapshot(snap, pending) {
     const defs = s.bioDefs;
     if (touched && defs && defs.goals) {
         Object.keys(s.bio || {}).forEach(day => {
-            const r = (0, readiness_1.readiness)(s.bio[day], defs.goals, defs.tags || []);
+            const r = (0, readiness_1.readiness)(s.bio[day], defs.goals, defs.tags || [], defs.base || null);
             if (!s.readiness)
                 s.readiness = {};
             if (r === null)
@@ -4041,7 +4377,11 @@ function tissue(inp, days = 240) {
                     if (e1l > 0 && (!cur || e1l * retention(Math.max(0, (keyToTime(inp.today) - keyToTime(s.date)) / dayMs)) > cur.e1 * retention(Math.max(0, (keyToTime(inp.today) - keyToTime(cur.day)) / dayMs))))
                         lifts.set(lib.n, { e1: e1l, day: s.date, ex: lib, bw: bwShare !== undefined });
                 }
-                const rel = prevBest > 0 ? e1 / prevBest : 0.8;
+                // Intensity = the weight as a share of your best estimated 1RM on this exercise (%1RM). It used to be
+                // this set's e1RM over the best, which reads every set at your usual rep target as "heavy" — 60 kg × 15,
+                // repeated weekly, loaded tendons like 140 × 3. Tendon strain follows the load itself (Bohm 2015).
+                const top = Math.max(prevBest, e1);
+                const rel = w > 0 && top > 0 ? w / top : 0.8;
                 const hard = st.rpe != null && Number(st.rpe) < 6 ? 0.5 : 1;
                 if (di >= 0 && di < days) {
                     Object.entries(load).forEach(([m, x]) => { (muscleDay[m] = muscleDay[m] || new Array(days).fill(0))[di] += x * hard; });
@@ -4188,7 +4528,13 @@ function tissue(inp, days = 240) {
     Object.values(muscleDay).forEach(arr => { all = all ? all.map((v, i) => v + arr[i]) : arr.slice(); });
     const tot = acwrOf(all);
     const avg = (xs) => xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length * 10) / 10 : null;
-    return { muscles, tendons, arTotal: Math.round(arS / arW), acwr: tot.r === null ? null : Math.round(tot.r * 100) / 100, rpe7: avg(rpeRecent), rpePrev: avg(rpeEarlier) };
+    const liftList = [];
+    lifts.forEach(L => {
+        if (L.ex && L.ex.p)
+            liftList.push({ n: L.ex.n, p: L.ex.p, e: L.ex.e, bw: L.bw, day: L.day,
+                e1: Math.round(L.e1 * retention(Math.max(0, (keyToTime(inp.today) - keyToTime(L.day)) / dayMs)) * 10) / 10 });
+    });
+    return { lifts: liftList, muscles, tendons, arTotal: Math.round(arS / arW), acwr: tot.r === null ? null : Math.round(tot.r * 100) / 100, rpe7: avg(rpeRecent), rpePrev: avg(rpeEarlier) };
 }
 
   },
