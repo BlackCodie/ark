@@ -182,7 +182,11 @@ document.addEventListener('keydown', e => {
   const rp = rl && L.relayUnpack(rl[1]);
   if (rp) {
     const again = state.relay && state.relay.key === rp.k && state.relay.token === rp.t;
-    if (!again) {
+    // A link can come from anyone. Moving an existing connection to a different repository would send
+    // everything logged from then on to whoever made the link, so that one case asks first.
+    const moved = state.relay && state.relay.repo !== rp.r
+      && !confirm('This link connects ARK to a different sync repository (' + rp.r + ').\n\nOnly continue if you just scanned the QR code on YOUR PC.');
+    if (!again && !moved) {
       state.relay = { repo: rp.r, token: rp.t, key: rp.k, sent: null, etag: null };
       state.token = 'relay'; state.hub = null; state.qrCode = null; state.lastError = null;
       changed({ now: true });
