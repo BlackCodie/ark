@@ -5,6 +5,7 @@
    desktop computes something (readiness), the phone shows the desktop's value
    and says when it is waiting for a fresh one.
    ══════════════════════════════════════════════════════════════════════ */
+import { questsCard, renderLab } from './system.js';
 import {
   L, state, view, emit, changed, esc, icon, today, shiftDay, fmt1, fmtMins, fmtDay, daysBetween, homeMove, anywhere, caState, checkCa, onPublicCopy, pair,
   ringsSvg, ringSvg, sparkSvg, barsSvg, syncLabel, paired, haptic, toast, scheduleSync,
@@ -189,6 +190,7 @@ export function renderToday() {
       <div class="rl" style="--c:${C.practice}"><div class="k">Practice</div><div class="v num">${pm}<small>/ ${s.practiceMins} min</small></div></div>
     </div></section>`;
 
+  H += questsCard(v);
   H += healthCard(v, t);
   H += routineCard();
   H += mindGlance();
@@ -388,8 +390,10 @@ export function renderGrow() {
     <button class="${seg === 'skills' ? 'on' : ''}" data-act="grow-seg" data-seg="skills">Skills</button>
     <button class="${seg === 'tree' ? 'on' : ''}" data-act="grow-seg" data-seg="tree">Tree</button>
     <button class="${seg === 'goals' ? 'on' : ''}" data-act="grow-seg" data-seg="goals">Goals</button>
-    <button class="${seg === 'books' ? 'on' : ''}" data-act="grow-seg" data-seg="books">Books</button></div>`;
+    <button class="${seg === 'books' ? 'on' : ''}" data-act="grow-seg" data-seg="books">Books</button>
+    <button class="${seg === 'lab' ? 'on' : ''}" data-act="grow-seg" data-seg="lab">Lab</button></div>`;
   if (seg === 'books') return H + renderBooks();
+  if (seg === 'lab') return H + renderLab();
 
   if (seg === 'tree') {
     const tree = v.tree || [];

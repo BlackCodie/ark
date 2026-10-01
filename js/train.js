@@ -9,6 +9,7 @@
    per-set fields (rpe, type d/f) and per-exercise ones (warm, note, ss) ride
    along; the PC keeps them and its maths ignores them.
    ══════════════════════════════════════════════════════════════════════ */
+import { planCard, planNow } from './system.js';
 import {
   L, state, view, emit, emitUndoable, changed, esc, icon, today, fmt1, fmtDay, uid, toast, haptic, chime, unlockAudio, daysBetween,
   openSheet, closeSheet, topSheet, barsSvg, sparkSvg, hubBase,
@@ -153,13 +154,7 @@ export function renderTrain() {
   } else {
     H += `<div class="sec" style="margin-top:4px"><h2>Quick start</h2></div>
       <button class="btn btn-prominent block strong-go" style="--accent:${BLUE}" data-act="start-empty">Start an Empty Workout</button>`;
-    const tn = trainNext(v);
-    if (tn.length && !state.pending.some(e => e.type === 'workout.add' && e.data.session && e.data.session.date === t)) {
-      H += `<button class="card frost sugg" data-act="start-suggested"><span class="eyebrow">Suggested</span>
-        <b>${tn.map(m => GROUPS[m.group][0]).join(' · ')}</b>
-        <span class="sub">${tn[0].state === 'detrained' ? 'Adaptation is fading — these come first' : tn[0].state === 'untouched' ? 'Never trained — start light' : 'Recovered and under weekly target'}</span>
-        <span class="chev">${icon('chev', 16)}</span></button>`;
-    }
+    if (!v.workouts.some(w => w.date === t)) H += planCard(v);
   }
 
   /* templates */
@@ -231,6 +226,17 @@ function startWith(exList, extra = {}) {
 export function trainGap() {
   const ds = view().workouts.map(w => w.date).filter(Boolean).sort();
   return ds.length ? daysBetween(ds[ds.length - 1], today()) : 0;
+}
+/** Start today's planned session (logic/src/planner.ts): its exercises and set counts; targets come from
+ *  the usual progression placeholders, and a deload plan carries its lighter weight. */
+export function startPlan(P) {
+  if (state.workout) { toast('Finish or cancel the current workout first'); openWorkout(); return; }
+  const deload = !!(P.note && /Deload/.test(P.note));
+  startWith(P.exercises.map(e => {
+    const x = newExercise({ n: e.n, c: e.c, g: e.g, m: e.m || [], e: e.e || 'other' }, e.sets);
+    if (deload && e.target && e.target.w) x.deloadW = e.target.w;
+    return x;
+  }), { name: P.title });
 }
 /** Start a workout with the exercises that hit these muscles, most recently used first. */
 export function startForMuscles(slugs) {
@@ -752,6 +758,8 @@ export const actions = {
     startWith(last.exercises.map(e => newExercise({ n: e.n, c: e.c, g: e.g, m: e.m || [], e: e.e || 'other' }, e.sets.length)), { name: last.name || defaultName() });
   },
   'start-suggested'() {
+    const P = planNow();
+    if (!P.rest) { startPlan(P); return; }
     const v = view(), want = trainNext(v).map(m => m.group);
     let best = null, score = 0;
     (v.routines || []).forEach(r => {

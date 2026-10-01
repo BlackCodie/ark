@@ -20,6 +20,7 @@ import { startForMuscles, tissueNow } from './train.js';
 import { secMind } from './mind.js';
 import { standing, fmtAmt } from './doses.js';
 import { hormoneRows } from './hormones.js';
+import { fatigueCard, dungeonCard, photoCard, storyBlock } from './system.js';
 
 const ui = { face: 'front', mode: 'status', tl: 0, sel: null, open: {} };
 const MODES = [['status', 'Status'], ['strength', 'Strength'], ['mobility', 'Mobility'], ['soreness', 'Soreness'], ['volume', 'Thermal'], ['range', 'Range']];
@@ -411,7 +412,8 @@ function secMicros(v) {
 /* ── endocrine: a clean list; each hormone opens its day and 21-day charts (js/hormones.js) ── */
 function secEndo(v) {
   const E = v.endo;
-  let H = `<div class="sim slim"><span>ⓘ</span><div>Estimates on a 0–100 scale from ARK's hormone model, computed on your PC — <b>not blood levels</b>. Tap a hormone for its day, hour by hour, and the last 3 weeks.</div></div>`;
+  let H = `<div class="sim slim"><span>ⓘ</span><div>Estimates on a 0–100 scale from ARK's hormone model, computed on your PC — <b>not blood levels</b>. Tap a hormone for its day, hour by hour, and the last 3 weeks.</div></div>
+    <button class="btn btn-tint block" style="--accent:#bf5af2;margin:0 0 12px" data-act="whatif-open">⟳ What if… — simulate a change</button>`;
   if (!E) return H + card(`<div class="empty">Nothing estimated yet. Log sleep, stress, intake or a workout and your PC's engine begins estimating.</div>`) + bloodCard(v);
   const cc = E.confidence >= 0.55 ? '#30d158' : E.confidence >= 0.3 ? '#ffb340' : '#ff6b5a';
   H += hormoneRows(v);
@@ -587,6 +589,7 @@ function muscleSheet(slug) {
         <div class="st"><span style="color:${TST[x.status][1]}">${TST[x.status][0]}</span>${x.acwr !== null ? ' · load ratio ' + x.acwr : ''}${x.collagenSessions ? ' · ' + x.collagenSessions + '× collagen + C' : ''}</div></span>
         <b class="num">${x.capacity}</b></div>`).join('')}</section>` : ''}
       ${injBlock(v, slug)}
+      ${storyBlock(v, slug)}
       <div class="hist7" style="margin-top:14px">${days.map(k => `<span class="${hits.has(k) ? 'hit' : ''} ${k === t ? 't' : ''}"><i></i>${fmtDay(k, { weekday: 'narrow' })}</span>`).join('')}</div>
       <div class="blk"><div class="blk-h"><span class="eyebrow">Soreness</span><span class="val">${SORE_LBL[met.soreness || 0]}</span></div>
         <div class="sore">${SORE_LBL.map((l, i) => `<button class="${(met.soreness || 0) === i && (i > 0 || met.soreTs) ? 'on' : ''}" style="--sc:${SORE_COLORS[i]}" data-act="ms-sore" data-slug="${slug}" data-v="${i}">${l.toUpperCase()}</button>`).join('')}</div>
@@ -712,6 +715,7 @@ function secDevelop(v) {
     + card(`<div class="dv-vol">${rows}</div>
       <div class="fig-legend" style="margin-top:10px">${['under', 'low', 'optimal', 'high', 'over'].map(k => `<span><i style="background:${L.VOLUME_ZONE[k].color}"></i>${L.VOLUME_ZONE[k].label.replace(/ —.*/, '')}</span>`).join('')}</div>
       <p class="sub" style="line-height:1.45;margin:8px 0 0">Green band = productive range, red tick = the most you can recover from${notes.size ? ' (now: ' + esc([...notes].join(' · ').toLowerCase()) + ')' : ''}. Practitioner landmarks built on the dose–response research — guides, not measurements.</p>`);
+  H += fatigueCard(v);
   /* injuries */
   const open = (v.injuries || []).filter(j => !j.cleared);
   H += `<div class="ba-h"><h2 style="font-size:1.05rem">Injuries</h2><span class="k">until you clear them</span></div>`
@@ -741,6 +745,8 @@ function secDevelop(v) {
         ${r.verdict !== 'balanced' ? `<p class="sub" style="margin:0 0 8px;line-height:1.4">${esc(r.note)}</p>` : ''}`;
     }).join('') + `<p class="sub" style="margin:6px 0 0;line-height:1.4">Green band = the usual coaching range. A nudge, not a diagnosis.</p>`
       : `<div class="empty" style="padding:6px">Shows once both lifts of a pair are logged — row &amp; bench, overhead &amp; bench, leg curl &amp; extension, squat &amp; deadlift.</div>`);
+  H += dungeonCard(v);
+  H += photoCard();
   return H;
 }
 

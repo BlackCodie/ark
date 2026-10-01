@@ -11,6 +11,7 @@ import { actions as doseActions, onDoseInput } from './doses.js';
 import { actions as mindActions } from './mind.js';
 import { actions as routineActions } from './routines.js';
 import { actions as hormoneActions } from './hormones.js';
+import { actions as systemActions, onPhotoInput, onWhatIfInput } from './system.js';
 
 applyTheme();
 
@@ -137,7 +138,7 @@ setInterval(tickElapsed, 1000);
 
 /* ── events ── */
 const ACT = {
-  ...viewActions, ...trainActions, ...sheetActions, ...bodyActions, ...moreActions, ...reviewActions, ...doseActions, ...mindActions, ...routineActions, ...hormoneActions,
+  ...viewActions, ...trainActions, ...sheetActions, ...bodyActions, ...moreActions, ...reviewActions, ...doseActions, ...mindActions, ...routineActions, ...hormoneActions, ...systemActions,
   tab(d) { closeAllSheets(); haptic(); switchTab(d.tab, d.seg); },
   'sheet-close'() { closeSheet(topSheet()); },
 };
@@ -158,7 +159,9 @@ document.addEventListener('input', e => {
   else if (el.matches('[data-tl]')) onTimeline(el);
   else if (el.matches('[data-pl-input]')) onPlatesInput(el);
   else if (el.matches('[data-ds-amt]')) onDoseInput(el);
+  else if (onWhatIfInput(el) || onPhotoInput(el)) { /* handled */ }
 });
+document.addEventListener('change', e => { if (e.target.matches('[data-ph-file]')) onPhotoInput(e.target); });
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.id === 'pair-code') ACT['pair-go']();
   if (e.key === 'Escape' && topSheet()) closeSheet(topSheet());

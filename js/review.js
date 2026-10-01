@@ -6,6 +6,7 @@
    so; nothing is filled in to make the week look complete.
    ══════════════════════════════════════════════════════════════════════ */
 import { L, state, view, esc, icon, today, shiftDay, fmt1, fmtDay, fmtMins, openSheet, topSheet, ringSvg } from './core.js';
+import { systemReportHtml } from './system.js';
 
 let which = 0;   // 0 = this week, 1 = last week
 
@@ -35,6 +36,7 @@ export function reviewSheet(back = 0) {
       let H = `<div class="seg" style="margin-bottom:12px"><button class="${which === 0 ? 'on' : ''}" data-act="review-week" data-b="0">This week</button>
         <button class="${which === 1 ? 'on' : ''}" data-act="review-week" data-b="1">Last week</button></div>
         <div class="sub" style="text-align:center;margin:-2px 0 14px">${range}${which === 0 ? ` · ${R.days} of 7 days so far` : ''}</div>`;
+      if (which === 0) { try { H += systemReportHtml(R); } catch (e) { console.error('[report]', e); } }
       if (R.empty) return H + `<div class="card frost empty">Nothing was logged this week. One workout, one habit or one weigh-in and this page starts filling in — with your own numbers only.</div>`;
 
       const W = R.workouts;

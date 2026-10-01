@@ -805,6 +805,264 @@ function sameExercise(a, b) {
 }
 
   },
+  "./experiments": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.EXP_TEMPLATES = exports.EXP_METRICS = void 0;
+exports.experimentReport = experimentReport;
+exports.cleanExperiment = cleanExperiment;
+exports.EXP_METRICS = {
+    sleep: { label: 'Sleep', unit: 'h', better: 1, src: 'bio' },
+    deep: { label: 'Deep sleep', unit: 'h', better: 1, src: 'bio' },
+    energy: { label: 'Energy', unit: '/10', better: 1, src: 'bio' },
+    mood: { label: 'Mood', unit: '/5', better: 1, src: 'bio' },
+    stress: { label: 'Stress', unit: '/10', better: -1, src: 'bio' },
+    hrv: { label: 'HRV', unit: 'ms', better: 1, src: 'bio' },
+    rhr: { label: 'Resting HR', unit: 'bpm', better: -1, src: 'bio' },
+    steps: { label: 'Steps', unit: '', better: 1, src: 'bio' },
+    readiness: { label: 'Readiness', unit: '', better: 1, src: 'readiness' },
+    weight: { label: 'Weight', unit: 'kg', better: 0, src: 'weight' },
+};
+exports.EXP_TEMPLATES = [
+    { name: 'Creatine 5 g daily', kind: 'supplement', dose: 'creatine', days: 28, metrics: ['energy', 'readiness', 'weight'] },
+    { name: 'Magnesium before bed', kind: 'supplement', dose: 'mag', days: 21, metrics: ['sleep', 'deep', 'readiness'] },
+    { name: 'No caffeine after noon', kind: 'sleep', days: 14, metrics: ['sleep', 'deep', 'energy'] },
+    { name: 'Morning daylight walk', kind: 'habit', days: 21, metrics: ['mood', 'energy', 'sleep'] },
+    { name: 'Cold shower daily', kind: 'habit', days: 21, metrics: ['mood', 'stress', 'hrv'] },
+];
+const dk = (k, n) => { const [y, m, d] = k.split('-').map(Number); const t = new Date(y, m - 1, d + n); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); };
+const span = (a, b) => { const [y1, m1, d1] = a.split('-').map(Number), [y2, m2, d2] = b.split('-').map(Number); return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 864e5); };
+const mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
+const sd = (a) => { if (a.length < 2)
+    return 0; const m = mean(a); return Math.sqrt(a.reduce((s, x) => s + (x - m) ** 2, 0) / (a.length - 1)); };
+const r2 = (x) => Math.round(x * 100) / 100;
+const MIN_BEFORE = 5, MIN_AFTER = 7;
+function experimentReport(e, data, today) {
+    const end = e.stopped && e.stopped < dk(e.start, e.days - 1) ? e.stopped : dk(e.start, e.days - 1);
+    const last = end < today ? end : today;
+    const day = Math.max(0, span(e.start, today) + 1);
+    const done = today > end;
+    const valOf = (key, k) => {
+        const M = exports.EXP_METRICS[key];
+        if (!M)
+            return null;
+        const v = M.src === 'readiness' ? (data.readiness || {})[k] : M.src === 'weight' ? (data.weights || {})[k] : (data.bio[k] || {})[key];
+        const n = Number(v);
+        return v === null || v === undefined || !isFinite(n) || n <= 0 && key !== 'stress' ? null : n;
+    };
+    const metrics = e.metrics.filter(k => exports.EXP_METRICS[k]).map(key => {
+        const M = exports.EXP_METRICS[key];
+        const B = [], A = [];
+        for (let i = 1; i <= 28; i++) {
+            const v = valOf(key, dk(e.start, -i));
+            if (v !== null)
+                B.push(v);
+        }
+        for (let k = e.start; k <= last; k = dk(k, 1)) {
+            const v = valOf(key, k);
+            if (v !== null)
+                A.push(v);
+        }
+        const out = { key, label: M.label, unit: M.unit, before: B.length ? r2(mean(B)) : null, after: A.length ? r2(mean(A)) : null,
+            nBefore: B.length, nAfter: A.length, diff: null, d: null, t: null, verdict: 'collecting', text: '' };
+        if (B.length < MIN_BEFORE || A.length < MIN_AFTER) {
+            out.text = B.length < MIN_BEFORE ? 'Not enough before the start (' + B.length + '/' + MIN_BEFORE + ' days logged)' : (MIN_AFTER - A.length) + ' more logged day' + (MIN_AFTER - A.length === 1 ? '' : 's') + ' to judge';
+            return out;
+        }
+        const diff = mean(A) - mean(B), pooled = Math.sqrt((sd(A) ** 2 + sd(B) ** 2) / 2);
+        const se = Math.sqrt(sd(A) ** 2 / A.length + sd(B) ** 2 / B.length);
+        out.diff = r2(diff);
+        out.d = pooled > 0 ? r2(diff / pooled) : null;
+        out.t = se > 0 ? r2(diff / se) : null;
+        const clear = out.d !== null && out.t !== null ? Math.abs(out.d) >= 0.4 && Math.abs(out.t) >= 2 : Math.abs(diff) > 0 && se === 0;
+        if (!clear) {
+            out.verdict = 'noise';
+            out.text = 'Within your normal day-to-day noise';
+        }
+        else {
+            const good = M.better === 0 ? null : Math.sign(diff) === M.better;
+            out.verdict = good === null ? 'changed' : good ? 'better' : 'worse';
+            out.text = (diff > 0 ? 'Up ' : 'Down ') + Math.abs(r2(diff)) + (M.unit && M.unit[0] !== '/' ? ' ' + M.unit : '') + ' — a clear change' + (good === null ? '' : good ? ', in the good direction' : ', in the wrong direction');
+        }
+        return out;
+    });
+    let adherence = null;
+    if (e.dose && data.doses) {
+        const daysWith = new Set();
+        data.doses.forEach(d => { if (d.k === e.dose) {
+            const t = new Date(d.at);
+            const k = t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0');
+            if (k >= e.start && k <= last)
+                daysWith.add(k);
+        } });
+        const n = Math.max(1, span(e.start, last) + 1);
+        adherence = Math.round(daysWith.size / n * 100);
+    }
+    const status = e.stopped && e.stopped <= today ? 'Stopped ' + e.stopped : done ? 'Finished — ' + e.days + ' days' : 'Day ' + Math.min(day, e.days) + ' of ' + e.days;
+    return { day: Math.min(day, e.days), days: e.days, done: done || !!(e.stopped && e.stopped <= today), status, adherence, metrics,
+        caveat: 'You know you are taking it, other things changed too, and bad weeks tend to be followed by better ones. Treat a clear result as worth repeating, not as proof.' };
+}
+function cleanExperiment(x, ts) {
+    if (!x || typeof x !== 'object')
+        return null;
+    const isDay = (k) => typeof k === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(k);
+    const id = String(x.id || '').slice(0, 64), name = String(x.name || '').trim().slice(0, 80);
+    const days = Math.round(Number(x.days));
+    const metrics = Array.isArray(x.metrics) ? x.metrics.filter((m) => exports.EXP_METRICS[m]).slice(0, 6) : [];
+    if (!id || !name || !isDay(x.start) || !(days >= 7 && days <= 120) || !metrics.length)
+        return null;
+    return { id, name, kind: String(x.kind || 'other').slice(0, 20), dose: x.dose ? String(x.dose).slice(0, 20) : null, start: x.start, days,
+        stopped: isDay(x.stopped) ? x.stopped : null, metrics, note: String(x.note || '').slice(0, 300), upd: String(ts || x.upd || '') };
+}
+
+  },
+  "./fatigue": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.fatigueRadar = fatigueRadar;
+const back = (k, n) => { const [y, m, d] = k.split('-').map(Number); const t = new Date(y, m - 1, d - n); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); };
+const mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
+const median = (a) => { const v = a.slice().sort((x, y) => x - y), m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
+const r1 = (x) => Math.round(x * 10) / 10;
+const e1 = (w, r) => w * (1 + r / 30);
+function series(inp, field, from, to) {
+    const out = [];
+    for (let i = from; i <= to; i++) {
+        const d = inp.bio[back(inp.today, i)];
+        const v = d ? Number(d[field]) : 0;
+        if (v > 0)
+            out.push(v);
+    }
+    return out;
+}
+function fatigueRadar(inp) {
+    const S = [];
+    // HRV: last 3 days vs your normal (days 4–33 back). ~10 % below is beyond day-to-day noise for most people.
+    {
+        const rec = series(inp, 'hrv', 0, 2), base = series(inp, 'hrv', 3, 33);
+        if (rec.length >= 2 && base.length >= 5) {
+            const r = mean(rec), b = median(base);
+            S.push({ key: 'hrv', label: 'HRV', physio: true, on: r < b * 0.9, detail: Math.round(r) + ' ms (3 days) vs your ' + Math.round(b) });
+        }
+        else
+            S.push({ key: 'hrv', label: 'HRV', physio: true, on: null, detail: 'needs a few days of readings' });
+    }
+    {
+        const rec = series(inp, 'rhr', 0, 2), base = series(inp, 'rhr', 3, 33);
+        if (rec.length >= 2 && base.length >= 5) {
+            const r = mean(rec), b = median(base);
+            S.push({ key: 'rhr', label: 'Resting HR', physio: true, on: r >= b + 5, detail: Math.round(r) + ' bpm (3 days) vs your ' + Math.round(b) });
+        }
+        else
+            S.push({ key: 'rhr', label: 'Resting HR', physio: true, on: null, detail: 'needs a few days of readings' });
+    }
+    {
+        const s = series(inp, 'sleep', 0, 6);
+        S.push(s.length >= 4 ? { key: 'sleep', label: 'Sleep', physio: false, on: mean(s) < 6.5, detail: r1(mean(s)) + ' h a night, last 7' }
+            : { key: 'sleep', label: 'Sleep', physio: false, on: null, detail: 'log sleep on 4+ nights' });
+    }
+    {
+        const rd = inp.readiness || {};
+        const pick = (a, b) => { const o = []; for (let i = a; i <= b; i++) {
+            const v = rd[back(inp.today, i)];
+            if (typeof v === 'number')
+                o.push(v);
+        } return o; };
+        const rec = pick(0, 4), base = pick(5, 32);
+        S.push(rec.length >= 3 && base.length >= 7
+            ? { key: 'readiness', label: 'Readiness', physio: false, on: mean(rec) < mean(base) - 10, detail: Math.round(mean(rec)) + ' (5 days) vs ' + Math.round(mean(base)) + ' usual' }
+            : { key: 'readiness', label: 'Readiness', physio: false, on: null, detail: 'needs more check-ins' });
+    }
+    // Performance and effort at the same lifts: this week against the 4 weeks before.
+    {
+        const wk = back(inp.today, 6), prevFrom = back(inp.today, 34);
+        const by = new Map();
+        inp.sessions.forEach(s => {
+            if (s.date > inp.today || s.date < prevFrom)
+                return;
+            const recent = s.date >= wk;
+            (s.exercises || []).forEach(e => {
+                const o = by.get(e.n) || { now: 0, prev: 0, rpeNow: [], rpePrev: [], wNow: 0, wPrevMax: 0 };
+                (e.sets || []).forEach(st => {
+                    if (st.warm)
+                        return;
+                    const w = Number(st.w) || 0, r = Number(st.r) || 0;
+                    if (!(r > 0))
+                        return;
+                    const v = e1(w, r);
+                    if (recent) {
+                        o.now = Math.max(o.now, v);
+                        o.wNow = Math.max(o.wNow, w);
+                        if (st.rpe)
+                            o.rpeNow.push(Number(st.rpe));
+                    }
+                    else {
+                        o.prev = Math.max(o.prev, v);
+                        o.wPrevMax = Math.max(o.wPrevMax, w);
+                        if (st.rpe)
+                            o.rpePrev.push(Number(st.rpe));
+                    }
+                });
+                by.set(e.n, o);
+            });
+        });
+        const both = [...by.entries()].filter(([, o]) => o.now > 0 && o.prev > 0);
+        const dropped = both.filter(([, o]) => o.now < o.prev * 0.95);
+        S.push(both.length >= 2
+            ? { key: 'perf', label: 'Performance', physio: true, on: dropped.length >= 2 && dropped.length / both.length >= 0.5,
+                detail: dropped.length ? dropped.length + ' of ' + both.length + ' lifts down 5 %+ vs last month (' + dropped.slice(0, 2).map(d => d[0]).join(', ') + ')' : both.length + ' lifts holding or up' }
+            : { key: 'perf', label: 'Performance', physio: true, on: null, detail: 'repeat 2+ lifts this week to compare' });
+        // effort: RPE at the same or lighter weight, up by a full point
+        const comp = both.filter(([, o]) => o.rpeNow.length >= 2 && o.rpePrev.length >= 2 && o.wNow <= o.wPrevMax);
+        if (comp.length) {
+            const d = mean(comp.map(([, o]) => mean(o.rpeNow) - mean(o.rpePrev)));
+            S.push({ key: 'effort', label: 'Effort (RPE)', physio: false, on: d >= 1, detail: (d >= 0 ? '+' : '') + r1(d) + ' RPE at the same weights' });
+        }
+        else
+            S.push({ key: 'effort', label: 'Effort (RPE)', physio: false, on: null, detail: 'log RPE on sets to track' });
+    }
+    S.push(inp.acwr != null
+        ? { key: 'load', label: 'Load spike', physio: false, on: inp.acwr > 1.5, detail: 'this week ' + inp.acwr + '× your 4-week average' }
+        : { key: 'load', label: 'Load spike', physio: false, on: null, detail: 'needs 3 weeks of training history' });
+    if (inp.sore != null)
+        S.push({ key: 'sore', label: 'Soreness', physio: false, on: inp.sore >= 3, detail: inp.sore + ' muscle' + (inp.sore === 1 ? '' : 's') + ' rated sore' });
+    const measured = S.filter(s => s.on !== null).length, firing = S.filter(s => s.on).length;
+    const physio = S.some(s => s.on && s.physio);
+    let level, title, text, color;
+    if (measured < 2) {
+        level = 'unknown';
+        title = 'Not enough signals';
+        color = 'rgba(235,240,245,.55)';
+        text = 'Log HRV or resting HR (Apple Health), sleep, and RPE on a few sets — the radar needs at least two signals to read.';
+    }
+    else if (firing >= 3 && physio) {
+        level = 'deload';
+        title = 'Deload recommended';
+        color = '#ff453a';
+        text = 'Several signals agree, including your body\'s own. Take 4–7 days: same exercises, about half the sets, ~90 % of the weight, stop 3+ reps short of failure. Sleep is the lever.';
+    }
+    else if (firing >= 2) {
+        level = 'strained';
+        title = 'Strain building';
+        color = '#ff9f0a';
+        text = 'Two or more signals are up. Trim volume a little this week and protect sleep; if it persists, deload.';
+    }
+    else if (firing === 0 && measured >= 3) {
+        level = 'fresh';
+        title = 'Fresh';
+        color = '#30d158';
+        text = 'Nothing is firing — a good week to push.';
+    }
+    else {
+        level = 'ok';
+        title = 'Normal';
+        color = '#40c8e0';
+        text = firing ? 'One signal is up — normal noise unless it sticks.' : 'Nothing worrying in what is measured.';
+    }
+    return { level, title, text, color, signals: S, firing, measured };
+}
+
+  },
   "./gym": function (exports, module, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -1404,6 +1662,13 @@ __exportStar(require("./bloodwork"), exports);
 __exportStar(require("./hourly"), exports);
 __exportStar(require("./relay"), exports);
 __exportStar(require("./physique"), exports);
+__exportStar(require("./planner"), exports);
+__exportStar(require("./fatigue"), exports);
+__exportStar(require("./experiments"), exports);
+__exportStar(require("./quests"), exports);
+__exportStar(require("./report"), exports);
+__exportStar(require("./progression"), exports);
+__exportStar(require("./whatif"), exports);
 
   },
   "./merge": function (exports, module, require) {
@@ -2514,6 +2779,432 @@ function builtEffect(dailyAmounts, fullDose, tau = 21) {
 }
 
   },
+  "./planner": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SPLIT = void 0;
+exports.lastSetsOf = lastSetsOf;
+exports.planWorkout = planWorkout;
+/**
+ * ONE-TAP WORKOUT — today's session, built from what the rest of ARK already knows.
+ *
+ * TRAIN NEXT says which muscles are ready and furthest under their weekly range (body.ts + physique.ts);
+ * injuries say what to leave alone; the fatigue radar says whether to hold back; the history says which
+ * exercises you actually do and what you lifted last time (progressionTarget). The plan is a starting
+ * point you confirm set by set — nothing is logged until you do.
+ *
+ * Per-session volume: returns per session flatten past roughly 6–10 hard sets for one muscle (the
+ * per-session ceiling discussed by Remmert 2023 / Schoenfeld's group), so a big weekly gap is spread over
+ * sessions rather than crammed into one.
+ */
+const exercises_1 = require("./exercises");
+const sync_1 = require("./sync");
+exports.SPLIT = {
+    push: ['chest', 'deltoids', 'triceps'],
+    pull: ['upper-back', 'biceps', 'trapezius', 'forearm'],
+    legs: ['quadriceps', 'hamstring', 'gluteal', 'calves', 'adductors', 'tibialis'],
+    core: ['abs', 'obliques', 'lower-back'],
+};
+const BIG = new Set(['chest', 'upper-back', 'deltoids', 'quadriceps', 'hamstring', 'gluteal']);
+const splitOf = (slug) => Object.keys(exports.SPLIT).find(k => exports.SPLIT[k].includes(slug)) || 'core';
+const NAMES = { chest: 'Chest', 'upper-back': 'Back', deltoids: 'Shoulders', triceps: 'Triceps', biceps: 'Biceps',
+    trapezius: 'Traps', forearm: 'Forearms', quadriceps: 'Quads', hamstring: 'Hamstrings', gluteal: 'Glutes', calves: 'Calves',
+    adductors: 'Adductors', tibialis: 'Tibialis', abs: 'Abs', obliques: 'Obliques', 'lower-back': 'Lower back' };
+const dayN = (k) => { const [y, m, d] = k.split('-').map(Number); return Date.UTC(y, m - 1, d) / 864e5; };
+/** The sets of the last time this exercise was done (working sets only), or null. */
+function lastSetsOf(sessions, name) {
+    const ss = sessions.slice().sort((a, b) => String(b.ts || b.date).localeCompare(String(a.ts || a.date)));
+    for (const s of ss) {
+        const e = (s.exercises || []).find(x => (0, exercises_1.sameExercise)(x.n, name));
+        const w = e && (e.sets || []).filter(x => !x.warm && Number(x.r) > 0);
+        if (w && w.length)
+            return w;
+    }
+    return null;
+}
+function planWorkout(inp) {
+    const inj = inp.injuries || {};
+    const hurt = (m) => !!((inj[m.slug] && inj[m.slug].sev >= 2) || (m.injury && m.injury.sev >= 2));
+    const ranked = inp.muscles.filter(m => m.priority > 0.05 && !hurt(m)).sort((a, b) => b.priority - a.priority);
+    if (!ranked.length) {
+        return { rest: true, title: 'Recovery day', focus: [], exercises: [], sets: 0, minutes: 0,
+            note: inp.muscles.some(m => m.injury) ? 'Everything trainable is still recovering — rest the injured area too.' : 'Everything is still inside its recovery window — rest, walk, stretch.' };
+    }
+    // Focus: the top muscle's split, plus up to two more muscles from the same split, plus one core muscle.
+    const split = splitOf(ranked[0].slug);
+    const focus = [ranked[0]];
+    ranked.slice(1).forEach(m => { if (focus.length < 3 && splitOf(m.slug) === split && split !== 'core')
+        focus.push(m); });
+    // The add-on is direct trunk work (abs, obliques) — never the lower back, whose 'exercise' would be a heavy hinge.
+    const core = ranked.find(m => (m.slug === 'abs' || m.slug === 'obliques') && !focus.includes(m));
+    if (core && split !== 'core' && focus.length < 4)
+        focus.push(core);
+    const scale = inp.fatigue === 'deload' ? 0.5 : inp.fatigue === 'strained' ? 0.75 : 1;
+    // Library: the user's own names first, then ARK's table — one entry per real exercise ("Bench Press" and
+    // "Bench Press (Barbell)" are the same lift and must not both be planned).
+    const lib = new Map();
+    inp.library.forEach(l => { const k = (0, exercises_1.canonicalName)(l.n); if (!lib.has(k))
+        lib.set(k, { meta: l, ex: (0, exercises_1.findExercise)(l.n) }); });
+    const lastDone = (n) => {
+        let best = -1;
+        inp.sessions.forEach(s => (s.exercises || []).forEach(e => { if ((0, exercises_1.sameExercise)(e.n, n))
+            best = Math.max(best, dayN(s.date)); }));
+        return best;
+    };
+    // Days since any training: after two weeks off the targets are a re-entry load (progressionTarget), the
+    // same rule the workout screen applies, so the plan and the set placeholders agree.
+    const lastAny = inp.sessions.reduce((a, s) => s.date <= inp.today && s.date > a ? s.date : a, '');
+    const gapDays = lastAny ? Math.round(dayN(inp.today) - dayN(lastAny)) : 0;
+    const injuredAny = Object.keys(inj).filter(s => inj[s] && inj[s].sev >= 1).concat(inp.muscles.filter(m => m.injury).map(m => m.slug));
+    const used = new Set();
+    const out = [];
+    focus.forEach((m, fi) => {
+        const big = BIG.has(m.slug);
+        const need = m.vol ? m.vol.need : 0;
+        let sets = need > 0 ? need : (big ? 4 : 3);
+        if (m.vol && m.vol.zone === 'high')
+            sets = 2;
+        sets = Math.max(2, Math.round(Math.min(big ? 6 : 4, sets) * scale));
+        const isAddOn = splitOf(m.slug) === 'core' && fi > 0;
+        if (isAddOn)
+            sets = Math.min(sets, 3);
+        // Exercises that work this muscle hard, never one that loads an injured muscle, done before = first.
+        const cands = [...lib.values()].filter(({ meta, ex }) => !used.has(meta.n)
+            && (ex ? (ex.load[m.slug] || 0) >= 0.8 : (meta.m || [])[0] === m.slug)
+            && !injuredAny.some(s => ex && (ex.load[s] || 0) >= 0.5))
+            .map(({ meta, ex }) => ({ meta, ex, last: lastDone(meta.n), compound: ex ? ex.mech === 'compound' : false }))
+            .filter(c => !(isAddOn && c.compound))
+            .sort((a, b) => (b.last >= 0 ? 1 : 0) - (a.last >= 0 ? 1 : 0) || (fi === 0 ? (b.compound ? 1 : 0) - (a.compound ? 1 : 0) : 0) || b.last - a.last);
+        if (!cands.length)
+            return;
+        const nEx = sets >= 5 && cands.length > 1 ? 2 : 1;
+        const split2 = nEx === 2 ? [Math.ceil(sets / 2), Math.floor(sets / 2)] : [sets];
+        split2.forEach((k, i) => {
+            const c = cands[i];
+            used.add(c.meta.n);
+            const last = lastSetsOf(inp.sessions, c.meta.n);
+            let target = last ? (0, sync_1.progressionTarget)(last.map(s => ({ w: Number(s.w) || 0, r: Number(s.r) || 0 })), inp.step || 2.5, 12, gapDays) : null;
+            if (target && inp.fatigue === 'deload' && target.w > 0)
+                target = { w: Math.round(target.w * 0.9 / (inp.step || 2.5)) * (inp.step || 2.5), r: target.r, reason: 'deload — about 90% of your recent weight' };
+            const meta = c.meta, ex = c.ex;
+            out.push({ n: meta.n, c: meta.c || (ex ? ex.c : 'other'), g: meta.g || (ex ? ex.g : ''), m: meta.m && meta.m.length ? meta.m : ex ? ex.m : [m.slug],
+                e: meta.e || (ex ? ex.e : 'other'), slug: m.slug, sets: k, target,
+                why: (m.vol && m.vol.need > 0 ? m.vol.need + ' sets to your weekly range' : 'ready to load') + (c.last < 0 ? ' · new to you — start light' : '') });
+        });
+    });
+    // Big compound work first, isolation and core last.
+    out.sort((a, b) => focus.findIndex(f => f.slug === a.slug) - focus.findIndex(f => f.slug === b.slug));
+    const sets = out.reduce((a, e) => a + e.sets, 0);
+    const minutes = Math.round(out.reduce((a, e) => { var _a; return a + e.sets * ((e.c === 'core' ? 60 : ((_a = (0, exercises_1.findExercise)(e.n)) === null || _a === void 0 ? void 0 : _a.mech) === 'compound' ? 150 : 90) + 45); }, 0) / 60 / 5) * 5;
+    const names = focus.filter(f => out.some(e => e.slug === f.slug)).map(f => NAMES[f.slug] || f.name || f.slug);
+    return { rest: false, title: (split === 'core' ? 'Core' : split[0].toUpperCase() + split.slice(1)) + ' · ' + names.join(', '),
+        focus: focus.filter(f => out.some(e => e.slug === f.slug)).map(f => f.slug), exercises: out, sets, minutes,
+        note: inp.fatigue === 'deload' ? 'Deload: half the sets at ~90% weight, stop 3+ reps short of failure.'
+            : inp.fatigue === 'strained' ? 'Fatigue signals are up — sets trimmed by a quarter.' : null };
+}
+
+  },
+  "./progression": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DUNGEONS = exports.DUNGEON_TIERS = void 0;
+exports.dungeons = dungeons;
+exports.muscleStory = muscleStory;
+/**
+ * DUNGEONS & MUSCLE STORIES — progress told from the lifting log, never invented.
+ *
+ * Dungeons: each main lift has six gates, E to S, at fixed multiples of the population standard for that
+ * movement (the same STRENGTH_STD table tissue.ts scores strength against: beginner 0.5×, novice 0.75×,
+ * intermediate 1×, then 1.2× / 1.4× / elite 1.8×), scaled by your body weight and sex. A gate is cleared on
+ * the first logged session whose estimated 1RM reaches it — the date is the real one. Gates open in order.
+ *
+ * Muscle story: thirteen weeks of one muscle — hard sets per week (by each exercise's loading of it), the
+ * best estimated 1RM on the lifts that train it, and the injuries that overlapped.
+ */
+const exercises_1 = require("./exercises");
+const tissue_1 = require("./tissue");
+const EQUIV = { barbell: 1, smith: 1.05, ez: 0.95, trap: 1.08, machine: 1, cable: 0.75, dumbbell: 0.42, kettlebell: 0.42, plate: 0.4 };
+const BW_SHARE = { vpull: 1, dip: 1, pushup: 0.64 };
+const UPPER = new Set(['hpress', 'ipress', 'dpress', 'vpress', 'row', 'srow', 'vpull', 'dip', 'pushup', 'curl', 'triext']);
+const dk = (k, n) => { const [y, m, d] = k.split('-').map(Number); const t = new Date(y, m - 1, d + n); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); };
+exports.DUNGEON_TIERS = [
+    { rank: 'E', ratio: 0.5, name: 'Beginner' }, { rank: 'D', ratio: 0.75, name: 'Novice' }, { rank: 'C', ratio: 1.0, name: 'Intermediate' },
+    { rank: 'B', ratio: 1.2, name: 'Strong' }, { rank: 'A', ratio: 1.4, name: 'Advanced' }, { rank: 'S', ratio: 1.8, name: 'Elite' },
+];
+exports.DUNGEONS = [
+    { key: 'bench', name: 'Bench Press', boss: 'The Iron Bench', p: ['hpress'] },
+    { key: 'squat', name: 'Squat', boss: 'The Deep Pit', p: ['squat'] },
+    { key: 'dead', name: 'Deadlift', boss: 'The Grave Lift', p: ['hinge'] },
+    { key: 'ohp', name: 'Overhead Press', boss: 'The Sky Gate', p: ['vpress'] },
+    { key: 'pull', name: 'Pull-up', boss: 'The Ascent', p: ['vpull'] },
+    { key: 'row', name: 'Row', boss: 'The Long Haul', p: ['row', 'srow'] },
+];
+/** Barbell-equivalent estimated 1RM of one set of a lift in pattern `p` (bodyweight moves include the body). */
+function setE1(exName, s, bw) {
+    var _a;
+    const ex = (0, exercises_1.findExercise)(exName);
+    if (!ex || !ex.p)
+        return null;
+    const w = Number(s.w) || 0, r = Number(s.r) || 0;
+    if (!(r > 0 && r <= 20) || s.warm)
+        return null;
+    const share = ex.e === 'bodyweight' ? BW_SHARE[ex.p] : undefined;
+    if (share !== undefined && !(bw > 0))
+        return null; // a bodyweight lift needs the body weight — never guessed
+    const load = share !== undefined ? bw * share + w : w / ((_a = EQUIV[ex.e]) !== null && _a !== void 0 ? _a : 1);
+    return load > 0 ? { p: ex.p, v: load * (1 + r / 30) } : null;
+}
+function dungeons(sessions, bw, sex) {
+    if (!bw || bw < 30)
+        return [];
+    const sorted = sessions.slice().sort((a, b) => a.date.localeCompare(b.date));
+    const female = String(sex || '').toLowerCase() === 'female';
+    return exports.DUNGEONS.map(D => {
+        const std = Math.max(...D.p.map(p => tissue_1.STRENGTH_STD[p] || 0)) * bw * (female ? (UPPER.has(D.p[0]) ? 0.72 : 0.82) : 1);
+        const gates = exports.DUNGEON_TIERS.map(t => ({ rank: t.rank, name: t.name, need: Math.round(std * t.ratio), cleared: null }));
+        let best = 0, bestDay = null;
+        sorted.forEach(s => (s.exercises || []).forEach(e => (e.sets || []).forEach(st => {
+            const x = setE1(e.n, st, bw);
+            if (!x || !D.p.includes(x.p))
+                return;
+            if (x.v > best) {
+                best = x.v;
+                bestDay = s.date;
+            }
+            gates.forEach(g => { if (!g.cleared && x.v >= g.need)
+                g.cleared = s.date; });
+        })));
+        // Gates open in order: a later gate cannot be cleared before the one below it.
+        for (let i = 1; i < gates.length; i++)
+            if (gates[i].cleared && (!gates[i - 1].cleared))
+                gates[i].cleared = null;
+        const nx = gates.find(g => !g.cleared);
+        return { key: D.key, name: D.name, boss: D.boss, best: best ? Math.round(best) : null, bestDay, gates,
+            next: nx ? { rank: nx.rank, need: nx.need, pct: Math.min(99, Math.round(best / nx.need * 100)) } : null, started: best > 0 };
+    });
+}
+/** Thirteen weeks of one muscle, oldest first. */
+function muscleStory(sessions, slug, today, injuries = [], weeks = 13, bw = null) {
+    const [y, m, d] = today.split('-').map(Number);
+    const dow = (new Date(y, m - 1, d).getDay() + 6) % 7;
+    const mon = dk(today, -dow);
+    const W = [];
+    for (let i = weeks - 1; i >= 0; i--)
+        W.push({ start: dk(mon, -7 * i), sets: 0, best: null, injured: false });
+    // The best-lift line follows ONE lift — the one you did most for this muscle — in its own units, so it
+    // reads as "Bench Press 80 → 85" rather than a blend of different exercises.
+    const count = new Map();
+    sessions.forEach(s => (s.exercises || []).forEach(e => { if (((0, exercises_1.loadingOf)(e).load[slug] || 0) >= 0.8 && s.date >= W[0].start)
+        count.set(e.n, (count.get(e.n) || 0) + 1); }));
+    const lift = [...count.entries()].sort((a, b) => b[1] - a[1])[0];
+    const liftName = lift ? lift[0] : null;
+    const idx = (day) => { for (let i = W.length - 1; i >= 0; i--)
+        if (day >= W[i].start)
+            return day <= dk(W[i].start, 6) ? i : -1; return -1; };
+    sessions.forEach(s => {
+        const i = idx(s.date);
+        if (i < 0)
+            return;
+        (s.exercises || []).forEach(e => {
+            const share = (0, exercises_1.loadingOf)(e).load[slug] || 0;
+            if (share <= 0)
+                return;
+            (e.sets || []).forEach(st => {
+                if (st.warm || !(Number(st.r) > 0))
+                    return;
+                W[i].sets += share * (st.rpe != null && Number(st.rpe) < 6 ? 0.5 : 1);
+                if (e.n === liftName && Number(st.w) > 0)
+                    W[i].best = Math.max(W[i].best || 0, Math.round(Number(st.w) * (1 + Number(st.r) / 30)));
+            });
+        });
+    });
+    injuries.filter(j => j.slug === slug).forEach(j => W.forEach(w => { const end = dk(w.start, 6); if (j.start <= end && (!j.cleared || j.cleared >= w.start))
+        w.injured = true; }));
+    W.forEach(w => { w.sets = Math.round(w.sets * 10) / 10; });
+    const withBest = W.filter(w => w.best);
+    const firstBest = withBest.length ? withBest[0].best : null, lastBest = withBest.length ? withBest[withBest.length - 1].best : null;
+    const total = Math.round(W.reduce((a, w) => a + w.sets, 0));
+    const peak = Math.max(0, ...W.map(w => w.sets));
+    const lines = [];
+    const trained = W.filter(w => w.sets >= 1).length;
+    if (!total)
+        lines.push('Not trained in the last ' + weeks + ' weeks.');
+    else {
+        lines.push('Trained in ' + trained + ' of ' + weeks + ' weeks · ' + total + ' hard sets in all.');
+        let gap = 0, worst = 0;
+        W.forEach(w => { gap = w.sets < 1 ? gap + 1 : 0; worst = Math.max(worst, gap); });
+        if (worst >= 3)
+            lines.push('Longest break: ' + worst + ' weeks.');
+        if (firstBest && lastBest && withBest.length >= 2)
+            lines.push(liftName + ': est. 1RM ' + firstBest + ' → ' + lastBest + ' (' + (lastBest >= firstBest ? '+' : '−') + Math.abs(Math.round((lastBest / firstBest - 1) * 100)) + ' %).');
+    }
+    if (W.some(w => w.injured))
+        lines.push('Injured during ' + W.filter(w => w.injured).length + ' of these weeks.');
+    return { weeks: W, total, peak, lift: liftName, firstBest, lastBest, change: firstBest && lastBest ? Math.round((lastBest / firstBest - 1) * 100) : null, lines };
+}
+
+  },
+  "./quests": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.dailyQuests = dailyQuests;
+exports.questProgress = questProgress;
+exports.questDay = questDay;
+exports.questStreak = questStreak;
+exports.bedtimeFor = bedtimeFor;
+/**
+ * DAILY QUESTS — the System's orders for today, written by the engines.
+ *
+ * They replace the PC's date-seeded objective pool ("make 3 log entries") with quests that come from what
+ * ARK actually knows: today's planned session (planner.ts), the caffeine cut-off for your bedtime (pk.ts),
+ * the protein still missing, vitals that were not logged, an experiment's daily dose, a tape re-measure
+ * that is due. Progress is never ticked by hand — every quest is checked against the records, on the PC
+ * and the phone alike. The list is fixed once per day (whichever device sees the day first), so finishing
+ * a workout cannot swap the workout quest for another.
+ */
+const exercises_1 = require("./exercises");
+const pk_1 = require("./pk");
+const dk = (k, n) => { const [y, m, d] = k.split('-').map(Number); const t = new Date(y, m - 1, d + n); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); };
+const dayOf = (iso) => { const t = new Date(iso); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); };
+const hm = (ms) => { const t = new Date(ms); return String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0'); };
+function dailyQuests(c) {
+    const Q = [];
+    const t = c.today, b = c.bio[t] || {};
+    // 1 — training (or recovery)
+    if (c.plan && !c.plan.rest && c.plan.sets > 0) {
+        Q.push({ id: 'q-train', kind: 'train', ic: '🏋️', name: 'Train ' + c.plan.title.replace(/^[^·]*·\s*/, '') + ': ' + c.plan.sets + ' hard sets',
+            goal: c.plan.sets, xp: 60, slugs: c.plan.focus, why: 'Furthest under range and recovered' + (c.plan.note ? ' · ' + c.plan.note : '') });
+    }
+    else if (c.plan && c.plan.rest) {
+        const stepsKnown = [0, 1, 2, 3, 4, 5, 6].some(i => Number((c.bio[dk(t, -i)] || {}).steps) > 0);
+        if (stepsKnown)
+            Q.push({ id: 'q-walk', kind: 'steps', ic: '🚶', name: 'Recovery day: walk 6,000 steps', goal: 6000, xp: 40, why: c.plan.note || 'Everything is recovering' });
+    }
+    // 2 — vitals that are missing (sleep today; a weigh-in when the last is 3+ days old)
+    const needs = [];
+    if (!(Number(b.sleep) > 0))
+        needs.push('sleep');
+    const lastW = Object.keys(c.weights || {}).filter(k => k <= t).sort().pop();
+    if (!lastW || lastW < dk(t, -2))
+        needs.push('weight');
+    if (needs.length)
+        Q.push({ id: 'q-vitals', kind: 'vitals', ic: '🧬', name: 'Log ' + needs.join(' + '), goal: needs.length, xp: 25, needs,
+            why: 'Every engine reads these — without them the estimates widen' });
+    // 3 — protein
+    if (c.goals.prot && c.goals.prot > 0)
+        Q.push({ id: 'q-protein', kind: 'protein', ic: '🥩', name: 'Protein: ' + Math.round(c.goals.prot) + ' g', goal: Math.round(c.goals.prot), xp: 40,
+            why: 'Muscle and tendon build slower below your goal' });
+    // 4 — caffeine cut-off, only for someone who uses caffeine
+    const cutoff = c.bedtime ? (0, pk_1.cutoffBefore)('caffeine', c.bedtime, 100, 25) : null;
+    const usesCaffeine = c.doses.some(d => d.k === 'caffeine' && dayOf(d.at) >= dk(t, -13));
+    if (usesCaffeine && cutoff)
+        Q.push({ id: 'q-caffeine', kind: 'caffeine', ic: '☕', name: 'Last caffeine by ' + hm(cutoff), goal: 1, xp: 30, until: cutoff,
+            why: 'Later than this, enough is still in you at ' + hm(c.bedtime) + ' to cost deep sleep' });
+    // 5 — an experiment's daily dose
+    (c.experiments || []).filter(e => e.dose && e.start <= t && t <= dk(e.start, e.days - 1) && !(e.stopped && e.stopped <= t)).slice(0, 1).forEach(e => {
+        Q.push({ id: 'q-exp-' + e.id, kind: 'dose', ic: '🧪', name: 'Experiment: ' + e.name, goal: 1, xp: 30, dose: e.dose, why: 'A missed day weakens the result' });
+    });
+    // 6 — habits
+    if (c.habits >= 3) {
+        const g = Math.max(2, Math.ceil(c.habits * 0.6));
+        Q.push({ id: 'q-habits', kind: 'habits', ic: '🔥', name: 'Clear ' + g + ' habits', goal: g, xp: 40 });
+    }
+    // 7 — tape re-measure every two weeks, once someone measures at all
+    const lastM = Object.keys(c.measures || {}).filter(k => k <= t).sort().pop();
+    if (lastM && lastM <= dk(t, -14))
+        Q.push({ id: 'q-tape', kind: 'tape', ic: '📏', name: 'Re-measure waist + neck', goal: 1, xp: 25, why: 'Two weeks since the last — the trend needs it' });
+    // fallback so a brand-new user still has a day to secure
+    if (Q.length < 3)
+        Q.push({ id: 'q-note', kind: 'note', ic: '📝', name: 'Write a field note', goal: 1, xp: 25 });
+    return Q.slice(0, 4);
+}
+function questProgress(q, D) {
+    const b = D.bio[D.day] || {};
+    const past = D.day < dayOf(new Date(D.now).toISOString());
+    const done = (cur, label) => ({ cur: Math.min(cur, q.goal), done: cur >= q.goal, failed: past && cur < q.goal, label });
+    switch (q.kind) {
+        case 'train': {
+            let n = 0;
+            D.workouts.filter(w => w.date === D.day).forEach(w => (w.exercises || []).forEach(e => {
+                const ld = (0, exercises_1.loadingOf)(e).load;
+                if (!(q.slugs || []).some(s => (ld[s] || 0) >= 0.5))
+                    return;
+                (e.sets || []).forEach(s => { if (!s.warm && Number(s.r) > 0 && !(s.rpe != null && Number(s.rpe) < 6))
+                    n++; });
+            }));
+            return done(n, n + ' / ' + q.goal + ' sets');
+        }
+        case 'steps': {
+            const s = Number(b.steps) || 0;
+            return done(s, s.toLocaleString() + ' / ' + q.goal.toLocaleString());
+        }
+        case 'vitals': {
+            const got = (q.needs || []).filter(k => k === 'weight' ? D.weights[D.day] > 0 : Number(b[k]) > 0).length;
+            return done(got, got + ' / ' + q.goal + ' logged');
+        }
+        case 'protein': {
+            const p = Math.round(Number(b.prot) || 0);
+            return done(p, p >= q.goal ? p + ' g ✓' : (q.goal - p) + ' g to go');
+        }
+        case 'caffeine': {
+            const late = D.doses.some(d => d.k === 'caffeine' && dayOf(d.at) === D.day && q.until != null && Date.parse(d.at) > q.until);
+            if (late)
+                return { cur: 0, done: false, failed: true, label: 'caffeine after the cut-off' };
+            const over = past || (q.until != null && D.now >= q.until);
+            return { cur: over ? 1 : 0, done: over, failed: false, label: over ? 'held ✓' : 'on track' };
+        }
+        case 'dose': {
+            const ok = D.doses.some(d => d.k === q.dose && dayOf(d.at) === D.day);
+            return done(ok ? 1 : 0, ok ? 'taken ✓' : 'not logged yet');
+        }
+        case 'habits': {
+            const n = Object.values(D.habitLog[D.day] || {}).filter(Boolean).length;
+            return done(n, n + ' / ' + q.goal);
+        }
+        case 'tape': {
+            const m = (D.measures || {})[D.day];
+            const ok = !!(m && m.waist);
+            return done(ok ? 1 : 0, ok ? 'measured ✓' : 'due');
+        }
+        case 'note': {
+            const n = (D.journal || []).filter(j => j.ts && dayOf(j.ts) === D.day).length;
+            return done(n, n ? 'written ✓' : 'not yet');
+        }
+        default: return { cur: 0, done: false, failed: false, label: '' };
+    }
+}
+/** How a day went: cleared and missed quests — the Penalty Zone line reads this for yesterday. */
+function questDay(defs, D) {
+    const res = defs.map(q => ({ q, p: questProgress(q, D) }));
+    const ok = res.filter(r => r.p.done);
+    return { done: ok.length, total: defs.length, xp: ok.reduce((a, r) => a + r.q.xp, 0), missed: res.filter(r => !r.p.done).map(r => r.q.name), all: defs.length > 0 && ok.length === defs.length };
+}
+/** Consecutive fully-cleared days before today, from the frozen lists. */
+function questStreak(frozen, dataFor, today) {
+    let n = 0;
+    for (let k = dk(today, -1); frozen[k] && frozen[k].length; k = dk(k, -1)) {
+        if (!questDay(frozen[k], dataFor(k)).all)
+            break;
+        n++;
+    }
+    return n;
+}
+/** Tonight's bedtime (ms): the median of the bedtimes logged over the last two weeks, else 23:00. The phone's
+ *  mind screen uses the same rule, so the cut-off it shows and the quest agree. */
+function bedtimeFor(bio, today) {
+    const hs = [];
+    for (let i = 0; i < 14; i++) {
+        const v = (bio[dk(today, -i)] || {}).bed;
+        if (typeof v === 'number')
+            hs.push(v < 12 ? v + 24 : v);
+    }
+    hs.sort((a, b) => a - b);
+    const h = hs.length ? hs[Math.floor(hs.length / 2)] : 23;
+    const [y, m, d] = today.split('-').map(Number);
+    return new Date(y, m - 1, d).getTime() + h * 3600e3;
+}
+
+  },
   "./readiness": function (exports, module, require) {
 "use strict";
 /**
@@ -2727,6 +3418,89 @@ async function relayEnsureRepo(token) {
     if (r.status !== 201 && r.status !== 422)
         throw new Error('could not create ' + repo + ' (' + r.status + ')');
     return repo;
+}
+
+  },
+  "./report": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.systemReport = systemReport;
+const BIG = ['chest', 'upper-back', 'deltoids', 'quadriceps', 'hamstring', 'gluteal'];
+// Axes where LOWER is better, and axes judged against a band (neither direction is simply good).
+const LOWER_BETTER = new Set(['cortisol']);
+const BAND = new Set(['estradiol', 'freeTestosterone']);
+/** Plain orders for the engine's latent states, when one of them is what is holding the estimate back. */
+const LEVER_TEXT = {
+    'low energy availability': 'Eat enough for your training — energy availability is low',
+    'low anabolic drive': 'Train with progression — anabolic drive is low',
+    'high recovery debt': 'Recover: protect sleep, cut junk volume',
+    'high catabolic pressure': 'Eat enough protein and energy — catabolic pressure is high',
+    'high inflammation load': 'Lower inflammation: sleep, steps, less alcohol',
+    'low circadian alignment': 'Regular sleep times and morning daylight',
+    'high stress load': 'Bring stress down — it is the biggest drag',
+    'low stress adaptation': 'Build stress resilience: daylight, training, breathing work',
+    'low autonomic balance': 'Recover: easy cardio, sleep, fewer late nights',
+};
+function systemReport(r, x = {}) {
+    const L = [];
+    const W = r.workouts;
+    if (r.empty)
+        L.push({ ic: '⬡', text: 'No records this week. The System cannot read what is not logged.', tone: 'bad' });
+    else {
+        L.push({ ic: '🏋️', text: W.n + ' session' + (W.n === 1 ? '' : 's') + ', ' + W.sets + ' sets' + (W.prevN ? ' (last week ' + W.prevN + ')' : '') + (W.volume ? ' · ' + W.volume.toLocaleString() + ' kg moved' : ''),
+            tone: W.n >= Math.max(1, W.prevN) ? 'good' : W.n ? '' : 'warn' });
+        if (r.prs.length)
+            L.push({ ic: '⚡', text: r.prs.length + ' new best' + (r.prs.length === 1 ? '' : 's') + ': ' + r.prs.slice(0, 3).map(p => p.n + ' ' + p.e1rm + ' kg').join(', '), tone: 'good' });
+        if (r.habits && r.habits.rate !== null)
+            L.push({ ic: '🔥', text: 'Habits ' + Math.round(r.habits.rate * 100) + ' %' + (r.habits.prevRate !== null ? ' (was ' + Math.round(r.habits.prevRate * 100) + ' %)' : '') + (r.habits.slipped.length ? ' · slipped: ' + r.habits.slipped.map(h => h.name).join(', ') : ''),
+                tone: r.habits.rate >= 0.7 ? 'good' : r.habits.rate >= 0.4 ? '' : 'warn' });
+        if (r.sleep)
+            L.push({ ic: '🌙', text: 'Sleep ' + r.sleep.avg + ' h on ' + r.sleep.n + ' logged night' + (r.sleep.n === 1 ? '' : 's'), tone: r.sleep.avg >= 7 ? 'good' : r.sleep.avg >= 6.5 ? '' : 'warn' });
+        if (r.weight && r.weight.delta !== null)
+            L.push({ ic: '⚖️', text: 'Weight ' + (r.weight.delta > 0 ? '+' : '') + r.weight.delta + ' kg (' + r.weight.last + ' kg)', tone: '' });
+    }
+    // The hormone estimate: the axis that moved most, and why.
+    const ax = (x.axes || []).filter(a => a.trend && a.trend !== 'stable');
+    if (ax.length) {
+        const a = ax[0], down = /down|fall|declin/i.test(a.trend || '');
+        const why = down ? (a.neg || [])[0] : (a.pos || [])[0];
+        const good = BAND.has(a.k) ? null : LOWER_BETTER.has(a.k) ? down : !down;
+        L.push({ ic: '🧬', text: a.name.charAt(0) + a.name.slice(1).toLowerCase() + ' estimate trending ' + (down ? 'down' : 'up') + (why ? ' — mostly ' + why.label.toLowerCase() : ''), tone: good === null ? '' : good ? 'good' : 'warn' });
+    }
+    const under = (x.muscles || []).filter(m => BIG.includes(m.slug) && m.vol && (m.vol.zone === 'under' || m.vol.zone === 'none'));
+    if ((x.muscles || []).length && under.length)
+        L.push({ ic: '◈', text: 'Under range this week: ' + under.map(m => m.name).join(', '), tone: under.length >= 3 ? 'warn' : '' });
+    if (x.fatigue && x.fatigue.level !== 'unknown')
+        L.push({ ic: '📡', text: 'Fatigue radar: ' + x.fatigue.title, tone: x.fatigue.level === 'deload' ? 'bad' : x.fatigue.level === 'strained' ? 'warn' : 'good' });
+    if (x.quests && x.quests.total)
+        L.push({ ic: '⬢', text: 'Quests cleared ' + x.quests.cleared + ' / ' + x.quests.total + (x.quests.streak ? ' · ' + x.quests.streak + '-day clear streak' : ''), tone: x.quests.cleared / x.quests.total >= 0.7 ? 'good' : 'warn' });
+    (x.experiments || []).forEach(e => L.push({ ic: '🧪', text: e.name + ' — ' + e.status + (e.best ? ' · ' + e.best : ''), tone: '' }));
+    if (x.injuries)
+        L.push({ ic: '✚', text: x.injuries + ' active injur' + (x.injuries === 1 ? 'y' : 'ies') + ' — routed around', tone: 'warn' });
+    const F = [];
+    if (x.fatigue && x.fatigue.level === 'deload')
+        F.push('Deload: half the sets, ~90 % weight, 4–7 days');
+    under.slice(0, 2).forEach(m => { if (F.length < 3)
+        F.push('Train ' + m.name.toLowerCase() + ': ' + Math.max(m.vol ? m.vol.mavLo : 10, 1) + '+ hard sets'); });
+    if (r.sleep && r.sleep.avg < 7 && F.length < 3)
+        F.push('Sleep: add ' + Math.round((7.5 - r.sleep.avg) * 60) + ' min a night');
+    // The biggest thing holding an estimate back: drivers lowering an axis where higher is better, or
+    // raising cortisol. (A driver that lowers cortisol or estradiol is not a problem to fix.)
+    const hurts = [];
+    (x.axes || []).forEach(a => {
+        if (BAND.has(a.k))
+            return;
+        const list = LOWER_BETTER.has(a.k) ? (a.pos || []).map(d => ({ label: d.label, c: -(d.c || 0) })) : (a.neg || []).map(d => ({ label: d.label, c: d.c || 0 }));
+        list.forEach(d => { if (d.c < 0)
+            hurts.push(d); });
+    });
+    const lever = hurts.sort((p, q) => p.c - q.c)[0];
+    if (lever && F.length < 3)
+        F.push(LEVER_TEXT[lever.label.toLowerCase()] || 'Fix: ' + lever.label.toLowerCase());
+    if (r.empty && !F.length)
+        F.push('Log one thing a day — a weigh-in, a set, a night of sleep');
+    const head = r.empty ? 'Nothing logged this week.' : W.n + ' workout' + (W.n === 1 ? '' : 's') + (r.prs.length ? ' · ' + r.prs.length + ' PR' + (r.prs.length === 1 ? '' : 's') : '') + (r.sleep ? ' · sleep ' + r.sleep.avg + ' h' : '');
+    return { title: 'SYSTEM REPORT', lines: L, focus: F, headline: head + (F.length ? ' — next: ' + F[0] : '') };
 }
 
   },
@@ -3598,6 +4372,7 @@ exports.progressionTarget = progressionTarget;
 exports.goalProgress = goalProgress;
 exports.daysSinceCapture = daysSinceCapture;
 const physique_1 = require("./physique");
+const experiments_1 = require("./experiments");
 const dates_1 = require("./dates");
 const gym_1 = require("./gym");
 const readiness_1 = require("./readiness");
@@ -4065,6 +4840,32 @@ function applyEvent(s, e) {
         case 'injury.del': {
             if (Array.isArray(s.injuries))
                 s.injuries = s.injuries.filter((x) => x.id !== d.id);
+            return;
+        }
+        case 'experiment.set': {
+            const x = (0, experiments_1.cleanExperiment)(d.experiment, e.ts);
+            if (!x)
+                return;
+            if (!Array.isArray(s.experiments))
+                s.experiments = [];
+            const i = s.experiments.findIndex((y) => y.id === x.id);
+            if (i < 0)
+                s.experiments.push(x);
+            else if (String(s.experiments[i].upd || '') <= x.upd)
+                s.experiments[i] = x;
+            return;
+        }
+        case 'experiment.del': {
+            if (Array.isArray(s.experiments))
+                s.experiments = s.experiments.filter((y) => y.id !== d.id);
+            return;
+        }
+        case 'quests.set': {
+            // The first device to see a day fixes its quests; later ones keep that list.
+            if (!isDay(d.day) || !Array.isArray(d.list))
+                return;
+            if (!s.quests || s.quests.day !== d.day)
+                s.quests = { ...(s.quests || {}), day: d.day, list: d.list.slice(0, 6) };
             return;
         }
         case 'bloodwork.del': {
@@ -4739,6 +5540,58 @@ async function buildPush(sub, payload, vapid, contact, opts = {}) {
     if (opts.topic)
         headers.Topic = opts.topic.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32);
     return { endpoint: sub.endpoint, headers, body: b64u(body) };
+}
+
+  },
+  "./whatif": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.WHATIF_LEVERS = void 0;
+exports.baselineInputs = baselineInputs;
+exports.whatIfHistories = whatIfHistories;
+exports.compareReports = compareReports;
+exports.WHATIF_LEVERS = [
+    { k: 'sleepDuration', label: 'Sleep', unit: 'h', min: 4, max: 10, step: 0.25 },
+    { k: 'trainingVolume', label: 'Hard sets / week', unit: 'sets', min: 0, max: 36, step: 1 },
+    { k: 'proteinIntake', label: 'Protein', unit: 'g', min: 40, max: 260, step: 5 },
+    { k: 'calorieIntake', label: 'Calories', unit: 'kcal', min: 1200, max: 4500, step: 50 },
+    { k: 'stress', label: 'Stress', unit: '/100', min: 0, max: 100, step: 5 },
+    { k: 'alcohol', label: 'Alcohol', unit: 'drinks/day', min: 0, max: 6, step: 0.5 },
+    { k: 'dailySteps', label: 'Steps', unit: '/day', min: 0, max: 20000, step: 500 },
+    { k: 'caffeine', label: 'Caffeine', unit: 'mg/day', min: 0, max: 600, step: 25 },
+    { k: 'sunlight', label: 'Daylight', unit: 'min/day', min: 0, max: 120, step: 5 },
+];
+const dk = (k, n) => { const [y, m, d] = k.split('-').map(Number); const t = new Date(Date.UTC(y, m - 1, d + n)); return t.toISOString().slice(0, 10); };
+/** Mean of each numeric input over the last `days` days that observed it; non-numeric inputs from the latest day. */
+function baselineInputs(history, days = 14) {
+    const recent = history.slice().sort((a, b) => a.date.localeCompare(b.date)).slice(-days);
+    const sums = {}, out = {};
+    recent.forEach(h => Object.entries(h.inputs || {}).forEach(([k, v]) => {
+        if (typeof v === 'number' && isFinite(v))
+            (sums[k] = sums[k] || []).push(v);
+        else if (v !== undefined && v !== null)
+            out[k] = v;
+    }));
+    Object.entries(sums).forEach(([k, a]) => { out[k] = Math.round(a.reduce((s, x) => s + x, 0) / a.length * 100) / 100; });
+    return out;
+}
+/** Real history + `weeks` of the baseline (as is) and of the baseline with `overrides` (scenario). */
+function whatIfHistories(history, overrides, weeks) {
+    const real = history.slice().sort((a, b) => a.date.localeCompare(b.date));
+    const base = baselineInputs(real);
+    const last = real.length ? real[real.length - 1].date : new Date().toISOString().slice(0, 10);
+    const fut = (inputs) => Array.from({ length: Math.max(1, Math.round(weeks * 7)) }, (_, i) => ({ date: dk(last, i + 1), inputs }));
+    return { asIs: real.concat(fut(base)), scenario: real.concat(fut({ ...base, ...overrides })), base };
+}
+/** Hormone and derived scores side by side. A difference is "clear" when it exceeds a quarter of the scenario's
+ *  own credible-interval width — smaller moves are inside the model's uncertainty. */
+function compareReports(a, b) {
+    const rows = (A, B) => Object.keys(B || {}).filter(k => A && A[k]).map(k => {
+        const x = A[k].score, y = B[k].score, iv = B[k].interval || [y, y];
+        const d = Math.round((y - x) * 10) / 10;
+        return { k, asIs: Math.round(x), scenario: Math.round(y), d, lo: Math.round(iv[0]), hi: Math.round(iv[1]), clear: Math.abs(d) >= Math.max(1.5, (iv[1] - iv[0]) / 4) };
+    });
+    return { hormones: rows(a && a.hormones, b && b.hormones), derived: rows(a && a.derived, b && b.derived) };
 }
 
   },
