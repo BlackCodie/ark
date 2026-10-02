@@ -1063,6 +1063,75 @@ function fatigueRadar(inp) {
 }
 
   },
+  "./fuel": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.cleanMeal = cleanMeal;
+exports.cleanEaten = cleanEaten;
+exports.eatMeal = eatMeal;
+exports.uneatMeal = uneatMeal;
+exports.fuelDay = fuelDay;
+exports.mealsByUse = mealsByUse;
+const num = (v, lo, hi) => { const n = Number(v); return isFinite(n) ? Math.max(lo, Math.min(hi, Math.round(n))) : 0; };
+function cleanMeal(x, ts) {
+    if (!x || typeof x !== 'object')
+        return null;
+    const id = String(x.id || '').slice(0, 64), name = String(x.name || '').trim().slice(0, 60);
+    const prot = num(x.prot, 0, 300), cal = num(x.cal, 0, 5000);
+    if (!id || !name || !(prot > 0 || cal > 0))
+        return null;
+    return { id, name, prot, cal, upd: String(ts || x.upd || '') };
+}
+function cleanEaten(x) {
+    if (!x || typeof x !== 'object')
+        return null;
+    const eid = String(x.eid || '').slice(0, 64), name = String(x.name || '').trim().slice(0, 60);
+    const prot = num(x.prot, 0, 300), cal = num(x.cal, 0, 5000);
+    if (!eid || !name || !(prot > 0 || cal > 0))
+        return null;
+    return { eid, id: x.id ? String(x.id).slice(0, 64) : undefined, name, prot, cal, at: typeof x.at === 'string' ? x.at.slice(0, 30) : undefined };
+}
+/** Add a meal to one day's vitals record (mutates). False when it is already there. */
+function eatMeal(rec, item) {
+    const e = cleanEaten(item);
+    if (!e || !rec)
+        return false;
+    const list = Array.isArray(rec.meals) ? rec.meals : (rec.meals = []);
+    if (list.some(x => x.eid === e.eid))
+        return false;
+    list.push(e);
+    rec.prot = Math.round((Number(rec.prot) || 0) + e.prot);
+    rec.cal = Math.round((Number(rec.cal) || 0) + e.cal);
+    return true;
+}
+/** Remove one logged meal and subtract exactly what it added (never below zero). */
+function uneatMeal(rec, eid) {
+    if (!rec || !Array.isArray(rec.meals))
+        return false;
+    const i = rec.meals.findIndex((x) => x.eid === eid);
+    if (i < 0)
+        return false;
+    const e = rec.meals[i];
+    rec.meals.splice(i, 1);
+    rec.prot = Math.max(0, Math.round((Number(rec.prot) || 0) - e.prot));
+    rec.cal = Math.max(0, Math.round((Number(rec.cal) || 0) - e.cal));
+    return true;
+}
+function fuelDay(rec, goals) {
+    const r = rec || {}, prot = Math.round(Number(r.prot) || 0), cal = Math.round(Number(r.cal) || 0);
+    const pg = goals.prot && goals.prot > 0 ? goals.prot : null, cg = goals.cal && goals.cal > 0 ? goals.cal : null;
+    return { prot, cal, protGoal: pg, calGoal: cg, protPct: pg ? Math.round(prot / pg * 100) : null, calPct: cg ? Math.round(cal / cg * 100) : null,
+        left: { prot: pg ? Math.max(0, pg - prot) : null, cal: cg ? Math.max(0, cg - cal) : null }, meals: Array.isArray(r.meals) ? r.meals : [] };
+}
+/** Your saved meals, most-used first (counted from the days' logs). */
+function mealsByUse(meals, bio) {
+    const n = new Map();
+    Object.values(bio || {}).forEach(r => ((r && r.meals) || []).forEach((e) => { if (e.id)
+        n.set(e.id, (n.get(e.id) || 0) + 1); }));
+    return meals.slice().sort((a, b) => (n.get(b.id) || 0) - (n.get(a.id) || 0) || a.name.localeCompare(b.name));
+}
+
+  },
   "./gym": function (exports, module, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -1078,6 +1147,7 @@ exports.clockHours = clockHours;
 exports.looseNum = looseNum;
 exports.healthPatches = healthPatches;
 exports.healthPatch = healthPatch;
+exports.parseHealthHash = parseHealthHash;
 /**
  * Gym helpers shared by the phone's logger and the PC: the plate calculator,
  * per-exercise history, and the Apple Health import mapping.
@@ -1226,14 +1296,26 @@ function looseNum(v) {
         return isFinite(v) ? v : null;
     if (typeof v !== 'string')
         return null;
+    // "8,412" / "8.412" / "8 412" with exactly three digits per group is a thousands separator (steps, kcal).
+    if (/^\s*\d{1,3}([,.  ]\d{3})+\s*$/.test(v))
+        return Number(v.replace(/[^\d]/g, ''));
     const m = v.replace(',', '.').match(/-?\d+(\.\d+)?/);
     return m ? Number(m[0]) : null;
 }
 function healthPatches(p, now = new Date()) {
     const data = (p && typeof p.data === 'object' && p.data);
     const metrics = data && Array.isArray(data.metrics) ? data.metrics : null;
-    if (!metrics)
-        return [healthPatch(p, now)];
+    if (!metrics) {
+        const today = healthPatch(p, now);
+        // A morning Shortcut can only send complete totals for YESTERDAY (steps, energy, exercise, daylight).
+        const y = p && typeof p.yesterday === 'object' && p.yesterday ? p.yesterday : null;
+        if (!y)
+            return [today];
+        const [yy, mm, dd] = today.day.split('-').map(Number), t = new Date(yy, mm - 1, dd - 1);
+        const prev = t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0');
+        const yp = healthPatch({ ...y, date: prev }, now);
+        return (Object.keys(yp.fields).length || yp.weightKg !== null ? [yp] : []).concat([today]);
+    }
     const days = new Map();
     const acc = (day) => { if (!days.has(day))
         days.set(day, { date: day }); return days.get(day); };
@@ -1344,6 +1426,11 @@ function healthPatch(p, now = new Date()) {
         fields[k] = Math.round(fields[k] * 100) / 100;
     };
     let sleep = looseNum(p.sleep);
+    // A Shortcut may hand over the duration in minutes or seconds — no night is longer than a day.
+    if (sleep !== null && sleep > 1440)
+        sleep = sleep / 3600;
+    else if (sleep !== null && sleep > 24)
+        sleep = sleep / 60;
     const sleepMin = looseNum(p.sleepMinutes);
     if (sleep === null && sleepMin !== null)
         sleep = sleepMin / 60;
@@ -1379,6 +1466,29 @@ function healthPatch(p, now = new Date()) {
         kg = null;
     }
     return { day, fields, weightKg: kg === null ? null : Math.round(kg * 10) / 10, ignored };
+}
+/**
+ * The payload of an ARK health link (#health=…) as an iOS Shortcut builds it: a Dictionary turned into
+ * text and URL-encoded — or base64url. Returns the object, or null when it cannot be read.
+ */
+function parseHealthHash(raw) {
+    if (!raw)
+        return null;
+    const fromB64 = (s) => {
+        const b = s.replace(/-/g, '+').replace(/_/g, '/');
+        const bin = typeof atob === 'function' ? atob(b) : Buffer.from(b, 'base64').toString('binary');
+        return new TextDecoder().decode(Uint8Array.from(bin, ch => ch.charCodeAt(0)));
+    };
+    const tries = [() => decodeURIComponent(raw), () => decodeURIComponent(decodeURIComponent(raw)), () => fromB64(raw)];
+    for (const t of tries) {
+        try {
+            const o = JSON.parse(t());
+            if (o && typeof o === 'object' && !Array.isArray(o))
+                return o;
+        }
+        catch (e) { /* try the next form */ }
+    }
+    return null;
 }
 
   },
@@ -1669,6 +1779,7 @@ __exportStar(require("./quests"), exports);
 __exportStar(require("./report"), exports);
 __exportStar(require("./progression"), exports);
 __exportStar(require("./whatif"), exports);
+__exportStar(require("./fuel"), exports);
 
   },
   "./merge": function (exports, module, require) {
@@ -3311,6 +3422,11 @@ exports.relayWrite = relayWrite;
 exports.relayRead = relayRead;
 exports.relayBranches = relayBranches;
 exports.relayEnsureRepo = relayEnsureRepo;
+exports.relayPutFiles = relayPutFiles;
+exports.relayDeleteFiles = relayDeleteFiles;
+exports.relayList = relayList;
+exports.relayBlob = relayBlob;
+exports.relayCheckToken = relayCheckToken;
 const enc = new TextEncoder(), dec = new TextDecoder();
 const subtle = () => globalThis.crypto.subtle;
 function b64(bytes) {
@@ -3418,6 +3534,89 @@ async function relayEnsureRepo(token) {
     if (r.status !== 201 && r.status !== 422)
         throw new Error('could not create ' + repo + ' (' + r.status + ')');
     return repo;
+}
+/* ── many files on one branch (photo backup) ──
+   relayWrite replaces a branch with one file; these keep what is there. Each write is still a single
+   parentless commit, so the branch carries no history — deleting a file really removes it from the branch. */
+async function branchTree(c, branch) {
+    const R = '/repos/' + c.repo + '/git/';
+    const ref = await gh(c, R + 'ref/heads/' + branch);
+    if (ref.status === 404 || ref.status === 409)
+        return null;
+    const j = await json(ref);
+    const cm = await json(await gh(c, R + 'commits/' + j.object.sha));
+    return cm.tree.sha;
+}
+async function commitTree(c, branch, tree) {
+    const R = '/repos/' + c.repo + '/git/';
+    const commit = await json(await gh(c, R + 'commits', { method: 'POST', body: { message: 'sync', tree, parents: [] } }));
+    const r = await gh(c, R + 'refs/heads/' + branch, { method: 'PATCH', body: { sha: commit.sha, force: true } });
+    if (r.status === 422 || r.status === 404)
+        await json(await gh(c, R + 'refs', { method: 'POST', body: { ref: 'refs/heads/' + branch, sha: commit.sha } }));
+    else if (!r.ok)
+        await json(r);
+}
+/** Add or replace files on `branch`, keeping every other file there. */
+async function relayPutFiles(c, branch, files) {
+    if (!files.length)
+        return;
+    const R = '/repos/' + c.repo + '/git/';
+    const base = await branchTree(c, branch);
+    const entries = [];
+    for (const f of files) {
+        const blob = await json(await gh(c, R + 'blobs', { method: 'POST', body: { content: (0, exports.textToB64)(f.text), encoding: 'base64' } }));
+        entries.push({ path: f.path, mode: '100644', type: 'blob', sha: blob.sha });
+    }
+    const tree = await json(await gh(c, R + 'trees', { method: 'POST', body: base ? { base_tree: base, tree: entries } : { tree: entries } }));
+    await commitTree(c, branch, tree.sha);
+}
+/** Remove files from `branch` (the rest stay). */
+async function relayDeleteFiles(c, branch, paths) {
+    const base = await branchTree(c, branch);
+    if (!base || !paths.length)
+        return;
+    const have = new Set((await relayList(c, branch)).map(f => f.path));
+    const gone = paths.filter(p => have.has(p));
+    if (!gone.length)
+        return;
+    if (gone.length === have.size) {
+        // GitHub refuses an empty tree: keep one placeholder so the branch stays valid.
+        await relayPutFiles(c, branch, [{ path: 'README', text: 'empty' }]);
+    }
+    const R = '/repos/' + c.repo + '/git/';
+    const base2 = await branchTree(c, branch);
+    const tree = await json(await gh(c, R + 'trees', { method: 'POST', body: { base_tree: base2, tree: gone.map(path => ({ path, mode: '100644', type: 'blob', sha: null })) } }));
+    await commitTree(c, branch, tree.sha);
+}
+/** The files on `branch`, or [] when it does not exist. */
+async function relayList(c, branch) {
+    const r = await gh(c, '/repos/' + c.repo + '/git/trees/' + encodeURIComponent(branch) + '?recursive=1');
+    if (r.status === 404 || r.status === 409)
+        return [];
+    const j = await json(r);
+    return (j.tree || []).filter((x) => x.type === 'blob').map((x) => ({ path: x.path, sha: x.sha, size: x.size || 0 }));
+}
+/** One blob's text by its sha. */
+async function relayBlob(c, sha) {
+    const j = await json(await gh(c, '/repos/' + c.repo + '/git/blobs/' + sha));
+    return (0, exports.b64ToText)(String(j.content || '').replace(/\s+/g, ''));
+}
+/**
+ * What a token can reach — for the limited key. `ok` means it can read and write this repository;
+ * `broad` means it can also see the account's other repositories (a classic or gh CLI token).
+ */
+async function relayCheckToken(token, repo) {
+    const h = { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json' };
+    const r = await fetch(API + '/repos/' + repo, { headers: h, cache: 'no-store' });
+    if (r.status === 401)
+        return { ok: false, write: false, broad: false, why: 'GitHub does not accept this key' };
+    if (!r.ok)
+        return { ok: false, write: false, broad: false, why: 'This key cannot see ' + repo + ' — give it access to that repository' };
+    const j = await r.json();
+    const write = !!(j.permissions && (j.permissions.push || j.permissions.admin));
+    const scopes = r.headers.get('x-oauth-scopes');
+    const broad = scopes !== null && scopes.trim() !== '';
+    return { ok: write, write, broad, why: write ? (broad ? 'Works, but it is a broad key (it can reach your other repositories too)' : 'Works — limited to ' + repo) : 'Read-only — set Contents to Read and write' };
 }
 
   },
@@ -4373,6 +4572,7 @@ exports.goalProgress = goalProgress;
 exports.daysSinceCapture = daysSinceCapture;
 const physique_1 = require("./physique");
 const experiments_1 = require("./experiments");
+const fuel_1 = require("./fuel");
 const dates_1 = require("./dates");
 const gym_1 = require("./gym");
 const readiness_1 = require("./readiness");
@@ -4840,6 +5040,36 @@ function applyEvent(s, e) {
         case 'injury.del': {
             if (Array.isArray(s.injuries))
                 s.injuries = s.injuries.filter((x) => x.id !== d.id);
+            return;
+        }
+        case 'meal.set': {
+            const m = (0, fuel_1.cleanMeal)(d.meal, e.ts);
+            if (!m)
+                return;
+            if (!Array.isArray(s.meals))
+                s.meals = [];
+            const i = s.meals.findIndex((x) => x.id === m.id);
+            if (i < 0)
+                s.meals.push(m);
+            else if (String(s.meals[i].upd || '') <= String(m.upd || ''))
+                s.meals[i] = m;
+            return;
+        }
+        case 'meal.del': {
+            if (Array.isArray(s.meals))
+                s.meals = s.meals.filter((x) => x.id !== d.id);
+            return;
+        }
+        case 'meal.eat': {
+            if (!isDay(d.day))
+                return;
+            s.bio[d.day] = s.bio[d.day] || {};
+            (0, fuel_1.eatMeal)(s.bio[d.day], d.item);
+            return;
+        }
+        case 'meal.uneat': {
+            if (isDay(d.day) && s.bio[d.day])
+                (0, fuel_1.uneatMeal)(s.bio[d.day], String(d.eid || ''));
             return;
         }
         case 'experiment.set': {

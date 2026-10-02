@@ -12,6 +12,7 @@ import { actions as mindActions } from './mind.js';
 import { actions as routineActions } from './routines.js';
 import { actions as hormoneActions } from './hormones.js';
 import { actions as systemActions, onPhotoInput, onWhatIfInput } from './system.js';
+import { actions as dailyActions, importHealthLink } from './daily.js';
 
 applyTheme();
 
@@ -138,7 +139,7 @@ setInterval(tickElapsed, 1000);
 
 /* ── events ── */
 const ACT = {
-  ...viewActions, ...trainActions, ...sheetActions, ...bodyActions, ...moreActions, ...reviewActions, ...doseActions, ...mindActions, ...routineActions, ...hormoneActions, ...systemActions,
+  ...viewActions, ...trainActions, ...sheetActions, ...bodyActions, ...moreActions, ...reviewActions, ...doseActions, ...mindActions, ...routineActions, ...hormoneActions, ...systemActions, ...dailyActions,
   tab(d) { closeAllSheets(); haptic(); switchTab(d.tab, d.seg); },
   'sheet-close'() { closeSheet(topSheet()); },
 };
@@ -196,6 +197,9 @@ document.addEventListener('keydown', e => {
       setTimeout(() => { syncNow(); toast('Connected to ARK ✓'); }, 300);
     }
   }
+  // #health= comes from the morning Apple Health Shortcut (daily.js)
+  const hl = /[#&]health=([^&]+)/.exec(location.hash);
+  if (hl) setTimeout(() => importHealthLink(hl[1]), 500);
   // #code= comes from the one QR code on the PC: this app links itself with it (views.js autoConnect).
   const cd = /[#&]code=(\d{6})/.exec(location.hash);
   if (cd && !state.token) state.qrCode = { code: cd[1], at: Date.now() };
@@ -218,7 +222,7 @@ function carryRelay() {
   if (link) link.href = 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify(man));
 }
 carryRelay();
-if (!state.token && onPublicCopy()) setTimeout(() => ACT['pair-scan'] && ACT['pair-scan'](), 600);
+if (!state.token && onPublicCopy() && !/health=/.test(location.hash)) setTimeout(() => ACT['pair-scan'] && ACT['pair-scan'](), 600);
 
 /* ── notifications open the tab they are about (?tab= on a cold start, a message when running) ── */
 (function () {

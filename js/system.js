@@ -108,7 +108,45 @@ const phDb = () => phDbP || (phDbP = new Promise((res, rej) => { const r = index
 const phAll = () => phDb().then(db => new Promise(res => { const o = [], c = db.transaction('p').objectStore('p').openCursor(); c.onsuccess = () => { const x = c.result; if (x) { o.push(x.value); x.continue(); } else res(o.sort((a, b) => a.day < b.day ? -1 : 1)); }; }));
 const phPut = rec => phDb().then(db => new Promise(res => { const t = db.transaction('p', 'readwrite'); t.objectStore('p').put(rec); t.oncomplete = res; }));
 const phDel = id => phDb().then(db => new Promise(res => { const t = db.transaction('p', 'readwrite'); t.objectStore('p').delete(id); t.oncomplete = res; }));
-const ph = { pose: 'front', urls: [], stream: null, facing: 'user' };
+const ph = { pose: 'front', urls: [], stream: null, facing: 'user', busy: '' };
+/* Optional encrypted backup: each photo, encrypted with the sync key, as one file on the `photos` branch of
+   your private sync repository. Off by default; the PC shows backed-up photos too. */
+const relayC = () => state.relay ? { repo: state.relay.repo, token: state.relay.token } : null;
+const blobToB64 = b => new Promise(res => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.readAsDataURL(b); });
+async function backupPhoto(rec) {
+  const c = relayC(); if (!c || !state.settings.photoBackup) return false;
+  const text = await L.relayEncrypt(state.relay.key, { id: rec.id, day: rec.day, pose: rec.pose, data: await blobToB64(rec.blob) });
+  await L.relayPutFiles(c, 'photos', [{ path: rec.id + '.json', text }]);
+  return true;
+}
+async function backupAll() {
+  const c = relayC(); if (!c) { toast('Connect this phone first'); return; }
+  ph.busy = 'Backing up…'; photoRender();
+  try {
+    const have = new Set((await L.relayList(c, 'photos')).map(f => f.path));
+    const todo = (await phAll()).filter(p => !have.has(p.id + '.json'));
+    for (let i = 0; i < todo.length; i++) { ph.busy = 'Backing up ' + (i + 1) + ' of ' + todo.length + '…'; photoRender(); await backupPhoto(todo[i]); }
+    toast(todo.length ? '☁️ ' + todo.length + ' photo' + (todo.length === 1 ? '' : 's') + ' backed up, encrypted' : 'Everything was already backed up');
+  } catch (e) { toast('Backup failed — ' + (e && e.message || e)); }
+  ph.busy = ''; photoRender();
+}
+async function restorePhotos() {
+  const c = relayC(); if (!c) { toast('Connect this phone first'); return; }
+  ph.busy = 'Restoring…'; photoRender();
+  try {
+    const local = new Set((await phAll()).map(p => p.id));
+    const files = (await L.relayList(c, 'photos')).filter(f => /\.json$/.test(f.path) && !local.has(f.path.replace(/\.json$/, '')));
+    for (let i = 0; i < files.length; i++) {
+      ph.busy = 'Restoring ' + (i + 1) + ' of ' + files.length + '…'; photoRender();
+      const o = await L.relayDecrypt(state.relay.key, await L.relayBlob(c, files[i].sha));
+      const bin = atob(o.data), u = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) u[k] = bin.charCodeAt(k);
+      await phPut({ id: o.id, day: o.day, pose: o.pose, blob: new Blob([u], { type: 'image/jpeg' }) });
+    }
+    toast(files.length ? '📸 ' + files.length + ' restored' : 'Nothing to restore — every backed-up photo is here');
+  } catch (e) { toast('Restore failed — ' + (e && e.message || e)); }
+  ph.busy = ''; photoRender();
+}
+const savePhoto = rec => phPut(rec).then(() => backupPhoto(rec).catch(() => toast('Saved here; the backup will retry next time')));
 const shrink = src => new Promise((res, rej) => { const img = new Image(); img.onload = () => { const s = Math.min(1, 1080 / Math.max(img.width, img.height)), c = document.createElement('canvas');
   c.width = Math.round(img.width * s); c.height = Math.round(img.height * s); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); c.toBlob(b => res({ blob: b, w: c.width, h: c.height }), 'image/jpeg', 0.85); };
   img.onerror = rej; img.src = typeof src === 'string' ? src : URL.createObjectURL(src); });
@@ -119,16 +157,19 @@ export function photoCard() {
       <div id="ph-host" class="sub">Loading…</div>
       <div class="row" style="gap:8px;margin-top:10px"><button class="btn btn-tint" style="flex:1;--accent:#40c8e0" data-act="ph-cam">${icon('camera', 16)} Take with guide</button>
         <label class="btn btn-glass" style="flex:1">From library<input type="file" accept="image/*" style="display:none" data-ph-file></label></div>
-      <p class="sub" style="line-height:1.4;margin:8px 0 0">The guide shows your last ${ph.pose} photo faintly over the camera, so every photo lines up. Photos never leave this phone.</p>`);
+      <p class="sub" style="line-height:1.4;margin:8px 0 0">The guide shows your last ${ph.pose} photo faintly over the camera, so every photo lines up.</p>
+      <div style="margin-top:12px"><button class="tg-row" data-act="ph-backup" role="switch" aria-checked="${state.settings.photoBackup ? 'true' : 'false'}"><span class="tx"><b>Encrypted backup</b><small>${state.relay ? 'To your private sync repository — locked with your sync key; your PC can show them' : 'Connect this phone to ARK first'}</small></span><i class="tg${state.settings.photoBackup ? ' on' : ''}"></i></button></div>
+      ${state.relay ? `<div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-glass sm" style="flex:1" data-act="ph-backup-all">Back up all now</button><button class="btn btn-glass sm" style="flex:1" data-act="ph-restore">Restore</button></div>` : ''}
+      <p class="sub" style="line-height:1.4;margin:6px 0 0">${state.settings.photoBackup ? 'New photos are backed up as you take them.' : 'Off: photos stay only on this phone.'}</p>`);
 }
 function photoRender() {
   const host = document.getElementById('ph-host'); if (!host) return;
   phAll().then(all => {
     ph.urls.forEach(u => URL.revokeObjectURL(u)); ph.urls = [];
     const Lp = all.filter(p => p.pose === ph.pose), url = p => { const u = URL.createObjectURL(p.blob); ph.urls.push(u); return u; };
-    if (!Lp.length) { host.innerHTML = 'No ' + ph.pose + ' photos yet.'; return; }
+    if (!Lp.length) { host.innerHTML = (ph.busy ? '<b>' + ph.busy + '</b><br>' : '') + 'No ' + ph.pose + ' photos yet.'; return; }
     const a = Lp[0], b = Lp[Lp.length - 1];
-    host.innerHTML = (Lp.length > 1 ? `<div class="cmp"><img src="${url(a)}" alt=""><div class="cmp-top" style="width:50%"><img src="${url(b)}" alt=""></div>
+    host.innerHTML = (ph.busy ? '<p class="sub"><b>' + ph.busy + '</b></p>' : '') + (Lp.length > 1 ? `<div class="cmp"><img src="${url(a)}" alt=""><div class="cmp-top" style="width:50%"><img src="${url(b)}" alt=""></div>
         <input type="range" min="0" max="100" value="50" data-ph-cmp aria-label="Compare"><span class="l">${fmtDay(a.day, { day: 'numeric', month: 'short' })}</span><span class="r">${fmtDay(b.day, { day: 'numeric', month: 'short' })}</span></div>` : '')
       + `<div class="thumbs">${Lp.map(p => `<figure><img src="${url(p)}" alt=""><figcaption>${fmtDay(p.day, { day: 'numeric', month: 'short' })}<button data-act="ph-del" data-id="${p.id}" aria-label="Delete">✕</button></figcaption></figure>`).join('')}</div>`;
   }).catch(() => { host.textContent = 'Photo storage is blocked in this browser.'; });
@@ -136,7 +177,7 @@ function photoRender() {
 export function onPhotoInput(el) {
   if (el.matches('[data-ph-cmp]')) { const t = el.parentNode.querySelector('.cmp-top'); if (t) t.style.width = el.value + '%'; return true; }
   if (el.matches('[data-ph-file]') && el.files && el.files[0]) {
-    shrink(el.files[0]).then(r => phPut({ id: 'ph' + Date.now().toString(36), day: today(), pose: ph.pose, blob: r.blob, w: r.w, h: r.h })).then(() => { toast('📸 Saved on this phone'); photoRender(); });
+    shrink(el.files[0]).then(r => savePhoto({ id: 'ph' + Date.now().toString(36), day: today(), pose: ph.pose, blob: r.blob, w: r.w, h: r.h })).then(() => { toast('📸 Saved on this phone'); photoRender(); });
     return true;
   }
   return false;
@@ -170,7 +211,7 @@ function camShoot() {
     const vEl = document.getElementById('ph-video'); if (!vEl || !vEl.videoWidth) return;
     const cv = document.createElement('canvas'); cv.width = vEl.videoWidth; cv.height = vEl.videoHeight;
     const cx = cv.getContext('2d'); if (ph.facing === 'user') { cx.translate(cv.width, 0); cx.scale(-1, 1); } cx.drawImage(vEl, 0, 0);
-    shrink(cv.toDataURL('image/jpeg', 0.92)).then(r => phPut({ id: 'ph' + Date.now().toString(36), day: today(), pose: ph.pose, blob: r.blob, w: r.w, h: r.h }))
+    shrink(cv.toDataURL('image/jpeg', 0.92)).then(r => savePhoto({ id: 'ph' + Date.now().toString(36), day: today(), pose: ph.pose, blob: r.blob, w: r.w, h: r.h }))
       .then(() => { haptic(); toast('📸 Saved on this phone'); closeSheet(topSheet()); photoRender(); });
   };
   tick();
@@ -287,7 +328,15 @@ export const actions = {
   'ph-cam'() { cameraSheet(); },
   'ph-flip'() { ph.facing = ph.facing === 'user' ? 'environment' : 'user'; camStart(); },
   'ph-shoot'() { camShoot(); },
-  'ph-del'(d) { if (!confirm('Delete this photo from this phone?')) return; phDel(d.id).then(photoRender); },
+  'ph-del'(d) {
+    if (!confirm('Delete this photo' + (state.settings.photoBackup ? ' here and from the backup?' : ' from this phone?'))) return;
+    const c = relayC();
+    phDel(d.id).then(photoRender);
+    if (c && state.settings.photoBackup) L.relayDeleteFiles(c, 'photos', [d.id + '.json']).catch(() => toast('Deleted here; the backup copy could not be removed now'));
+  },
+  'ph-backup'() { state.settings.photoBackup = !state.settings.photoBackup; changed({ now: true }); if (state.settings.photoBackup) backupAll(); },
+  'ph-backup-all'() { backupAll(); },
+  'ph-restore'() { restorePhotos(); },
   'exp-new'() { expSheet(); },
   'exp-tpl'(d) { const x = L.EXP_TEMPLATES[Number(d.i)]; if (!x) return; Object.assign(expDraft, { name: x.name, dose: x.dose || null, days: x.days, metrics: x.metrics.slice() }); haptic(); const s = topSheet(); s && s.refresh(); },
   'exp-met'(d) { expRead(); const i = expDraft.metrics.indexOf(d.k); if (i >= 0) expDraft.metrics.splice(i, 1); else expDraft.metrics.push(d.k); const s = topSheet(); s && s.refresh(); },

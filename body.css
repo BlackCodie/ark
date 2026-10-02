@@ -508,3 +508,13 @@ html[data-theme="light"] .br-cc{fill:rgba(40,44,90,.05);stroke:rgba(40,44,90,.18
 .sr-l{display:grid;grid-template-columns:22px 1fr;gap:6px;font-size:.84rem;padding:3px 0;line-height:1.4}
 .sr-f{margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(64,200,224,.08);font-size:.82rem;line-height:1.55}
 .sr-f b{display:block;font-size:.66rem;letter-spacing:.12em;color:#40c8e0}
+
+/* ── fuel and the health link ── */
+.fuel{margin-top:12px}.fuel .q-h .link{margin-left:6px;white-space:nowrap;display:inline-flex;align-items:center;gap:3px;flex:none}
+.fu-row{margin:6px 0}.fu-l{display:flex;justify-content:space-between;font-size:.82rem}.fu-l span{color:var(--t3)}
+.fu-t{height:6px;border-radius:3px;background:var(--fill-2);margin-top:4px;overflow:hidden}.fu-t i{display:block;height:100%;border-radius:3px}
+.fu-chips{margin-top:10px}.fu-chips small{color:var(--t3);margin-left:4px}
+.fu-today{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:.74rem;color:var(--t3)}
+.fu-today span{background:var(--fill-2);border-radius:8px;padding:3px 4px 3px 8px;display:inline-flex;align-items:center;gap:4px}
+.fu-today button{color:var(--t4);font-size:.7rem;padding:0 4px}
+.hl-ok{display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center;padding:8px 0 4px;color:#30d158}.hl-ok b{color:var(--t1);font-size:1.05rem}

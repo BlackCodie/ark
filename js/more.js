@@ -182,9 +182,9 @@ async function loadHealthKey() {
   return healthKey;
 }
 const healthUrl = () => hubBase() + '/api/health' + (healthKey ? '?key=' + healthKey : '');
-let hTab = 'app';
+let hTab = 'link';
 export function healthSheet() {
-  hTab = 'app';
+  hTab = 'link';
   const sheet = openSheet({
     id: 'health', title: 'Apple Health',
     render: () => {
@@ -196,7 +196,7 @@ export function healthSheet() {
         : `<section class="card frost tight hl-status"><span class="ic-dot" style="--c:#ff9f0a">${icon('heart', 16)}</span><div><b>Not connected yet</b><div class="sub">Nothing has arrived from Apple Health.</div></div></section>`;
       const link = `<label class="field"><span>Your ARK health link</span><div class="copy-row"><input class="inp" readonly value="${esc(healthKey ? url : 'loading…')}"><button class="circle btn-glass" data-act="copy" data-what="health" aria-label="Copy the link">${icon('copy', 17)}</button></div></label>
         <p class="sub" style="line-height:1.5;margin:-6px 0 12px">The key in it can only add health data — nothing else. ${http ? 'It works while the phone is on your home Wi-Fi; uploads made elsewhere are retried when you are home.' : ''}</p>`;
-      const tabs = `<div class="seg" style="margin:14px 0 12px">${[['app', 'Automatic (app)'], ['shortcut', 'Free (Shortcut)']].map(([k, l]) => `<button class="${hTab === k ? 'on' : ''}" data-act="hl-tab" data-v="${k}">${l}</button>`).join('')}</div>`;
+      const tabs = `<div class="seg" style="margin:14px 0 12px">${[['link', 'Anywhere'], ['app', 'App (home Wi-Fi)'], ['shortcut', 'Shortcut (Wi-Fi)']].map(([k, l]) => `<button class="${hTab === k ? 'on' : ''}" data-act="hl-tab" data-v="${k}">${l}</button>`).join('')}</div>`;
       const app = `<p class="sub" style="line-height:1.55;margin:0 0 10px">The easiest way: the <b>Health Auto Export</b> app reads Apple Health and sends it to ARK by itself, every hour — no Shortcut to build. Its automations are part of the paid version.</p>
         <ol class="steps">
           <li><span>Install <b>Health Auto Export – JSON+CSV</b> from the App Store and allow it to read Health.</span></li>
@@ -214,7 +214,19 @@ export function healthSheet() {
           <li><span>Add <b>Get Contents of URL</b>: paste your <b>ARK health link</b>, Method <b>POST</b>, Request Body <b>JSON</b> with keys <code>steps</code>, <code>sleep</code>, <code>restingHR</code>, <code>hrv</code> set to those results. No header needed.</span></li>
         </ol>
         <p class="sub" style="line-height:1.5">Other fields ARK reads: activeEnergy, exerciseMinutes, daylightMinutes, vo2max, bedtime, wakeTime, mindfulMinutes, remSleepMinutes, weight.</p>`;
-      return status + tabs + link + (hTab === 'app' ? app : sc) + `<div class="grp-h">What ARK does with it</div>
+      const anywhere = `<p class="sub" style="line-height:1.55;margin:0 0 10px">Free, built once in the Shortcuts app. Every morning it reads last night's sleep, HRV, resting heart rate and weight, plus yesterday's steps, and hands them to ARK — which syncs them through GitHub. <b>Works anywhere, PC on or off.</b></p>
+        <ol class="steps">
+          <li><span>Once: scan your PC's QR with the iPhone <b>Camera</b> so ARK in <b>Safari</b> is connected too (the Shortcut opens Safari for a moment).</span></li>
+          <li><span>Shortcuts → <b>Automation</b> → <b>+</b> → <b>Time of Day</b> 07:30 · Daily → <b>Run Immediately</b> → New Blank Automation.</span></li>
+          <li><span><b>Find Health Samples</b>: Sleep Analysis · Start Date <i>is in the last 12 hours</i> · Value <i>is Asleep</i> (Core, Deep and REM count) → <b>Get Details of Health Samples</b>: Duration → <b>Calculate Statistics</b>: Sum.</span></li>
+          <li><span><b>Find Health Samples</b>: Heart Rate Variability · sort by Start Date, Latest First · Limit 1. The same for <i>Resting Heart Rate</i> and <i>Weight</i>.</span></li>
+          <li><span><b>Find Health Samples</b>: Steps · Start Date <i>is yesterday</i> → <b>Calculate Statistics</b>: Sum.</span></li>
+          <li><span><b>Dictionary</b> with keys <code>sleep</code>, <code>hrv</code>, <code>restingHR</code>, <code>weight</code> set to those results, and a key <code>yesterday</code> holding a Dictionary with <code>steps</code>.</span></li>
+          <li><span><b>URL Encode</b> the Dictionary → <b>Text</b>: <code>https://blackcodie.github.io/ark/#health=</code> followed by the URL Encoded Text → <b>Open URLs</b>.</span></li>
+        </ol>
+        <div class="copy-row" style="margin:4px 0 10px"><input class="inp" readonly value="https://blackcodie.github.io/ark/#health="><button class="circle btn-glass" data-act="copy-health-prefix" aria-label="Copy">${icon('copy', 17)}</button></div>
+        <p class="sub" style="line-height:1.5">Units can be hours, minutes or seconds — ARK works it out. Any value the Shortcut cannot find is simply left out; nothing is guessed. Also read if you add them: <code>deepSleepMinutes</code>, <code>remSleepMinutes</code>, <code>bedtime</code>, <code>wakeTime</code>, <code>vo2max</code>, and in <code>yesterday</code>: <code>activeEnergy</code>, <code>exerciseMinutes</code>, <code>daylightMinutes</code>.</p>`;
+      return status + tabs + (hTab === 'link' ? anywhere : link + (hTab === 'app' ? app : sc)) + `<div class="grp-h">What ARK does with it</div>
         <p class="sub" style="line-height:1.55;margin:0">Sleep, HRV, resting heart rate and bed/wake times feed readiness, the mind model and the hormone estimate — including the hour-by-hour curves. Steps, VO₂max and daylight feed inflammation, the body clock and fitness. Values that look wrong are skipped, never guessed.</p>`;
     },
   });
@@ -293,7 +305,10 @@ export function notifySheet() {
       if (!on) return H + (key
         ? `<button class="btn btn-prominent block" data-act="push-on">${icon('bell', 18)} Turn on notifications</button>`
         : `<section class="card frost"><p style="margin:0;line-height:1.5">Waiting for your PC's notification key — it arrives with the next sync. Make sure ARK on the PC is up to date.</p></section>`);
-      H += `<section class="card frost" style="padding:4px 16px">
+      H += `<section class="card frost" style="padding:4px 16px;margin-bottom:10px">
+          ${tg('quests', 'Quests left', 'One nudge with what is still open — protein, weigh-in, the workout')}${p.quests ? times('questsAt', ['12:00', '18:00', '20:00']) + '<div style="height:10px"></div>' : ''}
+        </section>
+        <section class="card frost" style="padding:4px 16px">
           ${tg('habits', 'Habits left', 'One nudge if anything is still open')}${p.habits ? times('habitsAt', ['19:00', '20:30', '21:30']) + '<div style="height:10px"></div>' : ''}
         </section>
         <section class="card frost" style="padding:4px 16px;margin-top:10px">
@@ -497,6 +512,7 @@ export const actions = {
     toast(await copyText(text) ? 'Copied' : 'Could not copy — press and hold the field instead');
   },
   'hl-tab'(d) { hTab = d.v; haptic(); topSheet()?.refresh(); },
+  'copy-health-prefix'() { navigator.clipboard?.writeText('https://blackcodie.github.io/ark/#health=').then(() => toast('Copied'), () => toast('Select and copy it')); },
   'notify-sheet'() { notifySheet(); },
   'push-on'() { pushOn().then(() => topSheet()?.refresh()); },
   'push-off'() { pushOff().then(() => topSheet()?.refresh()); },

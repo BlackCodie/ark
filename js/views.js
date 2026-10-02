@@ -6,6 +6,7 @@
    and says when it is waiting for a fresh one.
    ══════════════════════════════════════════════════════════════════════ */
 import { questsCard, renderLab } from './system.js';
+import { fuelCard } from './daily.js';
 import {
   L, state, view, emit, changed, esc, icon, today, shiftDay, fmt1, fmtMins, fmtDay, daysBetween, homeMove, anywhere, caState, checkCa, onPublicCopy, pair,
   ringsSvg, ringSvg, sparkSvg, barsSvg, syncLabel, paired, haptic, toast, scheduleSync,
@@ -191,6 +192,7 @@ export function renderToday() {
     </div></section>`;
 
   H += questsCard(v);
+  H += fuelCard(v);
   H += healthCard(v, t);
   H += routineCard();
   H += mindGlance();
