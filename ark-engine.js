@@ -1296,6 +1296,7 @@ exports.INPUT_LABELS = void 0;
 exports.normaliseInputs = normaliseInputs;
 exports.observedKeys = observedKeys;
 exports.missingKeys = missingKeys;
+exports.cleanInputs = cleanInputs;
 const constants_1 = require("./config/constants");
 const transfer_1 = require("./core/transfer");
 function mk(key, drive) {
@@ -1477,6 +1478,41 @@ exports.INPUT_LABELS = {
     age: 'Age',
     sex: 'Sex',
 };
+/**
+ * Plausible physical range per input. A value outside it (a typo, Infinity, a garbled import) is treated
+ * as NOT OBSERVED rather than clamped — the engine says less instead of something wrong. The fuzz suite
+ * (tests/fuzz.test.ts) found NaN cortisol from such values before this existed.
+ */
+const PLAUSIBLE = {
+    sleepDuration: [0, 16], sleepConsistency: [0, 100], deepSleep: [0, 100], hrv: [0, 100], restingHeartRate: [25, 200],
+    trainingVolume: [0, 200], trainingIntensity: [0, 100], strengthProgression: [0, 100], calorieIntake: [0, 15000], calorieMaintenance: [800, 8000],
+    proteinIntake: [0, 800], bodyFatPercent: [2, 70], hydration: [0, 15], alcohol: [0, 40], nicotine: [0, 200], caffeine: [0, 3000], stress: [0, 100],
+    meditation: [0, 1440], sunlight: [0, 1440], coldExposure: [0, 600], illness: [0, 100], recovery: [0, 100], zinc: [0, 500], magnesium: [0, 500],
+    vitaminD: [0, 500], omega3: [0, 500], iodine: [0, 500], selenium: [0, 500], iron: [0, 500], dailySteps: [0, 150000], vo2max: [10, 100],
+    caffeineAtBedtime: [0, 2000], ashwagandha: [0, 100], fastingHours: [0, 96], age: [10, 110],
+};
+function cleanInputs(inputs) {
+    const out = {};
+    Object.entries(inputs || {}).forEach(([k, v]) => {
+        if (k === 'sex') {
+            if (v === 'male' || v === 'female')
+                out[k] = v;
+            return;
+        }
+        const r = PLAUSIBLE[k];
+        if (typeof v !== 'number') {
+            if (!r && v !== undefined)
+                out[k] = v;
+            return;
+        }
+        if (!Number.isFinite(v))
+            return;
+        if (r && (v < r[0] || v > r[1]))
+            return;
+        out[k] = v;
+    });
+    return out;
+}
 
   },
   "./core/kinetics": function (exports, module, require) {
@@ -2639,7 +2675,9 @@ function biologicalAgeEffect(key, score) {
     return Number((sign * deviation * weight).toFixed(2));
 }
 /** Run the engine over an observation history. */
-function estimateEndocrineState(history, options = {}) {
+function estimateEndocrineState(history0, options = {}) {
+    // Values outside a plausible physical range are treated as unobserved (core/inputs.ts cleanInputs).
+    const history = (history0 || []).map(h => ({ ...h, inputs: (0, inputs_1.cleanInputs)(h.inputs) }));
     const problems = (0, graph_1.validateGraph)();
     if (problems.length) {
         throw new Error('Causal graph failed validation:\n  ' + problems.join('\n  '));

@@ -672,3 +672,18 @@ details.proto .why{font-size:.8rem;color:var(--t3);line-height:1.5;margin:8px 0 
 .anywhere .aw-step.wait{opacity:.5}
 .anywhere .tt{font-weight:600}
 .anywhere .sub{line-height:1.45;margin-top:2px}
+
+/* ── paint budget (2026-10-02: Body Arch lagged on the phone) ──
+   1. The ambient orbs drifted forever under a filter:saturate() layer, so the whole background
+      re-rasterised every frame — and every backdrop-blurred bar above it (edge, jump chips, tab bar)
+      re-blurred with it. No filter now, and the drift pauses while scrolling.
+   2. Each .frost card drew its rim with a mask-composite pseudo-element (58 on Body Arch); masks are
+      among the most expensive things WebKit paints. The rim is an inset ring + top highlight now.
+   3. Open Body Arch sections skip layout and paint while off screen. */
+.ambient{filter:none}
+html.scrolling .ambient i{animation-play-state:paused}
+.frost::before{display:none}
+.frost{box-shadow:inset 0 0 0 1px rgba(255,255,255,.07),inset 0 1px 0 rgba(255,255,255,.15),0 10px 30px -18px rgba(0,0,0,.8)}
+html[data-theme="light"] .frost{box-shadow:inset 0 0 0 1px rgba(12,18,26,.06),inset 0 1px 0 #fff,0 12px 30px -22px rgba(20,32,54,.4),0 1px 2px rgba(20,32,54,.05)}
+.ba-sec.open:not(#ba-scan) .ba-bd{content-visibility:auto;contain-intrinsic-size:auto 900px}
+@media (prefers-reduced-motion:reduce){.ambient i{animation:none}}

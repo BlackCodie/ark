@@ -95,6 +95,7 @@ exports.bodyState = bodyState;
 exports.systemicRecoveryFactor = systemicRecoveryFactor;
 const soreness_1 = require("./soreness");
 const physique_1 = require("./physique");
+const sanitize_1 = require("./sanitize");
 /**
  * Per-muscle recovery window, parsed from ARK_MUSCLE_BIO.rec ("48-72h", "24h").
  *
@@ -150,7 +151,7 @@ function derivedStrength(vol30, slug) {
     return Math.round(10 * vol30 / (vol30 + ref) * 10) / 10;
 }
 function strengthFor(slug, metric, training) {
-    const manual = Number(metric.strength) || 0;
+    const manual = (0, sanitize_1.numOr)(metric.strength, 0, 10, 0);
     const derived = derivedStrength(training.vol30, slug);
     return manual > 0
         ? { value: manual, manual: true, derived }
@@ -160,14 +161,18 @@ exports.NEUTRAL_SYSTEMIC = { factor: 1, reason: null, confidence: 0 };
 function bodyState(input) {
     const { now, slugs, names, training, metrics, bio } = input;
     const cats = input.cats || {};
-    const sys = input.systemic || exports.NEUTRAL_SYSTEMIC;
+    const sys0 = input.systemic || exports.NEUTRAL_SYSTEMIC;
+    const sys = { ...sys0, factor: (0, sanitize_1.numOr)(sys0.factor, 0.6, 1.4, 1) };
     const muscles = {};
     let ready = 0, recovering = 0, fresh = 0, untouched = 0;
     let soreCount = 0, injuredCount = 0, loadSum = 0;
     let strSum = 0, strN = 0, mobSum = 0, mobN = 0, touched7 = 0;
     for (const slug of slugs) {
-        const t = training[slug] || { last: null, weekSets: 0, vol30: 0 };
-        const md = metrics[slug] || {};
+        // Clean inputs (sanitize.ts): stored values can be strings, typos or missing.
+        const t0 = training[slug] || { last: null, weekSets: 0, vol30: 0 };
+        const t = { last: (0, sanitize_1.numIn)(t0.last, 0, now + 864e5), weekSets: (0, sanitize_1.numOr)(t0.weekSets, 0, 300, 0), vol30: (0, sanitize_1.numOr)(t0.vol30, 0, 1e7, 0) };
+        const md0 = metrics[slug] || {};
+        const md = { ...md0, strength: (0, sanitize_1.numOr)(md0.strength, 0, 10, 0), mobility: (0, sanitize_1.numOr)(md0.mobility, 0, 10, 0), soreness: (0, sanitize_1.numOr)(md0.soreness, 0, 4, 0) };
         // Systemic state stretches or shrinks the textbook window. This is the wire
         // that lets the endocrine estimate change a decision instead of only
         // rendering a panel.
@@ -195,7 +200,7 @@ function bodyState(input) {
         const target = setTarget(slug);
         const deficit = Math.max(0, target - t.weekSets);
         const str = strengthFor(slug, md, t);
-        const mob = Number(md.mobility) || 0;
+        const mob = md.mobility;
         // Priority: what to train next.
         //   readiness  0 while repairing, 1 once past the window
         //   deficit    how far below the weekly target
@@ -1497,6 +1502,7 @@ function parseHealthHash(raw) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.HOURLY_KEYS = void 0;
 exports.hormoneHours = hormoneHours;
+const sanitize_1 = require("./sanitize");
 /**
  * HORMONES BY THE HOUR.
  *
@@ -1538,7 +1544,14 @@ const SPAN = {
     cortisol: 34, testosterone: 16, freeTestosterone: 15, estradiol: 6, growthHormone: 26, igf1: 2,
     insulinSensitivity: 12, thyroid: 8, dopamineTone: 16,
 };
-function hormoneHours(inp, stepMin = 15) {
+function hormoneHours(inp0, stepMin = 15) {
+    // Clean inputs once (sanitize.ts): a missing or garbled engine score must not blank the whole chart.
+    const sc0 = inp0.scores || {};
+    const inp = { ...inp0,
+        scores: Object.fromEntries(Object.entries(sc0).map(([k, v]) => [k, (0, sanitize_1.numIn)(v, 0, 100)]).filter(([, v]) => v !== null)),
+        doses: (inp0.doses || []).filter(d => d && Number(d.amount) > 0 && isFinite(Number(d.amount)) && isFinite(Date.parse(d.at))),
+        sessions: (inp0.sessions || []).filter(x => x && isFinite(x.start) && isFinite(x.end)).map(x => ({ ...x, intensity: (0, sanitize_1.numOr)(x.intensity, 0, 1, 0.5) })),
+        daylight: (0, sanitize_1.numIn)(inp0.daylight, 0, 1440), stress: (0, sanitize_1.numIn)(inp0.stress, 0, 10), age: (0, sanitize_1.numIn)(inp0.age, 10, 110) };
     const { day0, wake, bedtime } = inp;
     const sleepOnset = Math.min(inp.sleepOnset, wake - 3 * H);
     const doses = inp.doses || [];
@@ -1780,6 +1793,258 @@ __exportStar(require("./report"), exports);
 __exportStar(require("./progression"), exports);
 __exportStar(require("./whatif"), exports);
 __exportStar(require("./fuel"), exports);
+__exportStar(require("./lymph"), exports);
+__exportStar(require("./sanitize"), exports);
+
+  },
+  "./lymph": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LYMPH_RED_FLAGS = exports.LYMPH_MYTHS = exports.LYMPH_MAP = exports.regionOfSlug = exports.LYMPH_REGIONS = void 0;
+exports.lymphReport = lymphReport;
+/**
+ * THE LYMPHATIC SYSTEM — an estimate of how well lymph is being moved today, from what you logged.
+ *
+ * Built on the user's research vault (Lymphatic System, 7 notes) and the studies it cites:
+ *  · Lymph HAS a pump: collecting vessels are chains of contracting lymphangions with valves; skeletal muscle,
+ *    breathing and arterial pulsation add push. Nearly all filtered fluid returns as lymph (revised Starling;
+ *    Levick & Michel 2010, ~4 L/day).
+ *  · Movement is the pump you control: steady exercise raises human lymph flow ~2–3× (Lane 2005); short
+ *    movement breaks prevent the leg swelling of long sitting (Biology 2022); progressive lifting is safe
+ *    even for damaged lymphatics (PAL, NEJM 2009). The calves are the lower body's main pump.
+ *  · What burdens it: excess body fat (lymphatic pumping fell in step with weight gain and recovered with
+ *    weight loss, Nitti 2016), salt (more fluid for skin lymphatics to clear, Machnik 2009), heavy drinking,
+ *    inflammation (filtration can rise many-fold), short sleep and lying flat (morning face puffiness).
+ *  · Slow diaphragmatic breathing plausibly helps the thoracic duct — real but "hypothesis-generating".
+ *  · Brain drainage ("glymphatic") is CONTESTED: mouse studies point in opposite directions (Xie 2013 vs
+ *    Miao 2024). Shown separately, low confidence. Long-term aerobic training is the most promising human lever
+ *    (Yoo 2025, small MRI study).
+ *
+ * Every number is a relative 0–100 estimate (50 = a typical moderately active adult). Lymph flow cannot be
+ * measured at home; nothing here is a measurement or a diagnosis. Myths and red flags come from the same notes.
+ */
+const exercises_1 = require("./exercises");
+const sanitize_1 = require("./sanitize");
+exports.LYMPH_REGIONS = {
+    legs: { name: 'Legs & hips', slugs: ['quadriceps', 'hamstring', 'gluteal', 'calves', 'adductors', 'tibialis'], weight: 0.45 },
+    trunk: { name: 'Trunk & gut', slugs: ['abs', 'obliques', 'lower-back', 'chest', 'upper-back'], weight: 0.25 },
+    arms: { name: 'Arms & shoulders', slugs: ['deltoids', 'biceps', 'triceps', 'forearm', 'trapezius'], weight: 0.2 },
+    head: { name: 'Head & face', slugs: [], weight: 0.1 },
+};
+const regionOfSlug = (slug) => Object.keys(exports.LYMPH_REGIONS).find(r => exports.LYMPH_REGIONS[r].slugs.includes(slug)) || null;
+exports.regionOfSlug = regionOfSlug;
+/** Node groups and main vessels on the body figure (the 724-wide figure space; the back face is offset +720).
+ *  Placed from the figure's own muscle bounding boxes. The thoracic duct empties on the body's LEFT (the
+ *  viewer's right on the front view). */
+exports.LYMPH_MAP = {
+    front: {
+        nodes: [
+            { id: 'cervical-r', x: 336, y: 252, r: 9, region: 'head', name: 'Cervical' }, { id: 'cervical-l', x: 392, y: 252, r: 9, region: 'head', name: 'Cervical' },
+            { id: 'supraclav-r', x: 300, y: 300, r: 8, region: 'head', name: 'Supraclavicular' }, { id: 'supraclav-l', x: 428, y: 300, r: 10, region: 'trunk', name: 'Supraclavicular — where the thoracic duct empties' },
+            { id: 'axillary-r', x: 262, y: 366, r: 13, region: 'arms', name: 'Axillary' }, { id: 'axillary-l', x: 466, y: 366, r: 13, region: 'arms', name: 'Axillary' },
+            { id: 'cubital-r', x: 206, y: 492, r: 7, region: 'arms', name: 'Cubital' }, { id: 'cubital-l', x: 522, y: 492, r: 7, region: 'arms', name: 'Cubital' },
+            { id: 'cisterna', x: 364, y: 476, r: 10, region: 'trunk', name: 'Cisterna chyli' }, { id: 'mesenteric', x: 364, y: 560, r: 9, region: 'trunk', name: 'Mesenteric (gut)' },
+            { id: 'inguinal-r', x: 318, y: 652, r: 13, region: 'legs', name: 'Inguinal' }, { id: 'inguinal-l', x: 410, y: 652, r: 13, region: 'legs', name: 'Inguinal' },
+        ],
+        vessels: [
+            { region: 'legs', d: 'M 302 1228 Q 296 1100 318 962 Q 330 800 318 652' }, { region: 'legs', d: 'M 426 1228 Q 432 1100 410 962 Q 398 800 410 652' },
+            { region: 'arms', d: 'M 142 688 Q 172 590 206 492 Q 232 420 262 366' }, { region: 'arms', d: 'M 586 688 Q 556 590 522 492 Q 496 420 466 366' },
+            { region: 'trunk', d: 'M 318 652 Q 340 600 364 560 L 364 476 Q 376 380 428 300' }, { region: 'trunk', d: 'M 410 652 Q 388 600 364 560' },
+            { region: 'head', d: 'M 336 252 Q 318 280 300 300' }, { region: 'head', d: 'M 392 252 Q 410 280 428 300' },
+        ],
+    },
+    back: {
+        nodes: [
+            { id: 'occipital-r', x: 1064, y: 246, r: 8, region: 'head', name: 'Occipital' }, { id: 'occipital-l', x: 1104, y: 246, r: 8, region: 'head', name: 'Occipital' },
+            { id: 'popliteal-r', x: 1026, y: 992, r: 11, region: 'legs', name: 'Popliteal (behind the knee)' }, { id: 'popliteal-l', x: 1142, y: 992, r: 11, region: 'legs', name: 'Popliteal (behind the knee)' },
+        ],
+        vessels: [
+            { region: 'legs', d: 'M 1022 1272 Q 1018 1130 1026 992 Q 1030 860 1040 760' }, { region: 'legs', d: 'M 1146 1272 Q 1150 1130 1142 992 Q 1138 860 1128 760' },
+            { region: 'head', d: 'M 1064 246 Q 1050 280 1040 310' }, { region: 'head', d: 'M 1104 246 Q 1118 280 1128 310' },
+        ],
+    },
+};
+const dk = (k, n) => { const [y, m, d] = k.split('-').map(Number); const t = new Date(y, m - 1, d + n); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); };
+const dayOf = (iso) => { const t = new Date(iso); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); };
+const clamp = (x, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, x));
+const r0 = (x) => Math.round(x);
+/** Walking → pump, saturating: 0 steps ≈ 20, 7k ≈ 57, 10k ≈ 64, 15k ≈ 73. */
+const stepPump = (steps) => 20 + 58 * (1 - Math.exp(-steps / 7000));
+exports.LYMPH_MYTHS = [
+    ['"Lymph has no pump" products', 'False premise — lymph vessels contract on their own; muscles and breathing add to it.'],
+    ['Rebounding "15–30× lymph flow"', 'The NASA study never measured lymph. Fine cardio; its lymph effect is just exercise.'],
+    ['Dry brushing, cleanses, detox teas', 'No lymph-outcome trials at all.'],
+    ['Gua sha / face rollers', 'A temporary 2–3 mm contour change in one uncontrolled trial — hours, not reshaping.'],
+    ['Pneumatic boots, manual lymph drainage for healthy people', 'Clinical tools for lymphedema; no lasting benefit shown in healthy people.'],
+    ['"Glymphatic" pillows and gadgets', 'Brain-clearance during sleep is disputed and almost entirely rodent data.'],
+];
+exports.LYMPH_RED_FLAGS = [
+    'One swollen, painful, warm calf — especially after a flight, surgery or being immobile: see a doctor the same day (possible clot). Chest pain or sudden breathlessness: emergency.',
+    'A lymph node that is hard, fixed, painless or growing past 1–2 cm, or lasts more than 2–4 weeks — or nodes with night sweats, fever or weight loss.',
+    'Both legs swollen with breathlessness (heart), with foamy urine or puffy eyes (kidney), or after starting a new medicine.',
+    'Red, hot, spreading skin is cellulitis — antibiotics, not massage.',
+];
+function lymphReport(inp) {
+    var _a;
+    const t = inp.today, B = inp.bio || {};
+    const D = [];
+    const v = (day, k, lo, hi) => (0, sanitize_1.numIn)((B[day] || {})[k], lo, hi);
+    const stepsToday = v(t, 'steps', 0, 150000);
+    const past = [1, 2, 3, 4, 5, 6, 7].map(i => v(dk(t, -i), 'steps', 0, 150000)).filter((x) => x !== null);
+    const steps7 = past.length >= 3 ? past.reduce((a, b) => a + b, 0) / past.length : null;
+    const known = stepsToday !== null || steps7 !== null;
+    // ── the pump ──
+    // Today's movement counts most; your usual week fills in before today's steps arrive.
+    const stepsBasis = stepsToday !== null && steps7 !== null ? 0.6 * stepsToday + 0.4 * steps7 : ((_a = stepsToday !== null && stepsToday !== void 0 ? stepsToday : steps7) !== null && _a !== void 0 ? _a : 6000);
+    let pump = stepPump(stepsBasis);
+    if (known)
+        D.push({ label: 'Walking: ' + Math.round(stepsBasis).toLocaleString() + ' steps' + (stepsToday === null ? ' (your usual day)' : ''), d: r0(pump - 50), ev: 'A', src: 'Exercise raises lymph flow 2–3× (Lane 2005)', area: 'pump' });
+    const ex = v(t, 'exmin', 0, 600);
+    if (ex !== null && ex > 0) {
+        const b = Math.min(8, ex / 4);
+        pump += b;
+        D.push({ label: ex + ' min of exercise today', d: r0(b), ev: 'A', src: 'Scintigraphy: 3–6× faster clearance during exercise', area: 'pump' });
+    }
+    // resistance training in the last 48 h, per region (muscle contraction squeezes the collecting vessels)
+    const regionSets = { legs: 0, trunk: 0, arms: 0, head: 0 };
+    (0, sanitize_1.cleanSessions)(inp.sessions).filter((s) => s.date >= dk(t, -1) && s.date <= t).forEach((s) => (s.exercises || []).forEach((e) => {
+        const ld = (0, exercises_1.loadingOf)(e).load, hard = (e.sets || []).filter((x) => !x.warm && Number(x.r) > 0).length;
+        Object.keys(exports.LYMPH_REGIONS).forEach(r => { const share = Math.max(0, ...exports.LYMPH_REGIONS[r].slugs.map(sl => ld[sl] || 0)); regionSets[r] += share * hard; });
+    }));
+    const trainBonus = (r) => Math.min(15, regionSets[r] * 1.8);
+    if (regionSets.legs + regionSets.arms + regionSets.trunk > 0)
+        D.push({ label: 'Lifting in the last 2 days', d: r0((trainBonus('legs') + trainBonus('arms') + trainBonus('trunk')) / 3), ev: 'A', src: 'Progressive lifting is safe even for damaged lymphatics (PAL, NEJM 2009)', area: 'pump' });
+    const mind = v(t, 'mindful', 0, 1440);
+    const breath = mind !== null && mind >= 5 ? Math.min(4, mind / 4) : 0;
+    if (breath)
+        D.push({ label: mind + ' min of slow breathing / mindfulness', d: r0(breath), ev: 'C', src: 'Plausible thoracic-duct help — hypothesis-generating (Moazzam 2026)', area: 'pump' });
+    // body fat slows the pump itself
+    const bf = (0, sanitize_1.numIn)(inp.bodyfat, 2, 70), female = String(inp.sex || '').toLowerCase() === 'female';
+    const over = bf === null ? 0 : Math.max(0, bf - (female ? 30 : 20));
+    const fatHit = -Math.min(15, over * 0.8);
+    if (fatHit < 0)
+        D.push({ label: 'Body fat ' + bf + ' %', d: r0(fatHit), ev: 'B', src: 'Obesity slows lymphatic pumping; reverses with weight loss (Nitti 2016)', area: 'pump' });
+    pump = clamp(pump + fatHit);
+    const regions = {
+        // the calves are the leg pump: walking counts fully there
+        legs: clamp(pump + trainBonus('legs')),
+        // breathing and trunk work move the thoracic duct and gut lymph
+        trunk: clamp(pump * 0.85 + 8 + trainBonus('trunk') * 0.6 + breath * 2),
+        // arm swing does little; arm lymph moves with arm work
+        arms: clamp(pump * 0.7 + 12 + trainBonus('arms')),
+        head: 0,
+    };
+    // ── the fluid load ──
+    let load = 30;
+    const doses = (inp.doses || []).filter(d => d && isFinite(Date.parse(d.at)));
+    const sodium = doses.filter(d => d.k === 'sodium' && dayOf(d.at) === t).reduce((a, d) => a + (0, sanitize_1.numOr)(d.amount, 0, 20000, 0), 0)
+        + (0, sanitize_1.numOr)(((B[t] || {}).micros || {}).sodium, 0, 20000, 0);
+    if (sodium > 2000) {
+        const x = Math.min(25, (sodium - 2000) / 120);
+        load += x;
+        D.push({ label: Math.round(sodium).toLocaleString() + ' mg sodium today', d: -r0(x), ev: 'B', src: 'Salt is buffered in skin and cleared by lymphatics (Machnik 2009); WHO: <2 g sodium/day', area: 'load' });
+    }
+    const lastNight = doses.filter(d => d.k === 'alcohol' && Date.parse(d.at) >= new Date(t + 'T00:00:00').getTime() - 12 * 3600e3).reduce((a, d) => a + (0, sanitize_1.numOr)(d.amount, 0, 40, 0), 0);
+    if (lastNight >= 2) {
+        const x = Math.min(25, (lastNight - 1) * 8);
+        load += x;
+        D.push({ label: lastNight + ' drinks since last evening', d: -r0(x), ev: 'B', src: 'A cause of morning puffiness; heavy doses suppressed brain clearance in mice (Lundgaard 2018)', area: 'load' });
+    }
+    const infl = (0, sanitize_1.numIn)(inp.inflammation, 0, 100);
+    if (infl !== null && Math.abs(infl - 50) >= 5) {
+        const x = (infl - 50) * 0.3;
+        load += x;
+        D.push({ label: 'Inflammation estimate ' + r0(infl), d: -r0(x), ev: 'B', src: 'Inflammation raises capillary filtration many-fold (revised Starling)', area: 'load' });
+    }
+    const sleep = v(t, 'sleep', 0, 16);
+    if (sleep !== null && sleep < 6) {
+        load += 8;
+        D.push({ label: 'Short night (' + sleep + ' h)', d: -8, ev: 'C', src: 'Short sleep and salt/alcohol are the usual causes of a puffy face', area: 'load' });
+    }
+    if ((B[t] || {}).sick || ((B[t] || {}).tags || []).includes('sick')) {
+        load += 10;
+        D.push({ label: 'Ill today', d: -10, ev: 'B', src: 'Nodes swell while they fight infection', area: 'load' });
+    }
+    load = clamp(load);
+    // head & face: drained by gravity once upright; puffiness tracks salt, alcohol and short sleep
+    regions.head = clamp(70 - (load - 30) * 0.9);
+    const net = pump - load;
+    const balance = load >= 55 || net < -5
+        ? { key: 'puffy', title: 'Puffiness likely', text: 'More fluid to clear than you are moving — expect puffy eyes or ankles. Walk, cut the salt, skip the evening drink.', color: '#ff9f0a' }
+        : load >= 42 || net < 10
+            ? { key: 'mild', title: 'Mild fluid load', text: 'Some extra fluid to clear today — a walk and an ordinary salt intake handle it.', color: '#ffd60a' }
+            : { key: 'clear', title: 'Clear', text: 'Movement is keeping up with what needs draining.', color: '#30d158' };
+    // ── brain drainage (contested) ──
+    let brain = 50;
+    let brainKnown = false;
+    if (sleep !== null) {
+        brainKnown = true;
+        const x = sleep >= 7 && sleep <= 9 ? 10 : sleep < 6 ? -12 : sleep < 7 ? -4 : 4;
+        brain += x;
+        D.push({ label: 'Sleep ' + sleep + ' h', d: x, ev: 'C', src: 'Sleep-driven clearance: Xie 2013 for, Miao 2024 against — unresolved', area: 'brain' });
+    }
+    const deep = v(t, 'deep', 0, 6);
+    if (deep !== null) {
+        brainKnown = true;
+        const x = clamp((deep - 1) * 8, -8, 8);
+        brain += x;
+    }
+    if (lastNight >= 2) {
+        brain -= 10;
+        D.push({ label: 'Alcohol last night', d: -10, ev: 'C', src: 'Higher doses suppressed CSF influx ~30 % in mice (Lundgaard 2018)', area: 'brain' });
+    }
+    const vo2 = (0, sanitize_1.numIn)([0, 1, 2, 3, 4, 5, 6, 7].map(i => (B[dk(t, -i)] || {}).vo2).find(x => (0, sanitize_1.numIn)(x, 10, 90) !== null), 10, 90);
+    if (vo2 !== null) {
+        const x = clamp((vo2 - 40) * 0.5, -6, 8);
+        brain += x;
+        D.push({ label: 'VO₂max ' + vo2, d: r0(x), ev: 'C', src: 'Months of cycling enlarged meningeal lymphatics on MRI (Yoo 2025, small)', area: 'brain' });
+    }
+    // ── tips: the vault's practical lines, picked by what is actually weak ──
+    const tips = [];
+    if (steps7 !== null && steps7 < 7000)
+        tips.push('Walking is the pump: aim for 7,000–10,000 steps or 30–45 min a day.');
+    tips.push('Every 30–60 min of sitting or standing still: 2–5 min of walking or 10–20 calf raises.');
+    if (regionSets.legs < 3)
+        tips.push('Include standing and seated calf raises when you lift — the calf is the leg\'s pump.');
+    if (sodium > 2000)
+        tips.push('Keep salt under 5 g (~2 g sodium) a day — avoid a big salty dinner before an important morning.');
+    if (lastNight >= 1)
+        tips.push('Keep alcohol to 0–1 drinks, especially in the evening.');
+    if (over > 0)
+        tips.push('A healthier waist is the strongest long-term lymph protector in the data.');
+    tips.push('Flights over 4–5 h: knee-high 15–20 mmHg compression socks and ankle pumps every 20–30 min.');
+    // ── your puffiness pattern ──
+    const P = [];
+    for (let i = 0; i < 45; i++) {
+        const day = dk(t, -i), p = (0, sanitize_1.numIn)((B[day] || {}).puff, 0, 3);
+        if (p === null)
+            continue;
+        const startPrev = new Date(dk(day, -1) + 'T17:00:00').getTime(), startDay = new Date(day + 'T06:00:00').getTime();
+        const alc = doses.filter(d => d.k === 'alcohol' && Date.parse(d.at) >= startPrev && Date.parse(d.at) < startDay).reduce((a, d) => a + (0, sanitize_1.numOr)(d.amount, 0, 40, 0), 0);
+        const salt = doses.filter(d => d.k === 'sodium' && dayOf(d.at) === dk(day, -1)).reduce((a, d) => a + (0, sanitize_1.numOr)(d.amount, 0, 20000, 0), 0);
+        const sl = (0, sanitize_1.numIn)((B[day] || {}).sleep, 0, 16);
+        P.push({ puff: p, alc, salt, short: sl !== null && sl < 6 });
+    }
+    const lines = [];
+    const cmp = (label, f) => {
+        const a = P.filter(f), b = P.filter(x => !f(x));
+        if (a.length >= 3 && b.length >= 3) {
+            const ma = a.reduce((s, x) => s + x.puff, 0) / a.length, mb = b.reduce((s, x) => s + x.puff, 0) / b.length;
+            if (Math.abs(ma - mb) >= 0.5)
+                lines.push(label + ': puffiness ' + ma.toFixed(1) + ' vs ' + mb.toFixed(1) + ' on other mornings.');
+        }
+    };
+    if (P.length >= 8) {
+        cmp('After 2+ drinks the evening before', x => x.alc >= 2);
+        cmp('After a salty day (3,000+ mg sodium)', x => x.salt >= 3000);
+        cmp('After a night under 6 h', x => x.short);
+        if (!lines.length)
+            lines.push('No clear pattern yet between your puffiness and drinks, salt or short nights.');
+    }
+    return { known, pump: r0(pump), load: r0(load), balance, regions: { legs: r0(regions.legs), trunk: r0(regions.trunk), arms: r0(regions.arms), head: r0(regions.head) },
+        brain: { score: r0(clamp(brain)), known: brainKnown, note: 'Contested science, almost all from mice — shown for interest, not as a target.' },
+        drivers: D.filter(d => d.d !== 0 || d.area === 'brain'), tips: tips.slice(0, 5), puffiness: { n: P.length, lines } };
+}
 
   },
   "./merge": function (exports, module, require) {
@@ -2173,6 +2438,7 @@ function microAdherence(key, goal, records, days = 30) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.REGIONS = void 0;
 exports.mind = mind;
+const sanitize_1 = require("./sanitize");
 /**
  * MIND — an estimate of mental state, and when you will be sharpest today.
  *
@@ -2209,8 +2475,21 @@ function pressureAtWake(sleepHours) {
     });
     return S;
 }
-function mind(inp) {
-    var _a, _b;
+function mind(inp0) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
+    // Clean inputs once (sanitize.ts): a stored string or typo must not make every state NaN.
+    const ck0 = inp0.checkin || null, en0 = inp0.endo || null, co0 = inp0.consistency || null;
+    const inp = { ...inp0,
+        sleepHours: (inp0.sleepHours || []).map(v => (0, sanitize_1.numOr)(v, 0, 16, 0)),
+        doses: (inp0.doses || []).filter(d => d && Number(d.amount) > 0 && isFinite(Number(d.amount)) && isFinite(Date.parse(d.at))),
+        checkin: ck0 ? { mood: (0, sanitize_1.numIn)(ck0.mood, 0, 10), energy: (0, sanitize_1.numIn)(ck0.energy, 0, 10), stress: (0, sanitize_1.numIn)(ck0.stress, 0, 10) } : null,
+        daylight: (0, sanitize_1.numOr)(inp0.daylight, 0, 1440, 0), cold: (0, sanitize_1.numOr)(inp0.cold, 0, 600, 0), meditation: (0, sanitize_1.numOr)(inp0.meditation, 0, 1440, 0),
+        alcoholYesterday: (0, sanitize_1.numOr)(inp0.alcoholYesterday, 0, 40, 0), ashwagandha: (0, sanitize_1.numOr)(inp0.ashwagandha, 0, 1, 0),
+        hrv: (0, sanitize_1.numIn)(inp0.hrv, 5, 300), hrvBaseline: (0, sanitize_1.numIn)(inp0.hrvBaseline, 5, 300),
+        endo: en0 ? { dopamineTone: (_a = (0, sanitize_1.numIn)(en0.dopamineTone, 0, 100)) !== null && _a !== void 0 ? _a : undefined, cortisol: (_b = (0, sanitize_1.numIn)(en0.cortisol, 0, 100)) !== null && _b !== void 0 ? _b : undefined,
+            thyroid: (_c = (0, sanitize_1.numIn)(en0.thyroid, 0, 100)) !== null && _c !== void 0 ? _c : undefined, testosterone: (_d = (0, sanitize_1.numIn)(en0.testosterone, 0, 100)) !== null && _d !== void 0 ? _d : undefined } : null,
+        consistency: co0 ? { meditation: (_e = (0, sanitize_1.numIn)(co0.meditation, 0, 1)) !== null && _e !== void 0 ? _e : undefined, cold: (_f = (0, sanitize_1.numIn)(co0.cold, 0, 1)) !== null && _f !== void 0 ? _f : undefined,
+            training: (_g = (0, sanitize_1.numIn)(co0.training, 0, 1)) !== null && _g !== void 0 ? _g : undefined, sleepRegularity: (_h = (0, sanitize_1.numIn)(co0.sleepRegularity, 0, 1)) !== null && _h !== void 0 ? _h : undefined } : undefined };
     const { now, wake, bedtime } = inp;
     const doses = inp.doses || [];
     const S0 = pressureAtWake(inp.sleepHours);
@@ -2308,7 +2587,7 @@ function mind(inp) {
         ['Meditation, last 30 days', 20 * Math.min(1, (c.meditation || 0) / 20)],
         ['Cold exposure, last 30 days', 12 * Math.min(1, (c.cold || 0) / 12)],
         ['Training, last 30 days', 15 * Math.min(1, (c.training || 0) / 12)],
-        ['Regular sleep', 15 * ((_a = c.sleepRegularity) !== null && _a !== void 0 ? _a : 0.5)],
+        ['Regular sleep', 15 * ((_j = c.sleepRegularity) !== null && _j !== void 0 ? _j : 0.5)],
         ['HRV vs your baseline', hrvShift * 0.5],
     ]);
     const regions = {
@@ -2319,7 +2598,7 @@ function mind(inp) {
             ['Stress', ck.stress != null ? -Math.max(0, Number(ck.stress) - 5) * 3 : 0], ['Alcohol yesterday', -(inp.alcoholYesterday || 0) * 3]]),
         hypothalamus: build(50, [['Testosterone (estimate)', e.testosterone != null ? (e.testosterone - 50) * 0.3 : 0],
             ['Thyroid (estimate)', e.thyroid != null ? (e.thyroid - 50) * 0.3 : 0], ['Cortisol (estimate)', e.cortisol != null ? -(e.cortisol - 50) * 0.3 : 0]]),
-        scn: build(50, [['Morning daylight', Math.min(25, (inp.daylight || 0) * 1.2)], ['Regular sleep', (((_b = c.sleepRegularity) !== null && _b !== void 0 ? _b : 0.5) - 0.5) * 40],
+        scn: build(50, [['Morning daylight', Math.min(25, (inp.daylight || 0) * 1.2)], ['Regular sleep', (((_k = c.sleepRegularity) !== null && _k !== void 0 ? _k : 0.5) - 0.5) * 40],
             ['Caffeine left at bedtime', -Math.min(20, cafBed / 5)]]),
         brainstem: build(40, [['Caffeine in you now', Math.min(25, cafNow / 8)], ['Cold exposure today', Math.min(15, (inp.cold || 0) * 4)],
             ['Stress', ck.stress != null ? (Number(ck.stress) - 5) * 3 : 0]]),
@@ -2343,23 +2622,6 @@ exports.REGIONS = {
   },
   "./physique": function (exports, module, require) {
 "use strict";
-/**
- * PHYSIQUE — four readouts the Body section was missing, all from what was actually logged.
- *
- *  • Weekly volume against landmarks. The body state already knew a single "target" per muscle; this
- *    says where the week's hard sets sit on the whole ladder — maintenance (MV), the minimum that grows
- *    (MEV), the productive range (MAV) and the most you can recover from (MRV). The numbers are the
- *    widely used practitioner landmarks (Israetel / Renaissance Periodization), which sit on the
- *    dose-response evidence (Schoenfeld 2017: more hard sets grow more, returns flatten past ~20;
- *    Baz-Valle 2022). They are guidelines, not measurements, and the recoverable ceiling moves with
- *    recovery: the endocrine estimate's systemic factor, short sleep and age lower it.
- *  • Injuries that last until cleared. Soreness decays by itself in days; an injury does not, so it is
- *    its own record and TRAIN NEXT routes around it (bodyState).
- *  • Tape measurements → body fat by the US Navy circumference method (Hodgdon & Beckett 1984, typical
- *    error ~3–4 points), lean mass, and what the trend says: recomposition, lean gain, fat gain…
- *  • Strength balance: ratios between your own best lifts (row : bench, hamstring : quad…) against the
- *    ranges coaches use. Coaching norms with modest evidence — shown as a nudge, never a diagnosis.
- */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MEASURE_FIELDS = exports.INJURY_SEV = exports.INJURY_KINDS = exports.VOLUME_ZONE = exports.VOLUME_LANDMARKS = void 0;
 exports.volumePlan = volumePlan;
@@ -2369,6 +2631,7 @@ exports.navyBodyFat = navyBodyFat;
 exports.measureReport = measureReport;
 exports.strengthRatios = strengthRatios;
 exports.cleanInjury = cleanInjury;
+const sanitize_1 = require("./sanitize");
 /** Weekly hard sets per muscle. The last few (obliques, tibialis, adductors, lower back) have no published
  *  landmarks; they are set conservatively from how much indirect work they already get. */
 exports.VOLUME_LANDMARKS = {
@@ -2494,12 +2757,18 @@ function navyBodyFat(p) {
 /** The weight nearest a day (±4 days), averaged so one heavy morning does not decide. */
 function weightNear(weights, day) {
     const d0 = dayNum(day);
-    const near = Object.keys(weights || {}).filter(k => Math.abs(dayNum(k) - d0) <= 4 && weights[k] > 0);
+    const near = Object.keys(weights || {}).filter(k => Math.abs(dayNum(k) - d0) <= 4 && (0, sanitize_1.numIn)(weights[k], 30, 300) !== null);
     if (!near.length)
         return null;
     return Math.round(near.reduce((a, k) => a + weights[k], 0) / near.length * 10) / 10;
 }
 function measureReport(measures, weights, prof) {
+    // Cleaned on read as well as on write: an old or imported record may hold anything.
+    const clean = {};
+    Object.keys(measures || {}).forEach(k => { const c = cleanMeasure(measures[k] || {}); if (Object.keys(c).length)
+        clean[k] = c; });
+    measures = clean;
+    prof = { ...prof, height: (0, sanitize_1.numIn)(prof.height, 100, 250) };
     const days = Object.keys(measures || {}).filter(k => measures[k] && Object.keys(measures[k]).length).sort();
     const at = (day) => {
         const m = measures[day];
@@ -2508,13 +2777,13 @@ function measureReport(measures, weights, prof) {
         return { day, m, bf, weight, lean: bf != null && weight != null ? Math.round(weight * (1 - bf / 100) * 10) / 10 : null };
     };
     if (!days.length)
-        return { latest: null, from: null, deltas: {}, verdict: null, count: 0 };
+        return { latest: null, from: null, deltas: {}, verdict: null, count: 0, caution: null };
     const latest = at(days[days.length - 1]);
     // Compare with the measurement closest to 4 weeks earlier, at least 14 days back and at most ~10 weeks.
     const back = days.filter(k => dayNum(latest.day) - dayNum(k) >= 14 && dayNum(latest.day) - dayNum(k) <= 70);
     const pick = back.sort((a, b) => Math.abs(dayNum(latest.day) - dayNum(a) - 28) - Math.abs(dayNum(latest.day) - dayNum(b) - 28))[0];
     if (!pick)
-        return { latest, from: null, deltas: {}, count: days.length,
+        return { latest, from: null, deltas: {}, count: days.length, caution: null,
             verdict: { key: 'wait', title: 'One more measurement', text: 'Measure again at least 2 weeks after ' + (days.length > 1 ? 'the first' : 'this one') + ' — same time of day, same spot — to see the trend.', color: 'var(--t3)' } };
     const from = at(pick);
     const deltas = {};
@@ -2555,7 +2824,15 @@ function measureReport(measures, weights, prof) {
     else {
         v = { key: 'stable', title: 'Holding steady', text: 'Weight and waist within normal day-to-day noise' + span + '.', color: 'var(--t2)' };
     }
-    return { latest, from, deltas, verdict: v, count: days.length };
+    // Realism check (the user's vault, Body Recomposition): trained lifters add roughly 1–3 kg of lean tissue a
+    // YEAR; even beginners rarely exceed ~1 kg a month. The Navy method's ±3–4 points of body fat are several kg
+    // of "lean mass" either way, so a faster change is reported as noise, not progress.
+    let caution = null;
+    if (deltas.lean != null && weeks > 0 && Math.abs(deltas.lean) / weeks > 0.25) {
+        caution = (deltas.lean > 0 ? '+' : '') + deltas.lean + ' kg lean in ' + weeks + ' week' + (weeks === 1 ? '' : 's')
+            + " is faster than muscle realistically changes (about 1–3 kg a year once trained) — most of it is water or the tape's ±3–4 % error. Trust the trend over several measurements.";
+    }
+    return { latest, from, deltas, verdict: v, count: days.length, caution };
 }
 /** [key, name, numerator patterns, denominator patterns, healthy low, high, note when low, note when high] */
 const RATIOS = [
@@ -2615,23 +2892,6 @@ function cleanInjury(j, fallbackId, ts) {
   },
   "./pk": function (exports, module, require) {
 "use strict";
-/**
- * PHARMACOKINETICS — what a dose does over time.
- *
- * Every supplement or nutrient you log carries the time you took it. From that,
- * a one-compartment oral model (the standard first approximation in clinical
- * pharmacology) estimates how much has been absorbed, how much is circulating
- * now, when it peaks and when it has cleared; stock nutrients add a slow body
- * store on top (weeks to months). Parameters are population averages from the
- * literature cited per entry — real people vary by ±30–50 %, and the interface
- * says so. These are estimates of amounts, never lab measurements; a lab
- * result (bloodwork) replaces the assumed baseline where one exists.
- *
- * Why amounts and not concentrations: the interface talks in "mg in your
- * blood", which is what you can picture, and it keeps the estimate honest —
- * most absorbed minerals leave the blood for tissue within hours, and saying
- * "+5 mg on a 62 mg pool" shows that better than a concentration would.
- */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PK = void 0;
 exports.pkFor = pkFor;
@@ -2643,6 +2903,7 @@ exports.creatineSaturation = creatineSaturation;
 exports.vitaminDStatus = vitaminDStatus;
 exports.omega3Index = omega3Index;
 exports.builtEffect = builtEffect;
+const sanitize_1 = require("./sanitize");
 const L2 = Math.LN2;
 const decl = (base, span, scale) => (d) => base + span * Math.exp(-d / scale);
 /**
@@ -2761,7 +3022,7 @@ function pkNow(k, doses, now) {
     const spec = exports.PK[k];
     if (!spec)
         return null;
-    const ds = doses.filter(d => d.k === k && Number(d.amount) > 0).map(d => ({ at: Date.parse(d.at), m: Number(d.amount) * spec.toMass })).filter(d => isFinite(d.at));
+    const ds = doses.filter(d => d.k === k && Number(d.amount) > 0 && isFinite(Number(d.amount))).map(d => ({ at: Date.parse(d.at), m: Number(d.amount) * spec.toMass })).filter(d => isFinite(d.at));
     const at = (t) => ds.reduce((a, d) => a + bateman(spec, d.m, (t - d.at) / H), 0);
     const inBody = at(now);
     const share = spec.where === 'blood' ? spec.plasmaShare : 1;
@@ -2801,7 +3062,7 @@ function amountAt(k, doses, t) {
     const spec = exports.PK[k];
     if (!spec)
         return 0;
-    return doses.filter(d => d.k === k).reduce((a, d) => {
+    return doses.filter(d => d.k === k && Number(d.amount) > 0 && isFinite(Number(d.amount))).reduce((a, d) => {
         const at = Date.parse(d.at);
         return a + (isFinite(at) ? bateman(spec, Number(d.amount) * spec.toMass, (t - at) / H) : 0);
     }, 0);
@@ -2840,6 +3101,7 @@ function dailyTotals(k, doses, today, days, dayKeyOf) {
  * (Hultman 1996) — and washes out over ~4–6 weeks after stopping.
  */
 function creatineSaturation(dailyGrams) {
+    dailyGrams = (dailyGrams || []).map(v => (0, sanitize_1.numOr)(v, 0, 1e5, 0));
     let x = 0;
     for (let i = dailyGrams.length - 1; i >= 0; i--) { // oldest → newest
         const I = Math.max(0, dailyGrams[i] || 0);
@@ -2858,6 +3120,7 @@ function creatineSaturation(dailyGrams) {
  * averaged over the store's time constant (~29 days).
  */
 function vitaminDStatus(dailyIU, lab) {
+    dailyIU = (dailyIU || []).map(v => (0, sanitize_1.numOr)(v, 0, 1e6, 0));
     const tau = 29;
     let w = 0, s = 0;
     dailyIU.forEach((iu, i) => { const wt = Math.exp(-i / tau); w += wt; s += wt * iu; });
@@ -2877,12 +3140,14 @@ function vitaminDStatus(dailyIU, lab) {
 }
 /** Estimated omega-3 index (% of red-cell fatty acids): ~4.5 % typical + ~2.5 points per g/day at steady state, τ ≈ 40 days. */
 function omega3Index(dailyGrams) {
+    dailyGrams = (dailyGrams || []).map(v => (0, sanitize_1.numOr)(v, 0, 1e5, 0));
     let w = 0, s = 0;
     dailyGrams.forEach((g, i) => { const wt = Math.exp(-i / 40); w += wt; s += wt * g; });
     return 4.5 + 2.5 * (w ? s / w : 0) * (1 - Math.exp(-dailyGrams.filter(g => g > 0).length / 40));
 }
 /** 0–1: how much of the effect seen in trials a daily supplement has built up (τ ≈ 21 days), e.g. ashwagandha. */
 function builtEffect(dailyAmounts, fullDose, tau = 21) {
+    dailyAmounts = (dailyAmounts || []).map(v => (0, sanitize_1.numOr)(v, 0, 1e7, 0));
     let x = 0;
     for (let i = dailyAmounts.length - 1; i >= 0; i--)
         x += (Math.min(1, dailyAmounts[i] / fullDose) - x) * (1 - Math.exp(-1 / tau));
@@ -3318,23 +3583,14 @@ function bedtimeFor(bio, today) {
   },
   "./readiness": function (exports, module, require) {
 "use strict";
-/**
- * Readiness — the one definition. The PC's ring, trend, HEALTH vital and the
- * endocrine engine's `recovery` input all call it (bioComputeReadiness
- * delegates here), and the phone computes it from the same vitals the moment
- * they are logged, instead of waiting for the PC.
- *
- * It scores the QUALITY of what was logged, normalised by the weight of the
- * factors actually present: a perfect but partial day (8 h sleep, nothing
- * else) reads as good, not as a catastrophic 22%. Status effects then shift it.
- */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.readinessBaseline = readinessBaseline;
 exports.tagDelta = tagDelta;
 exports.readiness = readiness;
+const sanitize_1 = require("./sanitize");
 /** Median of the positive readings of one field, or null with fewer than three. */
 function readinessBaseline(days, field) {
-    const v = days.map(d => d ? Number(d[field]) : 0).filter(x => x > 0).sort((a, b) => a - b);
+    const v = days.map(d => d ? (0, sanitize_1.numIn)(d[field], field === 'hrv' ? 5 : 25, field === 'hrv' ? 300 : 200) : null).filter((x) => x !== null).sort((a, b) => a - b);
     if (v.length < 3)
         return null;
     const m = v.length >> 1;
@@ -3355,9 +3611,16 @@ function tagDelta(d, tagDefs) {
     return sum;
 }
 /** 0–100, or null when nothing that counts was logged. */
-function readiness(d, goals, tagDefs = [], base = null) {
-    if (!d)
+function readiness(d0, goals0, tagDefs = [], base0 = null) {
+    if (!d0)
         return null;
+    // Clean inputs once (sanitize.ts): a stored "7,5" or a typo must give a number or nothing — never NaN.
+    const z = (v, lo, hi) => { const n = (0, sanitize_1.numIn)(v, lo, hi); return n === null ? undefined : n; };
+    const d = { ...d0, sleep: z(d0.sleep, 0, 16), prot: z(d0.prot, 0, 1000), water: z(d0.water, 0, 20), energy: z(d0.energy, 0, 10),
+        mood: z(d0.mood, 0, 10), steps: z(d0.steps, 0, 200000), stress: z(d0.stress, 0, 10), cal: z(d0.cal, 0, 20000), hrv: z(d0.hrv, 5, 300), rhr: z(d0.rhr, 25, 200) };
+    const goals = { prot: (0, sanitize_1.numOr)(goals0 && goals0.prot, 1, 1000, 150), water: (0, sanitize_1.numOr)(goals0 && goals0.water, 0.1, 20, 3),
+        steps: (0, sanitize_1.numOr)(goals0 && goals0.steps, 1, 200000, 10000), cal: (0, sanitize_1.numOr)(goals0 && goals0.cal, 100, 20000, 2500) };
+    const base = base0 ? { hrv: (0, sanitize_1.numIn)(base0.hrv, 5, 300), rhr: (0, sanitize_1.numIn)(base0.rhr, 25, 200) } : null;
     let score = 0, max = 0, factors = 0;
     const add = (q, w) => { score += q * w; max += w; factors++; };
     if (d.sleep)
@@ -3709,6 +3972,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.weekStartOf = weekStartOf;
 exports.weeklyReview = weeklyReview;
 exports.reviewHeadline = reviewHeadline;
+const sanitize_1 = require("./sanitize");
 /**
  * The weekly review — one week of what actually happened, next to the week
  * before. Every figure comes from a record; a part with nothing logged is
@@ -3726,7 +3990,18 @@ const inRange = (k, a, b) => k >= a && k <= b;
 const e1 = (w, r) => (Number(w) || 0) * (1 + (Number(r) || 0) / 30);
 const round1 = (x) => Math.round(x * 10) / 10;
 /** Review of the week starting `start` (a Monday), counting only days up to `today`. */
-function weeklyReview(inp, start, today) {
+function weeklyReview(inp0, start, today) {
+    // Clean inputs once (sanitize.ts): the report must never read "Sleep Infinity h".
+    const bio = {}, readinessIn = {}, weights = {};
+    Object.keys(inp0.bio || {}).forEach(k => { const v = (0, sanitize_1.numIn)((inp0.bio[k] || {}).sleep, 0.5, 16); if (v !== null)
+        bio[k] = { sleep: v }; });
+    Object.keys(inp0.readiness || {}).forEach(k => { const v = (0, sanitize_1.numIn)(inp0.readiness[k], 0, 100); if (v !== null)
+        readinessIn[k] = v; });
+    Object.keys(inp0.weights || {}).forEach(k => { const v = (0, sanitize_1.numIn)(inp0.weights[k], 30, 300); if (v !== null)
+        weights[k] = v; });
+    const inp = { ...inp0, bio, readiness: readinessIn, weights,
+        workouts: (0, sanitize_1.cleanSessions)(inp0.workouts).map((w) => ({ ...w, volume: (0, sanitize_1.numOr)(w.volume, 0, 1e7, 0) })),
+        practice: (inp0.practice || []).map(p => ({ ...p, mins: (0, sanitize_1.numOr)(p.mins, 0, 1440, 0) })) };
     const end0 = (0, series_1.shiftDayKey)(start, 6), end = end0 < today ? end0 : today;
     const days = end < start ? 0 : Math.round((Date.parse(end) - Date.parse(start)) / 864e5) + 1;
     const pStart = (0, series_1.shiftDayKey)(start, -7), pEnd = (0, series_1.shiftDayKey)(start, -1);
@@ -3982,6 +4257,52 @@ exports.PROTOCOLS = [
 ];
 
   },
+  "./sanitize": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.numOr = void 0;
+exports.numIn = numIn;
+exports.cleanSessions = cleanSessions;
+/**
+ * Input hygiene for the engines. Stored records can hold anything an older form or an import ever wrote:
+ * "7,5", null, a 1,000,000 kg typo, a missing field. Fed straight into the maths, one such value turns a
+ * whole readout into NaN — the fuzz suite (tests/fuzz.test.ts) found that in tissue, the body state,
+ * readiness and the stores. Engines clean their inputs here, once, at the boundary.
+ */
+/** A finite number inside [lo, hi], else null. Accepts "7,5". */
+function numIn(v, lo, hi) {
+    if (v === null || v === undefined || v === '')
+        return null;
+    const n = typeof v === 'number' ? v : Number(String(v).replace(',', '.'));
+    return isFinite(n) && n >= lo && n <= hi ? n : null;
+}
+/** Same, with a fallback instead of null. */
+const numOr = (v, lo, hi, d) => { const n = numIn(v, lo, hi); return n === null ? d : n; };
+exports.numOr = numOr;
+const isDay = (k) => typeof k === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(k);
+/**
+ * Sessions with every set made safe: weight 0–1000, reps 0–100, RPE 1–10 or absent. A session without a
+ * valid day is dropped; an exercise without a name too. Sets keep their other fields.
+ */
+function cleanSessions(sessions) {
+    return (sessions || []).filter(s => s && isDay(s.date)).map(s => ({
+        ...s,
+        exercises: (s.exercises || []).filter(e => e && typeof e.n === 'string' && e.n).map(e => ({
+            ...e,
+            sets: (e.sets || []).filter(Boolean).map(st => {
+                const rpe = numIn(st.rpe, 1, 10);
+                const out = { ...st, w: (0, exports.numOr)(st.w, 0, 1000, 0), r: (0, exports.numOr)(st.r, 0, 100, 0) };
+                if (rpe === null)
+                    delete out.rpe;
+                else
+                    out.rpe = rpe;
+                return out;
+            }),
+        })),
+    }));
+}
+
+  },
   "./series": function (exports, module, require) {
 "use strict";
 /**
@@ -4140,6 +4461,7 @@ exports.muscleFill = muscleFill;
  * dashboard's renderSpecimenProfile and muscleFillStyle delegate to them.
  */
 const physique_1 = require("./physique");
+const sanitize_1 = require("./sanitize");
 exports.ACTIVITY_FACTORS = {
     sedentary: 1.2, light: 1.375, moderate: 1.55, active: 1.725, athlete: 1.9,
 };
@@ -4215,6 +4537,18 @@ function thermal(t) {
  *   volume    "thermal": 30-day tonnage against your own hardest-hit muscle
  */
 function muscleFill(mode, m, last, vol30, peak, now, isActive = false, zone) {
+    // Clean inputs (sanitize.ts): an out-of-range rating once indexed past the colour tables and painted nothing.
+    m = { ...m, strength: (0, sanitize_1.numOr)(m && m.strength, 0, 10, 0), mobility: (0, sanitize_1.numOr)(m && m.mobility, 0, 10, 0), soreness: Math.round((0, sanitize_1.numOr)(m && m.soreness, 0, 4, 0)) };
+    vol30 = (0, sanitize_1.numOr)(vol30, 0, 1e9, 0);
+    peak = (0, sanitize_1.numOr)(peak, 0, 1e9, 0);
+    last = (0, sanitize_1.numIn)(last, 0, 1e15);
+    // lymph: the region's pump estimate (lymph.ts), passed as the zone — teal, brighter = moving better
+    if (mode === 'lymph') {
+        const z = (0, sanitize_1.numIn)(zone, 0, 100);
+        if (z === null)
+            return { fill: 'rgba(40,54,86,.30)', stroke: 'rgba(90,110,150,.35)' };
+        return { fill: 'rgba(64,200,224,' + (0.06 + z / 100 * 0.5).toFixed(2) + ')', stroke: 'rgba(64,200,224,' + (0.25 + z / 100 * 0.6).toFixed(2) + ')' };
+    }
     // range: this week's hard sets against the muscle's volume landmarks (physique.ts)
     if (mode === 'range') {
         const z = physique_1.VOLUME_ZONE[(zone || 'none')] || physique_1.VOLUME_ZONE.none;
@@ -4596,6 +4930,8 @@ exports.BIO_FIELDS = {
     active: [0, 8000], exmin: [0, 600], daylight: [0, 1000], vo2: [10, 90], mindful: [0, 600], rem: [0, 6], resp: [5, 40],
     // bedtime / wake time as clock hours (23.5 = 23:30), and an illness flag from the mind check-in.
     bed: [0, 24], wake: [0, 24], sick: [0, 1],
+    // morning puffiness self-rating for the lymphatic model: 0 none · 1 mild · 2 noticeable · 3 marked
+    puff: [0, 3],
 };
 /** Clamp a vitals patch to known fields and ranges; null clears a field. */
 function cleanBioPatch(fields) {
@@ -5304,6 +5640,7 @@ exports.tissue = tissue;
  *    without a biopsy, and shown as such.
  */
 const exercises_1 = require("./exercises");
+const sanitize_1 = require("./sanitize");
 const clamp = (x, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, x));
 exports.MUSCLE_MASS = {
     quadriceps: 18, gluteal: 14, hamstring: 9, 'upper-back': 12, chest: 7, deltoids: 6, 'lower-back': 5, trapezius: 4,
@@ -5375,8 +5712,16 @@ function levelOf(ratio) {
 }
 /** Share of a best lift still there after `d` days without it: held ~3 weeks, then ~0.3 %/day, at most −25 %. */
 const retention = (d) => 1 - Math.min(0.25, Math.max(0, d - 21) * 0.003);
-function tissue(inp, days = 240) {
-    var _a, _b;
+function tissue(inp0, days = 240) {
+    var _a, _b, _c, _d, _e, _f;
+    // Clean every input once (sanitize.ts): a stored "7,5" or a 1e6 typo must not turn the readout into NaN.
+    const E0 = inp0.endo || null;
+    const inp = { ...inp0, sessions: (0, sanitize_1.cleanSessions)(inp0.sessions),
+        sleepAvg: (0, sanitize_1.numIn)(inp0.sleepAvg, 0.5, 16), proteinRatio: (0, sanitize_1.numIn)(inp0.proteinRatio, 0, 5), age: (0, sanitize_1.numIn)(inp0.age, 10, 110),
+        bodyweight: (0, sanitize_1.numIn)(inp0.bodyweight, 30, 300),
+        endo: E0 ? { testosterone: (_a = (0, sanitize_1.numIn)(E0.testosterone, 0, 100)) !== null && _a !== void 0 ? _a : undefined, growthHormone: (_b = (0, sanitize_1.numIn)(E0.growthHormone, 0, 100)) !== null && _b !== void 0 ? _b : undefined,
+            igf1: (_c = (0, sanitize_1.numIn)(E0.igf1, 0, 100)) !== null && _c !== void 0 ? _c : undefined, cortisol: (_d = (0, sanitize_1.numIn)(E0.cortisol, 0, 100)) !== null && _d !== void 0 ? _d : undefined } : null,
+        strength: inp0.strength ? Object.fromEntries(Object.entries(inp0.strength).filter(([, v]) => (0, sanitize_1.numIn)(v, 0, 10) !== null)) : undefined };
     const T0 = keyToTime(inp.today) - (days - 1) * dayMs;
     const dayIdx = (k) => Math.round((keyToTime(k) - T0) / dayMs);
     const muscleDay = {}, tendonDay = {};
@@ -5391,8 +5736,10 @@ function tissue(inp, days = 240) {
         const di = dayIdx(s.date);
         const t = s.ts ? Date.parse(s.ts) : keyToTime(s.date);
         // Collagen (≥10 g) with vitamin C (≥50 mg) in the 2 h before the session.
-        const pre = (k, min) => doses.some(d => d.k === k && Number(d.amount) >= min && t - Date.parse(d.at) >= 0 && t - Date.parse(d.at) <= 2.5 * 3600e3);
-        const withCollagen = pre('collagen', 10) && pre('vitc', 50);
+        // The protocol that raised collagen synthesis (Shaw 2017) and the one the user's vault prescribes: 15–30 g
+        // collagen/gelatin + ~50 mg vitamin C about 45–60 min before loading. Counted from 20 min to 2 h before.
+        const pre = (k, min) => doses.some(d => { const ago = t - Date.parse(d.at); return d.k === k && Number(d.amount) >= min && ago >= 20 * 60e3 && ago <= 2 * 3600e3; });
+        const withCollagen = pre('collagen', 15) && pre('vitc', 50);
         (s.exercises || []).forEach(ex => {
             const { load, tis } = (0, exercises_1.loadingOf)(ex);
             const prevBest = best.get(ex.n) || 0;
@@ -5443,7 +5790,7 @@ function tissue(inp, days = 240) {
     const acwrOf = (arr) => { const a = sum(arr, last - 6, last), c = sum(arr, last - 27, last) / 4; return { a, c, r: c > 0.5 && last - first >= 21 ? a / c : null }; };
     // Build-rate modulators (1 = neutral), shown as drivers.
     const e = inp.endo || {};
-    const gh = e.igf1 != null || e.growthHormone != null ? (((_a = e.igf1) !== null && _a !== void 0 ? _a : 50) + ((_b = e.growthHormone) !== null && _b !== void 0 ? _b : 50)) / 2 : 50;
+    const gh = e.igf1 != null || e.growthHormone != null ? (((_e = e.igf1) !== null && _e !== void 0 ? _e : 50) + ((_f = e.growthHormone) !== null && _f !== void 0 ? _f : 50)) / 2 : 50;
     const mods = [
         ['GH / IGF-1 (estimate)', 0.12 * (gh - 50) / 50],
         ['Sleep, last 7 nights', inp.sleepAvg != null ? (inp.sleepAvg < 6 ? -0.2 : inp.sleepAvg < 6.5 ? -0.12 : inp.sleepAvg >= 7.5 ? 0.03 : 0) : 0],

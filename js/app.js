@@ -13,6 +13,7 @@ import { actions as routineActions } from './routines.js';
 import { actions as hormoneActions } from './hormones.js';
 import { actions as systemActions, onPhotoInput, onWhatIfInput } from './system.js';
 import { actions as dailyActions, importHealthLink } from './daily.js';
+import { actions as lymphActions } from './lymph.js';
 
 applyTheme();
 
@@ -110,6 +111,9 @@ function onScroll() {
   lastY = y;
 }
 window.addEventListener('scroll', onScroll, { passive: true });
+// While scrolling, the ambient drift pauses (app.css): nothing behind the blurred bars moves, so they do not re-blur.
+let scrollIdle = 0;
+window.addEventListener('scroll', () => { const r = document.documentElement; if (!r.classList.contains('scrolling')) r.classList.add('scrolling'); clearTimeout(scrollIdle); scrollIdle = setTimeout(() => r.classList.remove('scrolling'), 180); }, { passive: true });
 
 /* ── workout pill (a running workout is always one tap away) ── */
 function updatePill() {
@@ -139,7 +143,7 @@ setInterval(tickElapsed, 1000);
 
 /* ── events ── */
 const ACT = {
-  ...viewActions, ...trainActions, ...sheetActions, ...bodyActions, ...moreActions, ...reviewActions, ...doseActions, ...mindActions, ...routineActions, ...hormoneActions, ...systemActions, ...dailyActions,
+  ...viewActions, ...trainActions, ...sheetActions, ...bodyActions, ...moreActions, ...reviewActions, ...doseActions, ...mindActions, ...routineActions, ...hormoneActions, ...systemActions, ...dailyActions, ...lymphActions,
   tab(d) { closeAllSheets(); haptic(); switchTab(d.tab, d.seg); },
   'sheet-close'() { closeSheet(topSheet()); },
 };

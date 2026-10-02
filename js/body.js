@@ -22,10 +22,11 @@ import { secMind } from './mind.js';
 import { standing, fmtAmt } from './doses.js';
 import { hormoneRows } from './hormones.js';
 import { fatigueCard, dungeonCard, photoCard, storyBlock, fatigueNow } from './system.js';
+import { secLymph, lymphSummary, lymphLayer, paintLymph, lymphZone } from './lymph.js';
 
 const ui = { face: 'front', mode: 'status', tl: 0, sel: null, open: {} };
-const MODES = [['status', 'Status'], ['strength', 'Strength'], ['mobility', 'Mobility'], ['soreness', 'Soreness'], ['volume', 'Thermal'], ['range', 'Range']];
-const SECTIONS = [['ba-scan', 'Scanner'], ['ba-rec', 'Recovery'], ['ba-dev', 'Develop'], ['ba-prof', 'Profile'], ['ba-vit', 'Vitals'], ['ba-mind', 'Mind'], ['ba-mic', 'Micros'], ['ba-endo', 'Endocrine']];
+const MODES = [['status', 'Status'], ['strength', 'Strength'], ['mobility', 'Mobility'], ['soreness', 'Soreness'], ['volume', 'Thermal'], ['range', 'Range'], ['lymph', 'Lymph']];
+const SECTIONS = [['ba-scan', 'Scanner'], ['ba-rec', 'Recovery'], ['ba-dev', 'Develop'], ['ba-lymph', 'Lymph'], ['ba-prof', 'Profile'], ['ba-vit', 'Vitals'], ['ba-mind', 'Mind'], ['ba-mic', 'Micros'], ['ba-endo', 'Endocrine']];
 const STATE_LBL = {
   fresh: ['Fresh', '#30d158'], recovering: ['Recovering', '#ffb340'], ready: ['Ready', '#40c8e0'],
   detrained: ['Detrained', '#ff6b5a'], untouched: ['Untouched', 'rgba(235,240,245,.5)'],
@@ -52,7 +53,7 @@ function figure() {
     + groups.map(g => MN[g.slug]
       ? `<g class="mus" data-act="muscle" data-slug="${g.slug}" role="button" tabindex="0" aria-label="${MN[g.slug]}">${g.paths.map(p => `<path d="${p}"/>`).join('')}</g>`
       : `<g class="part">${g.paths.map(p => `<path d="${p}"/>`).join('')}</g>`).join('')
-    + `</g>`;
+    + lymphLayer(name) + `</g>`;
   const host = document.createElement('div');
   host.innerHTML = `<svg class="ba-fig" viewBox="0 0 724 1448" preserveAspectRatio="xMidYMid meet" role="group" aria-label="Body figure — each muscle opens its details">`
     + face('front', window.ARK_FRONT || [], window.ARK_OUTLINE_FRONT || '')
@@ -86,12 +87,14 @@ export function mountFigure() {
 function paint() {
   if (!figEl) return;
   const v = view(), by = bySlug(v), pins = v.body.pins || {};
+  figEl.classList.toggle('m-lymph', ui.mode === 'lymph');
+  if (ui.mode === 'lymph') paintLymph(figEl, v);
   const tlE = ui.tl ? (v.body.timeline || [])[ui.tl] : null;
   const now = Date.now() - ui.tl * 864e5;
   figEl.querySelectorAll('g.mus').forEach(g => {
     const s = g.dataset.slug, m = by[s] || {};
     const last = tlE ? ((tlE.muscles || {})[s] || {}).last : m.last;
-    const p = L.muscleFill(ui.mode, m.metric || {}, last || null, m.vol30 || 0, v.body.peak || 1, now, s === ui.sel, volOf(v, s, m).zone);
+    const p = L.muscleFill(ui.mode, m.metric || {}, last || null, m.vol30 || 0, v.body.peak || 1, now, s === ui.sel, ui.mode === 'lymph' ? lymphZone(v, s) : volOf(v, s, m).zone);
     g.style.fill = p ? p.fill : '';
     g.style.stroke = p ? p.stroke : '';
     g.classList.toggle('sel', s === ui.sel);
@@ -106,6 +109,7 @@ function paint() {
 function legend() {
   if (ui.mode === 'status') return `<span><i style="background:rgba(34,197,94,.6)"></i>Fresh ≤48 h</span><span><i style="background:rgba(245,158,11,.6)"></i>Recovering → 7 d</span><span><i style="background:rgba(112,140,178,.35)"></i>Idle</span><span><i style="background:rgba(239,68,68,.6)"></i>Sore (your verdict)</span>`;
   if (ui.mode === 'soreness') return SORE_LBL.map((l, i) => `<span><i style="background:${SORE_COLORS[i]}"></i>${l}</span>`).join('');
+  if (ui.mode === 'lymph') return `<span><i style="background:rgba(64,200,224,.15)"></i>barely moving</span><span><i style="background:rgba(64,200,224,.55)"></i>pumping well</span><span><i style="background:#40c8e0;border-radius:50%"></i>node groups</span>`;
   if (ui.mode === 'range') return ['under', 'low', 'optimal', 'high', 'over'].map(k => `<span><i style="background:${L.VOLUME_ZONE[k].color}"></i>${L.VOLUME_ZONE[k].label.replace(/ —.*/, '')}</span>`).join('');
   if (ui.mode === 'volume') return `<span>30-day tonnage · none</span><span class="ramp"></span><span>your hardest-hit</span>`;
   const c = ui.mode === 'strength' ? '34,197,94' : '34,211,238';
@@ -489,6 +493,7 @@ const SEC_DEFS = [
   ['ba-scan', 'Scanner', 'biomechanical matrix', secScanner],
   ['ba-rec', 'Bio-Regen Matrix', 'muscle telemetry · 72 h cycle', secRecovery],
   ['ba-dev', 'Body Development', 'volume · injuries · tape · balance', secDevelop],
+  ['ba-lymph', 'Lymphatic System', 'pump · fluid · nodes', secLymph],
   ['ba-prof', 'Specimen Profile', 'biometry · composition', secProfile],
   ['ba-vit', 'Biometric Status', '', secVitals],
   ['ba-mind', 'Mental State', 'neural link', secMind],
@@ -515,6 +520,7 @@ const SUMMARY = {
   'ba-mind': v => { const b = v.bio[today()] || {}; return b.energy != null || b.mood != null ? 'energy ' + (b.energy ?? '—') + '/10 · stress ' + (b.stress ?? '—') + '/10' : 'not checked in today'; },
   'ba-mic': v => { const D = v.bioDefs; if (!D || !D.micros) return '—'; const amt = (v.bio[today()] || {}).micros || {}, g = D.micros.filter(m => !m.limit);
     return g.filter(m => (amt[m.k] || 0) >= m.goal).length + ' of ' + g.length + ' at target today'; },
+  'ba-lymph': v => lymphSummary(v),
   'ba-endo': v => { const E = v.endo; if (!E) return 'not estimated yet'; const a = (E.axes || []).find(x => x.k === 'testosterone');
     return Math.round(E.confidence * 100) + ' % confidence' + (a ? ' · testosterone ' + a.score : ''); },
 };
@@ -784,6 +790,7 @@ function secDevelop(v) {
     ${d != null && d !== 0 ? `<div class="s" style="color:${d > 0 ? '#ff9f0a' : '#30d158'}">${d > 0 ? '+' : ''}${d} since ${esc(R.from.day.slice(5))}</div>` : ''}</div>`;
   H += `<div class="ba-h"><h2 style="font-size:1.05rem">Tape measurements</h2><span class="k">${R.count ? R.count + ' day' + (R.count === 1 ? '' : 's') : 'cm'}</span></div>`
     + (Lt ? `<div class="stat4">${kpi('Body fat · Navy ±3–4', Lt.bf, '%', R.deltas.bf)}${kpi('Lean mass', Lt.lean, ' kg', R.deltas.lean)}${kpi('Waist', Lt.m.waist, ' cm', R.deltas.waist)}${kpi('Weight', Lt.weight, ' kg', R.deltas.weight)}</div>` : '')
+    + (R.caution ? `<p class="sub" style="color:#ff9f0a;line-height:1.45;margin:8px 2px">⚠ ${esc(R.caution)}</p>` : '')
     + (R.verdict ? card(`<div style="border-left:3px solid ${R.verdict.color};padding-left:10px"><b>${esc(R.verdict.title)}</b><div class="sub" style="line-height:1.45;margin-top:2px">${esc(R.verdict.text)}</div></div>`) : '')
     + (!Lt ? card(`<div class="empty" style="padding:6px">Waist and neck${String((v.profile || {}).sex).toLowerCase() === 'female' ? ' and hips' : ''} give a body-fat estimate; two measurements 2+ weeks apart show whether you are gaining muscle, fat or both.</div>`) : '')
     + `<button class="btn btn-glass block" style="margin-top:10px" data-act="tape-open">${icon('plus', 16)} Log measurements</button>`;
