@@ -1889,8 +1889,9 @@ function lymphReport(inp) {
     const t = inp.today, B = inp.bio || {};
     const D = [];
     const v = (day, k, lo, hi) => (0, sanitize_1.numIn)((B[day] || {})[k], lo, hi);
-    const stepsToday = v(t, 'steps', 0, 150000);
-    const past = [1, 2, 3, 4, 5, 6, 7].map(i => v(dk(t, -i), 'steps', 0, 150000)).filter((x) => x !== null);
+    // 0 is how an unlogged day is stored — a real day always has some steps, so zero means unknown.
+    const stepsToday = v(t, 'steps', 1, 150000);
+    const past = [1, 2, 3, 4, 5, 6, 7].map(i => v(dk(t, -i), 'steps', 1, 150000)).filter((x) => x !== null);
     const steps7 = past.length >= 3 ? past.reduce((a, b) => a + b, 0) / past.length : null;
     const known = stepsToday !== null || steps7 !== null;
     // ── the pump ──
@@ -1968,12 +1969,15 @@ function lymphReport(inp) {
     load = clamp(load);
     // head & face: drained by gravity once upright; puffiness tracks salt, alcohol and short sleep
     regions.head = clamp(70 - (load - 30) * 0.9);
-    const net = pump - load;
-    const balance = load >= 55 || net < -5
-        ? { key: 'puffy', title: 'Puffiness likely', text: 'More fluid to clear than you are moving — expect puffy eyes or ankles. Walk, cut the salt, skip the evening drink.', color: '#ff9f0a' }
-        : load >= 42 || net < 10
+    // Puffiness is about the LOAD (salt, drinks, short sleep, inflammation); little movement is its own
+    // message — a still day is not the same thing as fluid building up.
+    const balance = load >= 55 || (load >= 45 && pump < 40)
+        ? { key: 'puffy', title: 'Puffiness likely', text: 'More fluid to clear than usual and not much moving it — expect puffy eyes or ankles. Walk, cut the salt, skip the evening drink.', color: '#ff9f0a' }
+        : load >= 42
             ? { key: 'mild', title: 'Mild fluid load', text: 'Some extra fluid to clear today — a walk and an ordinary salt intake handle it.', color: '#ffd60a' }
-            : { key: 'clear', title: 'Clear', text: 'Movement is keeping up with what needs draining.', color: '#30d158' };
+            : pump < 35
+                ? { key: 'still', title: 'Barely moving', text: 'Lymph moves when you do — a walk or 20 calf raises gets it going again.', color: '#64d2ff' }
+                : { key: 'clear', title: 'Clear', text: 'Movement is keeping up with what needs draining.', color: '#30d158' };
     // ── brain drainage (contested) ──
     let brain = 50;
     let brainKnown = false;
