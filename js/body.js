@@ -4,7 +4,8 @@
    The same sections as on the PC, in the same order, fitted to a phone:
    Scanner (the figure, overlays, timeline, TRAIN NEXT, DOW-7) · Recovery
    (Bio-Regen Matrix) · Profile (Specimen + Physique) · Vitals · Mind ·
-   Micros · Endocrine. Nothing is hidden; the chips at the top jump.
+   Micros · Endocrine. Each section folds to a one-line summary (Scanner open); the
+   chips open and jump, "Open all" shows the whole page.
 
    Everything you can log on the PC's Body Arch you can log here. Physique and
    the endocrine estimate are shown as the PC last computed them; the shared
@@ -20,7 +21,7 @@ import { startForMuscles, tissueNow } from './train.js';
 import { secMind } from './mind.js';
 import { standing, fmtAmt } from './doses.js';
 import { hormoneRows } from './hormones.js';
-import { fatigueCard, dungeonCard, photoCard, storyBlock } from './system.js';
+import { fatigueCard, dungeonCard, photoCard, storyBlock, fatigueNow } from './system.js';
 
 const ui = { face: 'front', mode: 'status', tl: 0, sel: null, open: {} };
 const MODES = [['status', 'Status'], ['strength', 'Strength'], ['mobility', 'Mobility'], ['soreness', 'Soreness'], ['volume', 'Thermal'], ['range', 'Range']];
@@ -476,7 +477,7 @@ export function renderBodyArch() {
   let H = `<header class="hdr"><div><div class="hdr-eyebrow">${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
     <h1 class="hdr-title">Body Arch</h1></div><div class="hdr-acts">${syncButton()}</div></header>`;
   H += `<nav class="jump" aria-label="Body Arch sections"><div class="jump-in glass">${SECTIONS.map((s, i) =>
-    `<button class="${i === 0 ? 'on' : ''}" data-act="ba-jump" data-sec="${s[0]}">${s[1]}</button>`).join('')}</div></nav>`;
+    `<button class="${i === 0 ? 'on' : ''}" data-act="ba-jump" data-sec="${s[0]}">${s[1]}</button>`).join('')}<button class="all" data-act="ba-all">${SECTIONS.every(x => baOpen()[x[0]]) ? 'Fold all' : 'Open all'}</button></div></nav>`;
   if (!v.body.muscles.length) {
     return H + card(`<div class="empty">Body Arch fills in after the first sync with ARK on your PC.</div>`);
   }
@@ -494,10 +495,59 @@ const SEC_DEFS = [
   ['ba-mic', 'Micronutrients', '', secMicros],
   ['ba-endo', 'Endocrine Estimate', '', secEndo],
 ];
+/* ── compact page: every section is a header with a live one-line summary; tap to open ──
+   The whole of Body Arch stays on one screen as headers (nothing is dropped), the Scanner starts open, the
+   chips open and jump, and "All" opens everything — the old full page. A closed section is not even
+   rendered, which also makes the tab cheaper. Open/closed is remembered per section. */
+const baOpen = () => state.settings.baOpen || (state.settings.baOpen = { 'ba-scan': true });
+const baSub = () => state.settings.baSub || (state.settings.baSub = {});
+const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+const SUMMARY = {
+  'ba-scan': v => { const c = v.body.counts || {}; const tn = v.body.muscles.filter(m => m.priority > 0.05).slice(0, 2).map(m => m.name);
+    return (c.ready ?? 0) + ' ready · ' + ((c.recovering || 0) + (c.fresh || 0)) + ' recovering' + (tn.length ? ' · next: ' + tn.join(', ') : ''); },
+  'ba-rec': v => (v.body.balance == null ? 'balance —' : 'balance ' + v.body.balance + ' %') + ' · coverage ' + (v.body.coverage ?? '—') + ' %',
+  'ba-dev': v => { const under = v.body.muscles.filter(m => m.vol && (m.vol.zone === 'under' || m.vol.zone === 'none')).length;
+    const inj = Object.keys(L.activeInjuries(v.injuries || [], today())).length, F = fatigueNow(v);
+    return plural(under, 'muscle') + ' under range · fatigue: ' + F.title.toLowerCase() + (inj ? ' · ' + plural(inj, 'injury').replace('injurys', 'injuries') : ''); },
+  'ba-prof': v => { const w = latestWeight(v), p = v.profile || {}; return [w ? fmt1(w) + ' kg' : null, p.height ? p.height + ' cm' : null, p.bodyfat ? p.bodyfat + ' % fat' : null].filter(Boolean).join(' · ') || 'set up your profile'; },
+  'ba-vit': v => { const t = today(), b = v.bio[t] || {}, r = (v.readiness || {})[t];
+    return 'readiness ' + (r ?? '—') + ' · sleep ' + (b.sleep ? fmt1(b.sleep) + ' h' : '—') + ' · protein ' + (b.prot ? Math.round(b.prot) + ' g' : '—'); },
+  'ba-mind': v => { const b = v.bio[today()] || {}; return b.energy != null || b.mood != null ? 'energy ' + (b.energy ?? '—') + '/10 · stress ' + (b.stress ?? '—') + '/10' : 'not checked in today'; },
+  'ba-mic': v => { const D = v.bioDefs; if (!D || !D.micros) return '—'; const amt = (v.bio[today()] || {}).micros || {}, g = D.micros.filter(m => !m.limit);
+    return g.filter(m => (amt[m.k] || 0) >= m.goal).length + ' of ' + g.length + ' at target today'; },
+  'ba-endo': v => { const E = v.endo; if (!E) return 'not estimated yet'; const a = (E.axes || []).find(x => x.k === 'testosterone');
+    return Math.round(E.confidence * 100) + ' % confidence' + (a ? ' · testosterone ' + a.score : ''); },
+};
+/* Inside Body Development the seven blocks fold the same way, each with its own one-liner. */
+const SUBSUM = {
+  'Weekly sets vs your range': v => plural(v.body.muscles.filter(m => m.vol && (m.vol.zone === 'under' || m.vol.zone === 'none')).length, 'muscle') + ' under range',
+  'Fatigue radar': v => fatigueNow(v).title,
+  'Injuries': v => { const n = (v.injuries || []).filter(j => !j.cleared).length; return n ? n + ' active' : 'none'; },
+  'Tape measurements': v => { const R = L.measureReport(v.measures || {}, v.weights || {}, { height: +(v.profile || {}).height || null, sex: (v.profile || {}).sex || null });
+    return R.latest ? (R.latest.bf != null ? R.latest.bf + ' % body fat' : 'measured ' + R.latest.day) + (R.verdict ? ' · ' + R.verdict.title.toLowerCase() : '') : 'not measured yet'; },
+};
+function subs(sec, v, html) {
+  const parts = html.split('<div class="ba-h">');
+  if (parts.length < 3) return html;
+  const open = baSub();
+  return parts[0] + parts.slice(1).map(p => {
+    const end = p.indexOf('</div>'), head = p.slice(0, end), body = p.slice(end + 6);
+    const title = ((head.match(/<h2[^>]*>([\s\S]*?)<\/h2>/) || [])[1] || '').trim(), k = ((head.match(/<span class="k">([\s\S]*?)<\/span>/) || [])[1] || '');
+    const extras = head.replace(/<h2[^>]*>[\s\S]*?<\/h2>/, '').replace(/<span class="k">[\s\S]*?<\/span>/, '');
+    const key = sec + ':' + title.replace(/<[^>]+>/g, ''), on = !!open[key];
+    let sum = k; try { if (SUBSUM[title]) sum = esc(SUBSUM[title](v)); } catch (e) { /* keep the static line */ }
+    return `<div class="sub-blk${on ? ' open' : ''}"><div class="sub-h"><button class="sub-t" data-act="ba-sub" data-key="${esc(key)}" aria-expanded="${on}">
+      <b>${title}</b><span>${sum}</span>${icon('chev', 14)}</button>${extras}</div>${on ? `<div class="sub-b">${body}</div>` : ''}</div>`;
+  }).join('');
+}
 function sections(v) {
-  const out = {};
+  const out = {}, open = baOpen();
   SEC_DEFS.forEach(([id, title, k, fn]) => {
-    out[id] = `<section class="ba-sec" id="${id}"><div class="ba-h"><h2>${title}</h2>${k ? `<span class="k">${k}</span>` : ''}</div>${fn(v)}</section>`;
+    const on = !!open[id];
+    let sum = ''; try { sum = SUMMARY[id] ? SUMMARY[id](v) : k; } catch (e) { sum = k; }
+    out[id] = `<section class="ba-sec${on ? ' open' : ''}" id="${id}"><button class="ba-hd" data-act="ba-toggle" data-sec="${id}" aria-expanded="${on}">
+      <span class="t"><h2>${title}</h2><span class="s">${esc(on ? k : sum)}</span></span>${icon('chev', 18)}</button>
+      ${on ? `<div class="ba-bd">${id === 'ba-dev' ? subs(id, v, fn(v)) : fn(v)}</div>` : ''}</section>`;
   });
   return out;
 }
@@ -521,6 +571,8 @@ export function patchBodyArch() {
     if (id === 'ba-scan') scan = true;
   });
   lastSecs = next;
+  const lbl = SECTIONS.every(x => baOpen()[x[0]]) ? 'Fold all' : 'Open all';
+  document.querySelectorAll('.jump .all').forEach(b => { b.textContent = lbl; });
   if (scan) mountFigure(); else paint();
   return true;
 }
@@ -845,7 +897,16 @@ export const actions = {
     if (!confirm('Delete this lab result? ARK on your PC keeps a copy you can restore.')) return;
     emitUndoable('bloodwork.del', { id: d.id }, 'Result deleted');
   },
+  'ba-toggle'(d) { const o = baOpen(); o[d.sec] = !o[d.sec]; haptic(); changed({ now: true }); },
+  'ba-sub'(d) { const o = baSub(); o[d.key] = !o[d.key]; haptic(); changed({ now: true }); },
+  'ba-all'() {
+    const o = baOpen(), all = SECTIONS.every(x => o[x[0]]);
+    SECTIONS.forEach(x => { o[x[0]] = !all; }); if (all) o['ba-scan'] = true;
+    haptic(); changed({ now: true });
+  },
   'ba-jump'(d) {
+    const o = baOpen();
+    if (!o[d.sec]) { o[d.sec] = true; changed({ now: true }); setTimeout(() => actions['ba-jump'](d), 60); return; }
     const el = document.getElementById(d.sec);
     if (!el) { state.tab = 'body'; changed(); return; }
     el.scrollIntoView({ behavior: 'smooth', block: 'start' });

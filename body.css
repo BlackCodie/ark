@@ -518,3 +518,23 @@ html[data-theme="light"] .br-cc{fill:rgba(40,44,90,.05);stroke:rgba(40,44,90,.18
 .fu-today span{background:var(--fill-2);border-radius:8px;padding:3px 4px 3px 8px;display:inline-flex;align-items:center;gap:4px}
 .fu-today button{color:var(--t4);font-size:.7rem;padding:0 4px}
 .hl-ok{display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center;padding:8px 0 4px;color:#30d158}.hl-ok b{color:var(--t1);font-size:1.05rem}
+
+/* ── compact Body Arch: sections and Development blocks fold to a one-line summary ── */
+.ba-sec{margin-bottom:10px}
+.ba-hd{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:14px 16px;border-radius:18px;background:var(--fill-1, rgba(255,255,255,.045));transition:background .2s}
+.ba-hd:active{background:var(--fill-2)}
+.ba-hd .t{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.ba-hd h2{margin:0;font-size:1.06rem}
+.ba-hd .s{font-size:.74rem;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ba-hd svg{flex:none;color:var(--t3);transition:transform .25s var(--ease-spring, ease)}
+.ba-sec.open .ba-hd{background:transparent;padding:10px 4px 6px}
+.ba-sec.open .ba-hd svg{transform:rotate(90deg)}
+.ba-bd{padding-top:4px}
+.jump .all{color:#40c8e0;font-weight:700}
+.sub-blk{border-radius:16px;background:var(--fill-1, rgba(255,255,255,.035));margin-bottom:8px}
+.sub-h{display:flex;align-items:center;gap:6px;padding-right:10px}
+.sub-t{flex:1;min-width:0;display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto;column-gap:8px;text-align:left;padding:11px 14px}
+.sub-t b{font-size:.92rem}.sub-t span{grid-column:1;font-size:.72rem;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sub-t svg{grid-column:2;grid-row:1/3;align-self:center;color:var(--t3);transition:transform .25s}
+.sub-blk.open .sub-t svg{transform:rotate(90deg)}
+.sub-b{padding:0 2px 8px}
