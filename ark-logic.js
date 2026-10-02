@@ -1808,6 +1808,248 @@ __exportStar(require("./fuel"), exports);
 __exportStar(require("./lymph"), exports);
 __exportStar(require("./sanitize"), exports);
 __exportStar(require("./strong"), exports);
+__exportStar(require("./lifts"), exports);
+
+  },
+  "./lifts": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AREA_TEMPLATES = exports.AREAS = void 0;
+exports.liftsForMuscle = liftsForMuscle;
+exports.plateaus = plateaus;
+exports.areaTemplate = areaTemplate;
+exports.neglected = neglected;
+exports.withMeta = withMeta;
+exports.sessionShape = sessionShape;
+/**
+ * LIFTS — what your own training history says, lift by lift and area by area.
+ *
+ *  - liftsForMuscle: the lifts you have logged that train a muscle (prime movers first, then the ones you do
+ *    most), with Strong's records and a 6-week trend (tapping a muscle on the figure shows them);
+ *  - plateaus: lifts whose best estimate stopped rising while you kept training them, with suggestions
+ *    chosen from your own numbers (rep range, how often, how many sets);
+ *  - neglected: areas with no hard sets for weeks, and a starter template for each — exercises and set
+ *    counts only, never weights (the first session sets the baseline);
+ *  - sessionShape / withMeta: the session fields the PC logger writes, for anything imported.
+ *
+ * Plateaus read only sets of 1–12 reps: the 1RM formula is unreliable past ~12 (a 60 kg × 34 set "estimates"
+ * 128 kg), so a high-rep set can neither make nor break a plateau.
+ */
+const strong_1 = require("./strong");
+const exercises_1 = require("./exercises");
+const dates_1 = require("./dates");
+const series_1 = require("./series");
+const num = (v) => { const n = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v); return isFinite(n) ? n : 0; };
+const key = (n) => String(n || '').trim().toLowerCase();
+function liftsForMuscle(sessions, slug, today, limit = 6) {
+    const by = new Map();
+    sessions.forEach(s => (s.exercises || []).forEach(e => {
+        const load = (0, exercises_1.loadingOf)({ n: e.n, m: e.m }).load[slug] || 0;
+        if (load < 0.5 || !(e.sets || []).length)
+            return;
+        const k = key(e.n);
+        const L = by.get(k) || { n: e.n, load, sessions: 0, last: '', best: null, top: null, reps: null, trend: null, _w: [], _sets: [] };
+        if (s.date >= L.last) {
+            L.last = s.date;
+            L.n = e.n;
+        }
+        L.sessions++;
+        let sb = 0;
+        (e.sets || []).forEach(st => {
+            const w = Math.max(0, num(st.w)), r = Math.max(0, num(st.r));
+            if (!(r > 0))
+                return;
+            L._sets.push({ w, r });
+            if (!(w > 0)) {
+                if (!L.reps || r > L.reps.v)
+                    L.reps = { v: r, date: s.date };
+                return;
+            }
+            const o = (0, strong_1.e1rm)(w, r);
+            if (r <= 12)
+                sb = Math.max(sb, o);
+            if (!L.best || o > L.best.orm)
+                L.best = { orm: o, w, r, date: s.date };
+        });
+        if (sb)
+            L._w.push({ date: s.date, orm: sb });
+        by.set(k, L);
+    }));
+    const cut = (0, series_1.shiftDayKey)(today, -42), cut2 = (0, series_1.shiftDayKey)(today, -84);
+    return [...by.values()].map(L => {
+        const now = Math.max(0, ...L._w.filter(x => x.date > cut).map(x => x.orm));
+        const before = Math.max(0, ...L._w.filter(x => x.date > cut2 && x.date <= cut).map(x => x.orm));
+        const out = { n: L.n, load: L.load, sessions: L.sessions, last: L.last, best: L.best, top: (0, strong_1.bestSet)(L._sets), reps: L.reps,
+            trend: now > 0 && before > 0 ? { now: Math.round(now * 10) / 10, before: Math.round(before * 10) / 10, pct: Math.round((now / before - 1) * 1000) / 10 } : null };
+        return out;
+    }).sort((a, b) => (b.load >= 0.8 ? 1 : 0) - (a.load >= 0.8 ? 1 : 0) || b.sessions - a.sessions || (a.last < b.last ? 1 : -1)).slice(0, limit);
+}
+const VARIATION = {
+    hpress: 'paused bench press or close-grip bench', ipress: 'incline dumbbell press or a paused incline',
+    vpress: 'seated dumbbell press or push press', squat: 'pause squats or front squats', fsquat: 'pause front squats or back squats',
+    hinge: 'paused or deficit deadlifts', rdl: 'paused Romanian deadlifts', legpress: 'single-leg press or hack squats',
+    vpull: 'weighted pull-ups or a different grip', hrow: 'chest-supported or paused rows', srow: 'single-arm rows or a wider grip',
+    curl: 'incline or preacher curls', triext: 'overhead extensions', fly: 'cable flyes at a different angle', lateral: 'cable or lean-away raises',
+};
+/**
+ * Lifts that have stopped rising: the best estimate (sets of 1–12 reps) set at least `minWeeks` ago, at least
+ * 3 sessions of the lift since, none of them matching it, and the lift still trained in the last 3 weeks.
+ */
+function plateaus(sessions, today, opts = {}) {
+    var _a;
+    const minWeeks = (_a = opts.minWeeks) !== null && _a !== void 0 ? _a : 6;
+    const by = new Map();
+    [...sessions].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)).forEach(s => (s.exercises || []).forEach(e => {
+        let best = 0, bw = 0, br = 0;
+        const reps = [];
+        (e.sets || []).forEach(st => {
+            const w = num(st.w), r = num(st.r);
+            if (!(w > 0) || !(r >= 1) || r > 12)
+                return;
+            reps.push(r);
+            const o = (0, strong_1.e1rm)(w, r);
+            if (o > best) {
+                best = o;
+                bw = w;
+                br = r;
+            }
+        });
+        if (!best)
+            return;
+        const k = key(e.n), L = by.get(k) || { n: e.n, pts: [] };
+        L.n = e.n;
+        const same = L.pts.find(p => p.date === s.date);
+        if (same) {
+            if (best > same.orm)
+                Object.assign(same, { orm: best, w: bw, r: br });
+            same.reps.push(...reps);
+        }
+        else
+            L.pts.push({ date: s.date, orm: best, w: bw, r: br, reps });
+        by.set(k, L);
+    }));
+    const out = [];
+    by.forEach(L => {
+        if (L.pts.length < 5)
+            return;
+        const last = L.pts[L.pts.length - 1];
+        if ((0, dates_1.daysBetween)(last.date, today) > 21)
+            return;
+        let pk = L.pts[0];
+        L.pts.forEach(p => { if (p.orm > pk.orm + 1e-9)
+            pk = p; });
+        const since = L.pts.filter(p => p.date > pk.date);
+        const weeks = Math.floor((0, dates_1.daysBetween)(pk.date, today) / 7);
+        if (weeks < minWeeks || since.length < 3 || since.some(p => p.orm >= pk.orm - 1e-9))
+            return;
+        const recent = Math.max(...since.map(p => p.orm));
+        out.push({ n: L.n, peak: Math.round(pk.orm * 10) / 10, peakDate: pk.date, peakSet: { w: pk.w, r: pk.r }, recent: Math.round(recent * 10) / 10,
+            weeks, sessionsSince: since.length, tips: plateauTips(L.n, L.pts, sessions, today) });
+    });
+    return out.sort((a, b) => b.weeks - a.weeks);
+}
+function plateauTips(name, pts, sessions, today) {
+    const tips = [];
+    const recent = pts.filter(p => (0, dates_1.daysBetween)(p.date, today) <= 42);
+    const reps = recent.flatMap(p => p.reps);
+    const heavy = reps.length ? reps.filter(r => r <= 5).length / reps.length : 0;
+    tips.push(heavy >= 0.6
+        ? 'Most of your work sets are 5 reps or fewer. Spend 4–6 weeks at 6–10 reps and add sets — more volume, then test heavy again.'
+        : heavy <= 0.2
+            ? 'Your work sets are mostly 6+ reps. Add one heavy top set of 3–5 reps before them — strength is specific to heavy loads.'
+            : 'Change the rep range for 4–6 weeks (e.g. 3 × 8 if you usually go heavy) — the same stimulus stops working.');
+    const perWeek = recent.length / 6;
+    if (perWeek < 1.5)
+        tips.push('You train it about ' + (Math.round(perWeek * 10) / 10) + '× a week. Twice a week, with the same total sets, grows strength faster.');
+    const lib = (0, exercises_1.findExercise)(name), prime = lib ? lib.m[0] : null;
+    if (prime) {
+        const from = (0, series_1.shiftDayKey)(today, -28);
+        let sets = 0;
+        sessions.forEach(s => { if (s.date <= from || s.date > today)
+            return; (s.exercises || []).forEach(e => { sets += ((e.sets || []).length) * ((0, exercises_1.loadingOf)({ n: e.n, m: e.m }).load[prime] || 0); }); });
+        const wk = Math.round(sets / 4 * 10) / 10;
+        if (wk < 10)
+            tips.push('About ' + wk + ' hard sets a week reach its main muscle (' + prime.replace('-', ' ') + '). 10–20 is the range that keeps growing — add 2–4.');
+    }
+    const v = lib && lib.p ? VARIATION[lib.p] : null;
+    if (v)
+        tips.push('Or swap in a close variation for 4 weeks — ' + v + ' — then come back to it.');
+    return tips;
+}
+/* ── areas not trained lately, and a template to start one ── */
+exports.AREAS = {
+    legs: { name: 'Legs', slugs: ['quadriceps', 'hamstring', 'gluteal', 'calves', 'adductors'] },
+    core: { name: 'Core', slugs: ['abs', 'obliques'] },
+    back: { name: 'Back', slugs: ['upper-back', 'lower-back', 'trapezius'] },
+    chest: { name: 'Chest', slugs: ['chest'] },
+    shoulders: { name: 'Shoulders', slugs: ['deltoids'] },
+    arms: { name: 'Arms', slugs: ['biceps', 'triceps', 'forearm'] },
+};
+/** Exercises only — sets are counts with empty weight and reps: your first session sets them. */
+exports.AREA_TEMPLATES = {
+    legs: { name: 'Legs — ARK starter', ex: [['Squat (Barbell)', 3], ['Romanian Deadlift (Barbell)', 3], ['Leg Press (Machine)', 3], ['Seated Leg Curl (Machine)', 3], ['Leg Extension (Machine)', 2], ['Standing Calf Raise (Machine)', 3]] },
+    core: { name: 'Core — ARK starter', ex: [['Hanging Leg Raise', 3], ['Cable Crunch', 3], ['Pallof Press (Cable)', 2], ['Plank', 2]] },
+    back: { name: 'Back — ARK starter', ex: [['Pull Up', 3], ['Bent Over Row (Barbell)', 3], ['Lat Pulldown (Cable)', 3], ['Seated Row (Machine)', 3]] },
+    chest: { name: 'Chest — ARK starter', ex: [['Bench Press (Barbell)', 3], ['Incline Bench Press (Dumbbell)', 3], ['Chest Fly (Machine)', 3]] },
+    shoulders: { name: 'Shoulders — ARK starter', ex: [['Seated Overhead Press (Dumbbell)', 3], ['Lateral Raise (Cable)', 3], ['Reverse Fly (Machine)', 3]] },
+    arms: { name: 'Arms — ARK starter', ex: [['Bicep Curl (Barbell)', 3], ['Triceps Pushdown (Cable)', 3], ['Hammer Curl (Dumbbell)', 3], ['Overhead Triceps Extension (Cable)', 2]] },
+};
+/** A template as both loggers store routines: library metadata, `sets` empty rows. */
+function areaTemplate(area) {
+    const T = exports.AREA_TEMPLATES[area];
+    if (!T)
+        return null;
+    return { name: T.name, ex: T.ex.map(([n, k]) => { const x = withMeta({ n }); return { ...x, sets: Array.from({ length: k }, () => ({ w: '', r: '' })) }; }) };
+}
+/**
+ * Areas with no hard sets in `minWeeks` or more, while you are otherwise training (a workout in the last
+ * 3 weeks) — a break from everything is a break, not neglect. "Never" means nowhere in your logged history.
+ */
+function neglected(sessions, today, opts = {}) {
+    var _a;
+    const minWeeks = (_a = opts.minWeeks) !== null && _a !== void 0 ? _a : 3;
+    const dates = sessions.map(s => s.date).filter(d => d && d <= today).sort();
+    if (!dates.length || (0, dates_1.daysBetween)(dates[dates.length - 1], today) > 21)
+        return [];
+    const last = {};
+    Object.keys(exports.AREAS).forEach(a => { last[a] = null; });
+    sessions.forEach(s => (s.exercises || []).forEach(e => {
+        if (!(e.sets || []).length)
+            return;
+        const load = (0, exercises_1.loadingOf)({ n: e.n, m: e.m }).load;
+        Object.entries(exports.AREAS).forEach(([a, A]) => {
+            if (A.slugs.some(sl => (load[sl] || 0) >= 0.5) && (!last[a] || s.date > last[a]))
+                last[a] = s.date;
+        });
+    }));
+    return Object.keys(exports.AREAS).map(a => {
+        const d = last[a], weeks = d ? Math.floor((0, dates_1.daysBetween)(d, today) / 7) : null;
+        return { key: a, name: exports.AREAS[a].name, last: d, weeks, never: !d, template: a };
+    }).filter(x => x.never || x.weeks >= minWeeks).sort((a, b) => (b.never ? 1e9 : b.weeks) - (a.never ? 1e9 : a.weeks));
+}
+/* ── the session fields the PC logger writes ── */
+/** Library category, group, muscles and equipment for a logged name (its own `e` wins). Unknown names get none. */
+function withMeta(ex) {
+    const x = (0, exercises_1.findExercise)(ex.n);
+    if (!x)
+        return { ...ex, c: ex.c || 'push', g: ex.g || 'Other', m: ex.m || [], e: ex.e || 'other' };
+    return { ...ex, c: x.c, g: x.g, m: x.m.slice(), e: ex.e || x.e };
+}
+function sessionShape(exercises) {
+    const muscles = {}, sets = {}, cats = {};
+    exercises.forEach(e => {
+        const n = (e.sets || []).length;
+        if (!n)
+            return;
+        (e.m || []).forEach(m => { muscles[m] = true; });
+        const g = e.g || 'Other';
+        sets[g] = (sets[g] || 0) + n;
+        if (e.c)
+            cats[e.c] = (cats[e.c] || 0) + n;
+    });
+    const ck = Object.keys(cats);
+    return { type: ck.length === 1 ? ck[0] : 'full', muscles: Object.keys(muscles), labels: Object.keys(sets), sets };
+}
 
   },
   "./lymph": function (exports, module, require) {
@@ -4622,6 +4864,9 @@ exports.recordsTimeline = recordsTimeline;
 exports.recordsFor = recordsFor;
 exports.weightFor = weightFor;
 exports.exerciseRecords = exerciseRecords;
+exports.parseStrongDuration = parseStrongDuration;
+exports.parseStrongCsv = parseStrongCsv;
+exports.planImport = planImport;
 exports.durShort = durShort;
 exports.sessionStart = sessionStart;
 exports.strongStamp = strongStamp;
@@ -4808,6 +5053,181 @@ function exerciseRecords(sessions, name) {
     for (let r = 1; r <= 12; r++)
         out.table.push({ r, best: byReps.get(r) || null, predicted: Math.round(weightFor(orm, r) * 10) / 10 });
     return out;
+}
+function csvRows(text, delim) {
+    const rows = [];
+    let row = [], cell = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (q) {
+            if (ch === '"') {
+                if (text[i + 1] === '"') {
+                    cell += '"';
+                    i++;
+                }
+                else
+                    q = false;
+            }
+            else
+                cell += ch;
+        }
+        else if (ch === '"')
+            q = true;
+        else if (ch === delim) {
+            row.push(cell);
+            cell = '';
+        }
+        else if (ch === '\n' || ch === '\r') {
+            if (ch === '\r' && text[i + 1] === '\n')
+                i++;
+            row.push(cell);
+            cell = '';
+            if (row.some(c => c.trim() !== ''))
+                rows.push(row);
+            row = [];
+        }
+        else
+            cell += ch;
+    }
+    row.push(cell);
+    if (row.some(c => c.trim() !== ''))
+        rows.push(row);
+    return rows;
+}
+/** "1h 17m", "38m", "2h", "45s", or plain seconds → seconds. */
+function parseStrongDuration(v) {
+    const s = String(v || '').trim();
+    if (/^\d+(\.\d+)?$/.test(s))
+        return Math.round(Number(s));
+    const h = /(\d+)\s*h/.exec(s), m = /(\d+)\s*m(?!s)/.exec(s), sec = /(\d+)\s*s/.exec(s);
+    return (h ? +h[1] * 3600 : 0) + (m ? +m[1] * 60 : 0) + (sec ? +sec[1] : 0);
+}
+const pad2 = (n) => String(n).padStart(2, '0');
+function parseStrongCsv(text, unit = 'kg') {
+    const out = { sessions: [], skipped: { cardio: 0, timed: 0, rest: 0, bad: 0 } };
+    const t = String(text || '').replace(/^﻿/, '');
+    const head = t.split(/\r?\n/, 1)[0] || '';
+    const delim = [';', ',', '\t'].sort((a, b) => head.split(b).length - head.split(a).length)[0];
+    const rows = csvRows(t, delim);
+    if (!rows.length) {
+        out.error = 'The file is empty.';
+        return out;
+    }
+    const H = rows[0].map(h => h.trim().toLowerCase());
+    const col = (...names) => { for (const n of names) {
+        const i = H.indexOf(n);
+        if (i >= 0)
+            return i;
+    } return -1; };
+    const C = { date: col('date'), name: col('workout name'), dur: col('duration', 'workout duration'), ex: col('exercise name'), order: col('set order'),
+        w: col('weight'), wu: col('weight unit'), r: col('reps'), dist: col('distance'), sec: col('seconds'), note: col('notes'), wnote: col('workout notes'), rpe: col('rpe') };
+    if (C.date < 0 || C.ex < 0 || C.w < 0 || C.r < 0) {
+        out.error = 'This is not a Strong export — it needs Date, Exercise Name, Weight and Reps columns.';
+        return out;
+    }
+    const n = (v) => { const x = parseFloat(String(v !== null && v !== void 0 ? v : '').trim().replace(',', '.')); return isFinite(x) ? x : 0; };
+    const byKey = new Map();
+    for (let i = 1; i < rows.length; i++) {
+        const R = rows[i], g = (c) => { var _a; return (c >= 0 ? String((_a = R[c]) !== null && _a !== void 0 ? _a : '').trim() : ''); };
+        const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/.exec(g(C.date));
+        const exName = g(C.ex);
+        if (!m || !exName) {
+            out.skipped.bad++;
+            continue;
+        }
+        const order = g(C.order);
+        if (/rest/i.test(order)) {
+            out.skipped.rest++;
+            continue;
+        }
+        let w = n(g(C.w)), r = Math.round(n(g(C.r)));
+        if (/lb/i.test(g(C.wu)) && unit === 'kg')
+            w = Math.round(w * 0.45359237 * 100) / 100;
+        else if (/kg/i.test(g(C.wu)) && unit === 'lb')
+            w = Math.round(w / 0.45359237 * 100) / 100;
+        if (!(r > 0)) {
+            if (n(g(C.dist)) > 0)
+                out.skipped.cardio++;
+            else if (n(g(C.sec)) > 0)
+                out.skipped.timed++;
+            else
+                out.skipped.bad++;
+            continue;
+        }
+        if (w < 0 || w > 1000 || r > 100) {
+            out.skipped.bad++;
+            continue;
+        }
+        const k = g(C.date) + '|' + g(C.name);
+        let s = byKey.get(k);
+        if (!s) {
+            const start = new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 12), +(m[5] || 0));
+            const dur = parseStrongDuration(g(C.dur));
+            const date = m[1] + '-' + m[2] + '-' + m[3];
+            s = { id: 'strong-' + date + '-' + pad2(start.getHours()) + pad2(start.getMinutes()), date, start: start.toISOString(),
+                ts: new Date(start.getTime() + dur * 1000).toISOString(), duration: dur, name: g(C.name) || 'Workout', unit, src: 'strong-csv',
+                notes: g(C.wnote), exercises: [] };
+            byKey.set(k, s);
+        }
+        const exs = s.exercises;
+        let e = exs[exs.length - 1];
+        // A new block whenever the exercise changes — Strong lists the same lift twice when you came back to it.
+        if (!e || s._last !== exName) {
+            e = { n: exName, sets: [] };
+            exs.push(e);
+            s._last = exName;
+        }
+        const set = { w, r };
+        const rpe = n(g(C.rpe));
+        if (rpe >= 1 && rpe <= 10)
+            set.rpe = rpe;
+        const note = g(C.note);
+        if (note && !e.note)
+            e.note = note;
+        if (/^w/i.test(order)) {
+            if (!Array.isArray(e.warm))
+                e.warm = [];
+            e.warm.push(set);
+            continue;
+        }
+        if (/^d/i.test(order))
+            set.type = 'd';
+        else if (/^f/i.test(order))
+            set.type = 'f';
+        e.sets.push(set);
+    }
+    out.sessions = [...byKey.values()].map(s => {
+        delete s._last;
+        s.exercises = (s.exercises || []).filter(e => (e.sets || []).length);
+        return s;
+    }).filter(s => s.exercises.length).sort((a, b) => (a.start < b.start ? -1 : 1));
+    out.sessions.forEach(s => { s.volume = Math.round(workoutVolume(s)); });
+    return out;
+}
+/**
+ * What an import would do against what is already logged: `add` the new ones; `dup` those already there
+ * (same id, or the same day with 2+ of the same exercises, or a start within 10 minutes); `fill` the
+ * duplicates that came from screenshots and have fewer sets than Strong's own record of them.
+ */
+function planImport(existing, incoming) {
+    const sets = (s) => (s.exercises || []).reduce((a, e) => a + (e.sets || []).length, 0);
+    const add = [], dup = [], fill = [];
+    incoming.forEach(s => {
+        const names = new Set((s.exercises || []).map(e => key(e.n)));
+        const st = sessionStart(s);
+        const i = existing.findIndex(x => (s.id && x.id === s.id) || (x.date === s.date && ((x.exercises || []).filter(e => names.has(key(e.n))).length >= Math.min(2, names.size)
+            || (st && sessionStart(x) && Math.abs(sessionStart(x).getTime() - st.getTime()) < 10 * 60e3))));
+        if (i < 0) {
+            if (!add.some(a => a.id === s.id))
+                add.push(s);
+            return;
+        }
+        dup.push(s);
+        const x = existing[i];
+        if ((0, exports.isImported)(x) && x.src !== 'strong-csv' && sets(s) > sets(x))
+            fill.push({ index: i, with: s, had: sets(x), has: sets(s) });
+    });
+    return { add, dup, fill };
 }
 /* ── how Strong writes things ── */
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -5184,6 +5604,7 @@ const dates_1 = require("./dates");
 const gym_1 = require("./gym");
 const readiness_1 = require("./readiness");
 const bloodwork_1 = require("./bloodwork");
+const strong_1 = require("./strong");
 function emptySnapshot() {
     return {
         v: 1, rev: 0, appliedSeq: 0, day: (0, dates_1.dayKey)(new Date()),
@@ -5250,6 +5671,17 @@ function applyEvent(s, e) {
             // The desktop ticks the workout habit when a session is logged; mirror it.
             if (isDay(w.date))
                 (s.habitLog[w.date] || (s.habitLog[w.date] = {}))['h-b1'] = true;
+            return;
+        }
+        case 'workout.import': {
+            // A Strong export read on the phone. The PC decides for real against its full history; this keeps the
+            // phone's view in step until the next snapshot (same duplicate rule, logic/strong.ts planImport).
+            const list = (Array.isArray(d.sessions) ? d.sessions : []).filter((w) => w && isDay(w.date) && Array.isArray(w.exercises) && w.exercises.length);
+            const P = (0, strong_1.planImport)(s.workouts, list);
+            if (d.fill)
+                P.fill.forEach(f => { s.workouts[f.index] = clone(f.with); });
+            P.add.forEach(w => { s.workouts.push(clone(w)); (s.habitLog[w.date] || (s.habitLog[w.date] = {}))['h-b1'] = true; });
+            s.workouts.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
             return;
         }
         case 'weight.set': {

@@ -543,6 +543,26 @@ button,[role=button]{touch-action:manipulation;-webkit-user-select:none;user-sel
 .sx.ss{padding-left:10px;box-shadow:inset 3px 0 0 var(--ssc)}
 .rp-h,.rp{grid-template-columns:44px 1fr auto}
 .rp-h{font-weight:700;color:var(--t1);font-size:.8rem}
+/* Stalled lifts, areas left out, the iPhone-timer switch */
+.pl-r{display:block;padding:10px 0;cursor:pointer}
+.pl-r+.pl-r{border-top:.5px solid var(--sep)}
+.pl-h{display:flex;justify-content:space-between;gap:10px;align-items:baseline;margin-bottom:2px}
+.pl-h .num{color:#ff9f0a;font-weight:700;white-space:nowrap}
+.pl-h small{color:var(--t3)}
+.pl-tips{margin:6px 0 0;padding-left:18px;font-size:.84rem;color:var(--t2);line-height:1.45}
+.pl-tips li+li{margin-top:4px}
+.ng-r{display:flex;gap:12px;align-items:center;padding:9px 0}
+.ng-r+.ng-r{border-top:.5px solid var(--sep)}
+.ng-t{flex:1;min-width:0}
+.ng-why{line-height:1.4;margin-top:3px}
+.tm-clock{margin-top:14px;padding:12px 14px}
+.tm-sw{display:flex;gap:12px;align-items:center;width:100%;text-align:left}
+.tm-sw b{display:block;margin-bottom:2px}
+.sw{flex:none;position:relative;width:51px;height:31px;border-radius:16px;background:var(--fill-3);transition:background .2s}
+.sw i{position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.3);transition:transform .2s}
+.sw.on{background:#30d158}
+.sw.on i{transform:translateX(20px)}
+.tm-steps{margin:10px 0 12px;padding-left:20px;line-height:1.5}
 /* Calendar */
 .cal{border-radius:18px;padding:12px 12px 10px;margin-bottom:10px;contain:layout paint style}
 .cal-h{display:flex;justify-content:space-between;align-items:baseline;padding:0 4px 8px}

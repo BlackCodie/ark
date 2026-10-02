@@ -17,7 +17,7 @@ import {
   haptic, toast, openSheet, topSheet, closeSheet, scheduleSync, daysBetween,
 } from './core.js';
 import { GROUPS, trainNext, syncButton, bioPatch, MOODS } from './views.js';
-import { startForMuscles, tissueNow } from './train.js';
+import { startForMuscles, tissueNow, plateausNow, neglectNow } from './train.js';
 import { secMind } from './mind.js';
 import { standing, fmtAmt } from './doses.js';
 import { hormoneRows } from './hormones.js';
@@ -528,6 +528,8 @@ const SUMMARY = {
 const SUBSUM = {
   'Weekly sets vs your range': v => plural(v.body.muscles.filter(m => m.vol && (m.vol.zone === 'under' || m.vol.zone === 'none')).length, 'muscle') + ' under range',
   'Fatigue radar': v => fatigueNow(v).title,
+  'Stalled lifts': () => { const P = plateausNow(); return P.length ? P.length + ' stalled · ' + P.map(p => p.n.replace(/ \(.*\)$/, '')).slice(0, 2).join(', ') : 'none — every regular lift still rising'; },
+  'Not trained lately': () => { const N = neglectNow(); return N.length ? N.map(a => a.name + (a.never ? ' (never)' : ' (' + a.weeks + ' wk)')).join(', ') : 'every area trained in 3 weeks'; },
   'Injuries': v => { const n = (v.injuries || []).filter(j => !j.cleared).length; return n ? n + ' active' : 'none'; },
   'Tape measurements': v => { const R = L.measureReport(v.measures || {}, v.weights || {}, { height: +(v.profile || {}).height || null, sex: (v.profile || {}).sex || null });
     return R.latest ? (R.latest.bf != null ? R.latest.bf + ' % body fat' : 'measured ' + R.latest.day) + (R.verdict ? ' · ' + R.verdict.title.toLowerCase() : '') : 'not measured yet'; },
@@ -648,6 +650,7 @@ function muscleSheet(slug) {
         <b class="num">${x.capacity}</b></div>`).join('')}</section>` : ''}
       ${injBlock(v, slug)}
       ${storyBlock(v, slug)}
+      ${liftsBlock(v, slug)}
       <div class="hist7" style="margin-top:14px">${days.map(k => `<span class="${hits.has(k) ? 'hit' : ''} ${k === t ? 't' : ''}"><i></i>${fmtDay(k, { weekday: 'narrow' })}</span>`).join('')}</div>
       <div class="blk"><div class="blk-h"><span class="eyebrow">Soreness</span><span class="val">${SORE_LBL[met.soreness || 0]}</span></div>
         <div class="sore">${SORE_LBL.map((l, i) => `<button class="${(met.soreness || 0) === i && (i > 0 || met.soreTs) ? 'on' : ''}" style="--sc:${SORE_COLORS[i]}" data-act="ms-sore" data-slug="${slug}" data-v="${i}">${l.toUpperCase()}</button>`).join('')}</div>
@@ -804,9 +807,48 @@ function secDevelop(v) {
         ${r.verdict !== 'balanced' ? `<p class="sub" style="margin:0 0 8px;line-height:1.4">${esc(r.note)}</p>` : ''}`;
     }).join('') + `<p class="sub" style="margin:6px 0 0;line-height:1.4">Green band = the usual coaching range. A nudge, not a diagnosis.</p>`
       : `<div class="empty" style="padding:6px">Shows once both lifts of a pair are logged — row &amp; bench, overhead &amp; bench, leg curl &amp; extension, squat &amp; deadlift.</div>`);
+  H += stalledBlock() + neglectBlock(v);
   H += dungeonCard(v);
   H += photoCard();
   return H;
+}
+
+/* ── lifts that stopped rising, areas left out (logic/lifts.ts) ── */
+function stalledBlock() {
+  const P = plateausNow(), seen = new Set();
+  return `<div class="ba-h"><h2 style="font-size:1.05rem">Stalled lifts</h2><span class="k">best not beaten in 6+ weeks</span></div>`
+    + card(P.length ? P.map(p => {
+      // A tip shared by several lifts (same muscle, same frequency) is shown once, under the first.
+      const tips = p.tips.filter(t => !seen.has(t)); tips.forEach(t => seen.add(t));
+      return `<div class="pl-r" role="button" tabindex="0" data-act="ex-hist" data-n="${esc(p.n)}" data-seg="records">
+        <div class="pl-h"><b>${esc(p.n)}</b><span class="num">${Math.round(p.peak)} <small>→</small> ${Math.round(p.recent)}</span></div>
+        <div class="sub">Best est. 1RM ${fmt1(p.peak)} kg (${fmt1(p.peakSet.w)} × ${p.peakSet.r}) on ${fmtDay(p.peakDate, { day: 'numeric', month: 'short' })} · ${p.sessionsSince} sessions since, none higher · ${p.weeks} weeks</div>
+        ${tips.length ? `<ul class="pl-tips">${tips.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}</div>`;
+    }).join('') + `<p class="sub" style="line-height:1.45;margin:8px 0 0">Read from sets of 1–12 reps — the 1RM formula overshoots beyond that. Stalls are normal after the first months; change one thing at a time for 4–6 weeks.</p>`
+      : `<div class="empty" style="padding:6px">Nothing stalled — no lift with 5+ logged sessions has gone 6 weeks without beating its best.</div>`);
+}
+function neglectBlock(v) {
+  const N = neglectNow(), have = new Set((v.routines || []).map(r => r.name));
+  return `<div class="ba-h"><h2 style="font-size:1.05rem">Not trained lately</h2><span class="k">no hard sets in 3+ weeks</span></div>`
+    + card(N.length ? N.map(a => {
+      const T = L.AREA_TEMPLATES[a.key], got = T && have.has(T.name);
+      return `<div class="ng-r"><div class="ng-t"><b>${esc(a.name)}</b><div class="sub">${a.never ? 'Not once in your logged history' : 'Last trained ' + fmtDay(a.last, { day: 'numeric', month: 'short' }) + ' · ' + a.weeks + ' weeks ago'}</div>
+        ${a.key === 'legs' ? '<div class="sub ng-why">About half your skeletal muscle is below the waist (Janssen 2000) — the biggest lever for strength and long-term health you are not using yet.</div>' : ''}</div>
+        ${T ? `<button class="btn sm ${got ? 'btn-glass' : 'btn-tint'}" style="--accent:#30d158" data-act="tpl-area" data-a="${a.key}" ${got ? 'disabled' : ''}>${got ? '✓ In Train' : '+ Template'}</button>` : ''}</div>`;
+    }).join('') + `<p class="sub" style="line-height:1.45;margin:8px 0 0">Templates hold exercises and set counts only — your first session sets the weights, then ARK's targets take over.</p>`
+      : `<div class="empty" style="padding:6px">${!(v.workouts || []).length ? 'Shows once you have logged workouts.' : !(v.workouts || []).some(w => daysBetween(w.date, today()) <= 21) ? 'No workouts in the last 3 weeks — a break, not one area left out.' : 'Every area has had hard sets in the last 3 weeks.'}</div>`);
+}
+/* The lifts you have logged that train this muscle — tapping the figure leads to your numbers. */
+function liftsBlock(v, slug) {
+  const Ls = L.liftsForMuscle(v.workouts || [], slug, today(), 5);
+  if (!Ls.length) return '';
+  const u = v.unit || 'kg';
+  return `<div class="grp-h" style="margin-top:16px">Your lifts for it</div><section class="list frost">${Ls.map(x => {
+    const tr = x.trend, arrow = !tr ? '' : tr.pct > 1 ? ` · <span style="color:#30d158">▲ ${tr.pct} %</span>` : tr.pct < -1 ? ` · <span style="color:#ff9f0a">▼ ${Math.abs(tr.pct)} %</span>` : ' · flat';
+    return `<button class="li" data-act="ex-hist" data-n="${esc(x.n)}" data-seg="records"><span class="tx"><div class="tt">${esc(x.n)}</div>
+      <div class="st">${x.top ? (x.top.w > 0 ? fmt1(x.top.w) + ' ' + u + ' × ' + x.top.r : x.top.r + ' reps') + ' · ' : ''}${x.sessions}× · last ${fmtDay(x.last, { day: 'numeric', month: 'short' })}${arrow}</div></span>
+      <b class="num">${x.best ? Math.round(x.best.orm) : x.reps ? x.reps.v : '—'}</b><span class="chev">${icon('chev', 16)}</span></button>`;
+  }).join('')}</section><p class="sub" style="line-height:1.45;margin:6px 2px 0">Number = best est. 1RM (bodyweight: most reps) · arrow = last 6 weeks against the 6 before. Tap for records.</p>`;
 }
 
 let injDraft = null;
@@ -890,6 +932,12 @@ const devActions = {
 const ROUND = Object.fromEntries(VIT.map(x => [x.f, x.round || 1]));
 const RANGE = { sleep: [0, 14], deep: [0, 6], prot: [0, 500], water: [0, 10], weight: [30, 250], steps: [0, 100000], cal: [0, 10000] };
 export const actions = {
+  'tpl-area'(d) {
+    const T = L.areaTemplate(d.a); if (!T) return;
+    if ((view().routines || []).some(r => r.name === T.name)) { toast('Already in your templates'); return; }
+    emit('routine.add', { routine: T }); haptic();
+    toast(T.name + ' added — Train › Templates');
+  },
   ...devActions,
   'blood-add'() { bloodSheet(); },
   'blood-save'() {

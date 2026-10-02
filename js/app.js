@@ -2,7 +2,7 @@
 import {
   state, changed, onChange, icon, esc, syncNow, scheduleSync, syncLabel, closeSheet, topSheet, refreshSheets, paired, haptic, toast, applyTheme, L, onPublicCopy } from './core.js';
 import { renderToday, renderHabits, renderGrow, actions as viewActions } from './views.js';
-import { renderTrain, actions as trainActions, onSetInput, pickerSearch, restTick, openWorkout, onPlatesInput } from './train.js';
+import { renderTrain, actions as trainActions, onSetInput, pickerSearch, restTick, openWorkout, onPlatesInput, onStrongFile } from './train.js';
 import { actions as sheetActions, onWeighInput } from './sheets.js';
 import { renderBodyArch, mountFigure, onTimeline, patchBodyArch, actions as bodyActions } from './body.js';
 import { actions as moreActions, onHidden, onVisible } from './more.js';
@@ -166,7 +166,7 @@ document.addEventListener('input', e => {
   else if (el.matches('[data-ds-amt]')) onDoseInput(el);
   else if (onWhatIfInput(el) || onPhotoInput(el)) { /* handled */ }
 });
-document.addEventListener('change', e => { if (e.target.matches('[data-ph-file]')) onPhotoInput(e.target); });
+document.addEventListener('change', e => { if (e.target.matches('[data-ph-file]')) onPhotoInput(e.target); else if (e.target.matches('[data-strong-file]')) onStrongFile(e.target); });
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.id === 'pair-code') ACT['pair-go']();
   if (e.key === 'Escape' && topSheet()) closeSheet(topSheet());

@@ -79,6 +79,15 @@ const PR_TXT = { '1RM': (h, u) => 'est. 1RM ' + Math.round(h.value) + ' ' + u, W
   Volume: (h, u) => 'biggest set ' + kgf(h.w) + ' ' + u + ' × ' + h.r, Reps: h => h.r + ' reps' };
 const prPill = k => `<span class="prb">${icon('trophy', 11)}${k}</span>`;
 let histN = 12;
+let plCache = null, plFor = null, ngCache = null;
+/** Lifts that stopped rising (logic/lifts.ts), worked out once per change of history. */
+export function plateausNow() {
+  const ws = view().workouts;
+  if (plFor !== ws) { plCache = L.plateaus(ws, today()); ngCache = L.neglected(ws, today()); plFor = ws; }
+  return plCache;
+}
+/** Areas with no hard sets for 3+ weeks while you are otherwise training. */
+export function neglectNow() { plateausNow(); return ngCache; }
 /** One History card: name, day, duration · volume · PRs, then "N × exercise | best set" for every exercise. */
 function histCard(w, i, rec) {
   const u = w.unit || unit();
@@ -224,7 +233,8 @@ export function renderTrain() {
       hist += histCard(w, i, rec[i]);
     });
     H += `<div class="sec"><h2>History</h2><button class="link" data-act="cal-open">Calendar</button></div><div class="stack">${hist}</div>`
-      + (order.length > histN ? `<button class="btn btn-glass block" style="margin-top:10px" data-act="hist-more">Show ${Math.min(20, order.length - histN)} more</button>` : '');
+      + (order.length > histN ? `<button class="btn btn-glass block" style="margin-top:10px" data-act="hist-more">Show ${Math.min(20, order.length - histN)} more</button>` : '')
+      + `<button class="btn btn-glass block" style="margin-top:10px" data-act="strong-import">Import your Strong history (CSV)</button>`;
   } else {
     H += `<div class="card frost empty" style="margin-top:10px">No workouts yet. Your first one sets the baseline every later target is built from.</div>`;
   }
@@ -303,6 +313,8 @@ function hints(ex, x) {
   const dl = ex.deloadW ? null : L.deloadAdvice(view().workouts, ex.n, w => ex.e === 'barbell' ? L.loadable(w, BARS[unit() === 'lb' ? 'lb' : 'kg'][0], PLATE_SETS[unit() === 'lb' ? 'lb' : 'kg']) : Math.round(w));
   if (dl && dl.deload) H += `<div class="target hint">${icon('bolt', 16)}<div><b>Lighter session? ${fmt1(dl.weight)} ${unit()}</b><span>${esc(dl.reason)}</span>
       <button class="btn sm btn-tint" style="margin-top:8px;--accent:#ffb340" data-act="use-deload" data-x="${x}" data-w="${dl.weight}">Use ${fmt1(dl.weight)} ${unit()}</button></div></div>`;
+  const pl = plateausNow().find(p => L.sameExercise(p.n, ex.n));
+  if (pl) H += `<div class="target hint">${icon('chart', 16)}<div><b>Stalled since ${fmtDay(pl.peakDate, { day: 'numeric', month: 'short' })} · best est. 1RM ${Math.round(pl.peak)} ${unit()}</b><span>${esc(pl.tips[0])}</span></div></div>`;
   const sore = soreSlugs();
   const alt = sore.length ? L.swapOptions(ex, library(), sore, view().workouts) : [];
   if (alt.length) {
@@ -568,8 +580,8 @@ function libSheet() {
       <div data-pk-list>${pickerList()}</div>`,
   });
 }
-function exHistSheet(name) {
-  let seg = 'about';
+function exHistSheet(name, seg0) {
+  let seg = ['about', 'history', 'charts', 'records'].includes(seg0) ? seg0 : 'about';
   const s = openSheet({
     id: 'ex-hist', title: name,
     render: () => {
@@ -834,9 +846,76 @@ function timerSheet() {
       const last = state.settings.lastTimer || 0;
       return `<p class="sub tm-note" style="margin-top:0">Choose a duration. Rest also starts by itself after every set you tick.</p>
         <div class="tm-grid">${TIMER_PRESETS.map(t => `<button class="btn btn-glass${t === last ? ' on' : ''}" data-act="timer-start" data-s="${t}"><span class="num">${fmtMinS(t)}</span></button>`).join('')}</div>
-        <p class="sub tm-note">${lock}</p>`;
+        <p class="sub tm-note">${lock}</p>${clockBlock()}`;
     },
   });
+}
+/* The iPhone's own Clock timer rings with the screen locked and needs no PC. A web app cannot start it, so a
+   one-action Shortcut ("ARK Rest": Start Timer for the input in seconds) does — iOS shows Shortcuts for a
+   moment and the ◀ ARK link at the top left brings you back. */
+const CLOCK_SC = 'ARK Rest';
+function clockTimer(sec) {
+  try { location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent(CLOCK_SC) + '&input=text&text=' + Math.round(sec); } catch (e) { /* no Shortcuts */ }
+}
+function clockBlock() {
+  const on = !!state.settings.restClock;
+  return `<section class="card frost tm-clock"><button class="row tm-sw" data-act="rest-clock" aria-pressed="${on}"><span style="flex:1;text-align:left"><b>Ring on the iPhone's own timer</b>
+      <span class="sub">Rings locked, no PC needed. Skipping or ±15 s does not reach it.</span></span><span class="sw${on ? ' on' : ''}"><i></i></span></button>
+    ${on ? `<ol class="sub tm-steps"><li>Shortcuts app → <b>+</b> → name it <b>${CLOCK_SC}</b>.</li><li>Add the action <b>Start Timer</b>; tap its duration → <b>Shortcut Input</b>, unit <b>seconds</b>.</li>
+      <li>Come back and tap Test — a 10-second timer should start. Use ◀ ARK at the top left to return.</li></ol>
+      <button class="btn btn-glass block" data-act="rest-clock-test">Test with 10 seconds</button>` : ''}</section>`;
+}
+
+/* ── Strong's CSV export → ARK (Strong: Settings › Export Data, save the file to Files) ──
+   Read here, checked against what this phone knows, sent to the PC in batches; the PC checks again against
+   its full history (duplicates are never added twice) and keeps any session it replaces, restorable. */
+let imp = { R: null, P: null, fill: true, name: '' };
+function strongImportSheet() {
+  imp = { R: null, P: null, fill: true, name: '' };
+  openSheet({
+    id: 'strong-import', title: 'Import from Strong',
+    render: () => {
+      if (!imp.R) return `<p class="sub" style="line-height:1.5;margin:0 0 12px">In Strong: <b>Settings › Export Data</b> (or Profile › ⚙︎ › Export), then <b>Save to Files</b>. Pick that file here. Every workout comes in set for set — warm-ups, drop sets, notes and RPE included; cardio and rest-timer rows are left out.</p>
+        <label class="btn btn-prominent block" style="--accent:${BLUE}">${icon('plus', 17)} Choose the Strong export<input type="file" accept=".csv,text/csv,text/plain" data-strong-file hidden></label>
+        <p class="sub" style="line-height:1.5;margin:12px 0 0">Workouts already in ARK are skipped, so importing the same file twice changes nothing.</p>`;
+      const R = imp.R, P = imp.P;
+      if (R.error) return `<div class="target hint sore">${icon('bolt', 16)}<div><b>Could not read ${esc(imp.name)}</b><span>${esc(R.error)}</span></div></div>
+        <label class="btn btn-glass block" style="margin-top:12px">Choose another file<input type="file" accept=".csv,text/csv,text/plain" data-strong-file hidden></label>`;
+      const all = R.sessions, first = all[0], last = all[all.length - 1], sk = R.skipped;
+      const sets = all.reduce((a, s) => a + s.exercises.reduce((b, e) => b + e.sets.length, 0), 0);
+      const go = P.add.length + (imp.fill ? P.fill.length : 0);
+      return `<div class="stat3" style="margin-bottom:12px"><div class="frost"><div class="v num">${all.length}</div><div class="k">Workouts in file</div></div>
+          <div class="frost"><div class="v num" style="color:${GREEN}">${P.add.length}</div><div class="k">New to ARK</div></div>
+          <div class="frost"><div class="v num">${P.dup.length}</div><div class="k">Already logged</div></div></div>
+        ${first ? `<p class="sub" style="margin:0 0 10px">${fmtDay(first.date, { day: 'numeric', month: 'short', year: 'numeric' })} → ${fmtDay(last.date, { day: 'numeric', month: 'short', year: 'numeric' })} · ${sets} sets</p>` : ''}
+        ${P.fill.length ? `<button class="row tm-sw card frost" data-act="strong-fill" aria-pressed="${imp.fill}"><span style="flex:1;text-align:left"><b>Fill in ${P.fill.length} cut-off screenshot import${P.fill.length === 1 ? '' : 's'}</b>
+          <span class="sub">Strong's file has more sets for ${P.fill.map(f => esc(L.strongDay(f.with)) + ' (' + f.had + ' → ' + f.has + ')').slice(0, 3).join(', ')}${P.fill.length > 3 ? '…' : ''}. The old copy is kept on the PC, restorable.</span></span><span class="sw${imp.fill ? ' on' : ''}"><i></i></span></button>` : ''}
+        ${sk.cardio || sk.timed || sk.rest || sk.bad ? `<p class="sub" style="line-height:1.5;margin:10px 0">Left out: ${[sk.cardio && sk.cardio + ' cardio', sk.timed && sk.timed + ' timed', sk.rest && sk.rest + ' rest-timer', sk.bad && sk.bad + ' unreadable'].filter(Boolean).join(' · ')} rows.</p>` : ''}
+        <button class="btn btn-prominent block" style="--accent:${BLUE};margin-top:8px" data-act="strong-go" ${go ? '' : 'disabled'}>${go ? 'Import ' + go + ' workout' + (go === 1 ? '' : 's') : 'Nothing new to import'}</button>
+        <p class="sub" style="line-height:1.5;margin:10px 0 0">Records and PRs for these are worked out from the full history, as Strong does.</p>`;
+    },
+  });
+}
+export async function onStrongFile(el) {
+  if (!el.matches('[data-strong-file]') || !el.files || !el.files[0]) return false;
+  const f = el.files[0];
+  imp.name = f.name;
+  try { imp.R = L.parseStrongCsv(await f.text(), unit() === 'lb' ? 'lb' : 'kg'); }
+  catch (e) { imp.R = { sessions: [], skipped: {}, error: 'The file could not be read (' + (e && e.message || e) + ').' }; }
+  if (!imp.R.error && !imp.R.sessions.length) imp.R.error = 'No strength workouts in this file.';
+  if (!imp.R.error) imp.P = L.planImport(view().workouts, imp.R.sessions);
+  const t = topSheet(); if (t && t.id === 'strong-import') t.refresh();
+  return true;
+}
+function strongImportGo() {
+  const P = imp.P; if (!P) return;
+  const prep = s => { const ex = s.exercises.map(e => L.withMeta(e)); return { ...s, ...L.sessionShape(ex), exercises: ex }; };
+  const list = [...P.add, ...(imp.fill ? P.fill.map(f => f.with) : [])].map(prep);
+  if (!list.length) return;
+  // Batches keep each sync message small; the PC applies them in order.
+  for (let i = 0; i < list.length; i += 40) emit('workout.import', { sessions: list.slice(i, i + 40), fill: !!imp.fill });
+  closeSheet(topSheet()); haptic();
+  toast(list.length + ' workout' + (list.length === 1 ? '' : 's') + ' from Strong — on the PC at the next sync');
 }
 const refreshTimer = () => { const t = topSheet(); if (t && t.id === 'timer') t.refresh(); };
 
@@ -973,7 +1052,7 @@ export const actions = {
   plates(d) { if (topSheet() && topSheet().id === 'ex-menu') closeSheet(topSheet()); platesSheet(Number(d.x)); },
   'pl-step'(d) { plTarget = Math.max(0, Math.round((plTarget + Number(d.d)) * 100) / 100); haptic(); topSheet()?.refresh(); },
   'pl-bar'(d) { state.settings.bar = Number(d.v); changed({ now: true }); topSheet()?.refresh(); },
-  'ex-hist'(d) { exHistSheet(d.n); },
+  'ex-hist'(d) { exHistSheet(d.n, d.seg); },
   'exh-seg'(d) { const s = topSheet(); if (s && s.seg) s.seg(d.seg); },
   'session-edit'(d) { const w = view().workouts.find(x => (x.id || x.ts) === d.key); if (w) editSession(w); },
   'session-del'(d) {
@@ -1006,8 +1085,10 @@ export const actions = {
     if (s.w === '' || s.r === '') { toast('Enter weight and reps'); return; }
     s.done = true; haptic();
     // No rest after a warm-up, mid-superset, while building a template or fixing an old session.
-    if (!s.warm && !W.edit && !W.template && ssEnd(W, x) === x) { const sec = restFor(ex); W.restEnd = Date.now() + sec * 1000; W.restTotal = sec; }
+    let clock = 0;
+    if (!s.warm && !W.edit && !W.template && ssEnd(W, x) === x) { const sec = restFor(ex); W.restEnd = Date.now() + sec * 1000; W.restTotal = sec; clock = sec; }
     changed({ now: true }); restTick();
+    if (clock && state.settings.restClock) clockTimer(clock);
   },
   'rest-adj'(d) {
     const W = state.workout; if (!W || !W.restEnd) return;
@@ -1038,7 +1119,13 @@ export const actions = {
     const W = state.workout, sec = Number(d.s); if (!W || !(sec > 0)) return;
     W.restEnd = Date.now() + sec * 1000; W.restTotal = sec; state.settings.lastTimer = sec;
     haptic(); changed({ now: true }); restTick(); refreshTimer();
+    if (state.settings.restClock) clockTimer(sec);
   },
+  'rest-clock'() { state.settings.restClock = !state.settings.restClock; changed({ now: true }); refreshTimer(); },
+  'rest-clock-test'() { clockTimer(10); },
+  'strong-import'() { strongImportSheet(); },
+  'strong-go'() { strongImportGo(); },
+  'strong-fill'() { imp.fill = !imp.fill; const t = topSheet(); if (t && t.id === 'strong-import') t.refresh(); },
   'timer-skip'() { actions['rest-skip'](); refreshTimer(); },
 };
 /** Typing into a set, the name or the notes updates state without redrawing (keeps focus and the keyboard). */

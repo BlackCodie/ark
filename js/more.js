@@ -362,7 +362,7 @@ async function pushOff() {
 // schedules one push for the moment rest ends; coming back cancels it.
 export function onHidden() {
   const W = state.workout;
-  if (!W || W.edit || !state.push.on || !(W.restEnd > Date.now() + 4000) || pushPrefs().rest === false) return;
+  if (!W || W.edit || !state.push.on || !(W.restEnd > Date.now() + 4000) || pushPrefs().rest === false || state.settings.restClock) return;
   W.restPushed = W.restEnd;
   emit('push.timer', { at: W.restEnd, title: 'Rest over', body: nextSetHint() });
   syncNow({ keepalive: true });
