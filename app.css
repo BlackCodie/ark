@@ -517,6 +517,50 @@ button,[role=button]{touch-action:manipulation;-webkit-user-select:none;user-sel
 .hm{display:flex;gap:12px;flex-wrap:wrap;font-size:.76rem;color:var(--t3);margin:4px 0 6px}
 .hx{display:grid;grid-template-columns:1fr auto auto;gap:12px;font-size:.84rem;padding:2px 0;color:var(--t2)}
 .hx>span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Strong's History card and session detail */
+.hist-mo{font-size:.74rem;font-weight:600;letter-spacing:.04em;color:var(--t3);margin:10px 4px 0}
+.hist-mo:first-child{margin-top:0}
+.hist-t{flex:1;min-width:0;font-size:1.02rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hist .hm,.sess-hm{gap:16px}
+.hm>span{display:inline-flex;align-items:center;gap:4px}
+.hm svg{flex:none;opacity:.85}
+.hx2{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}
+.hx2>span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hx-h{font-weight:700;color:var(--t1);margin-top:2px}
+.prb{display:inline-flex;align-items:center;gap:3px;margin-left:7px;padding:1px 7px 1px 5px;border-radius:999px;font-size:.7rem;font-weight:700;
+  color:var(--mint);box-shadow:inset 0 0 0 1px currentColor;vertical-align:1px;font-family:var(--round)}
+.sess-edit{font-size:1rem;font-weight:600;color:var(--blue);min-width:44px;text-align:right}
+.sess-stamp{margin:-4px 0 6px}
+.sess-hm{font-size:.92rem;color:var(--t2);margin:0 0 14px}
+.sess-ex{display:flex;flex-direction:column;gap:14px}
+.sx-h{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.sx-h .ex-name{flex:1;min-width:0;text-align:left}
+.sx-h .ex-name b{font-size:1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.sx-k{font-size:.92rem}
+.sx-r{display:grid;grid-template-columns:22px 1fr auto;gap:10px;align-items:center;font-size:.95rem;padding:3px 0;color:var(--t1)}
+.sx-n{color:var(--t2)}
+.sx-o{color:var(--t2);min-width:34px;text-align:right}
+.sx.ss{padding-left:10px;box-shadow:inset 3px 0 0 var(--ssc)}
+.rp-h,.rp{grid-template-columns:44px 1fr auto}
+.rp-h{font-weight:700;color:var(--t1);font-size:.8rem}
+/* Calendar */
+.cal{border-radius:18px;padding:12px 12px 10px;margin-bottom:10px;contain:layout paint style}
+.cal-h{display:flex;justify-content:space-between;align-items:baseline;padding:0 4px 8px}
+.cal-g{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center}
+.cal-w{font-size:.68rem;font-weight:600;color:var(--t4);padding-bottom:2px}
+.cal-d{display:grid;place-items:center;height:34px;width:34px;margin:0 auto;border-radius:50%;font-size:.84rem;color:var(--t2)}
+.cal-d.on{background:var(--blue);color:#fff;font-weight:700}
+.cal-d.now{box-shadow:inset 0 0 0 1.5px var(--blue)}
+.cal-d.on.now{box-shadow:inset 0 0 0 2px rgba(255,255,255,.7)}
+/* Rest timer sheet */
+.wo-clock{margin-right:6px}
+.tm-big{font-size:3.4rem;font-weight:700;text-align:center;margin:6px 0 10px;letter-spacing:-.01em}
+.tm-p{height:6px;margin:0 6px 16px}
+.tm-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.tm-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.tm-grid .btn{height:52px;font-size:1.05rem}
+.tm-grid .btn.on{box-shadow:inset 0 0 0 1.5px var(--blue)}
+.tm-note{text-align:center;line-height:1.5;margin:14px 0 4px}
 .chips.scroll1{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin-left:-18px;margin-right:-18px;padding:0 18px}
 .chips.scroll1::-webkit-scrollbar{display:none}
 .chips.scroll1 .chip{flex:none}

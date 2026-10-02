@@ -63,6 +63,33 @@ function prs(ws) {
   })));
   return pr;
 }
+/* ── Strong's numbers (logic/strong.ts): 1RM, volume, best set, records ── */
+// Weights as the phone writes numbers ("87,5" on a comma-decimal phone) and totals without separators — as Strong shows them.
+const kgf = w => (Math.round((+w || 0) * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2, useGrouping: false });
+const setTxt = (s, u) => ((+s.w || 0) > 0 ? kgf(s.w) + ' ' + u + ' × ' + s.r : s.r + ' reps');
+const sessName = w => w.name || (w.type ? w.type.charAt(0).toUpperCase() + w.type.slice(1) + ' day' : 'Workout');
+let recCache = null, recFor = null;
+/** Records for every session, aligned with view().workouts. */
+function records() {
+  const ws = view().workouts;
+  if (recFor !== ws) { recCache = L.recordsTimeline(ws); recFor = ws; }
+  return recCache;
+}
+const PR_TXT = { '1RM': (h, u) => 'est. 1RM ' + Math.round(h.value) + ' ' + u, Weight: (h, u) => 'heaviest ' + kgf(h.w) + ' ' + u,
+  Volume: (h, u) => 'biggest set ' + kgf(h.w) + ' ' + u + ' × ' + h.r, Reps: h => h.r + ' reps' };
+const prPill = k => `<span class="prb">${icon('trophy', 11)}${k}</span>`;
+let histN = 12;
+/** One History card: name, day, duration · volume · PRs, then "N × exercise | best set" for every exercise. */
+function histCard(w, i, rec) {
+  const u = w.unit || unit();
+  const rows = (w.exercises || []).map(e => { const b = L.bestSet(e.sets);
+    return `<div class="hx hx2"><span>${(e.sets || []).length} × ${esc(e.n)}</span><span class="num">${b ? setTxt(b, u) : ''}</span></div>`; }).join('');
+  return `<button class="card frost hist" data-act="session-sheet" data-i="${i}">
+    <div class="row"><b class="hist-t">${esc(sessName(w))}</b>${w.src === 'phone' ? '<span class="sub">📱</span>' : ''}${w.edited ? '<span class="sub">edited</span>' : ''}</div>
+    <div class="sub">${esc(L.strongDay(w))}</div>
+    <div class="hm">${w.duration ? `<span>${icon('clock', 13)}${L.durShort(w.duration)}</span>` : ''}<span>${icon('dumbbell', 13)}${Math.round(L.workoutVolume(w))} ${u}</span><span>${icon('trophy', 13)}${L.prLabel(rec ? rec.count : 0)}</span></div>
+    <div class="hx hx2 hx-h"><span>Exercise</span><span>Best Set</span></div>${rows}</button>`;
+}
 const fmtDur = secs => { const h = Math.floor(secs / 3600), m = Math.floor(secs % 3600 / 60), s = secs % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0'); };
 const fmtMinS = secs => Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0');
 const defaultName = () => { const h = new Date().getHours(); return h < 11 ? 'Morning Workout' : h < 17 ? 'Afternoon Workout' : 'Evening Workout'; };
@@ -174,32 +201,30 @@ export function renderTrain() {
   const ws = (() => { const [y, m, d] = t.split('-').map(Number), dt = new Date(y, m - 1, d); dt.setDate(dt.getDate() - (dt.getDay() + 6) % 7); return L.dayKey(dt); })();
   const wk = v.workouts.filter(w => w.date >= ws);
   const sets = wk.reduce((a, w) => a + w.exercises.reduce((b, e) => b + e.sets.length, 0), 0);
-  const vol = wk.reduce((a, w) => a + (w.volume || 0), 0);
+  const vol = wk.reduce((a, w) => a + L.workoutVolume(w), 0);
   H += `<div class="sec"><h2>This week</h2><button class="link" data-act="lib-open">Exercises</button></div><div class="stat3">
     <div class="frost"><div class="v num">${wk.length}</div><div class="k">Workouts</div></div>
     <div class="frost"><div class="v num">${sets}</div><div class="k">Sets</div></div>
     <div class="frost"><div class="v num">${vol >= 10000 ? fmt1(vol / 1000) + 'k' : Math.round(vol)}</div><div class="k">Volume · ${unit()}</div></div></div>`;
   if (v.workouts.length) {
-    const b = L.weeklyBuckets(v.workouts.map(w => ({ date: w.ts || w.date, value: w.volume || 0 })), 8);
+    const b = L.weeklyBuckets(v.workouts.map(w => ({ date: w.ts || w.date, value: L.workoutVolume(w) })), 8);
     H += `<section class="card frost" style="margin-top:10px"><div class="card-h"><span class="t">Weekly volume</span><span class="k">last 8 weeks</span></div>
       ${barsSvg(b.map(x => Math.round(x.total)), BLUE, 70, b.map(x => fmtDay(x.week, { day: 'numeric', month: 'short' })))}</section>`;
     const pr = prs(v.workouts), top = Object.keys(pr).sort((a, b) => pr[b].orm - pr[a].orm).slice(0, 6);
     H += `<div class="sec"><h2>Records</h2><span class="sub">est. 1RM</span></div><section class="list frost">` + top.map(n => `
       <button class="li" data-act="ex-hist" data-n="${esc(n)}" style="--c:#ffd60a"><span class="ic">${icon('trophy', 18)}</span><span class="tx"><div class="tt">${esc(n)}</div>
-      <div class="st">${fmt1(pr[n].w)} ${unit()} × ${pr[n].r} · ${fmtDay(pr[n].date, { day: 'numeric', month: 'short' })}</div></span>
+      <div class="st">${setTxt(pr[n], unit())} · ${fmtDay(pr[n].date, { day: 'numeric', month: 'short' })}</div></span>
       <b class="num">${Math.round(pr[n].orm)}</b><span class="chev">${icon('chev', 16)}</span></button>`).join('') + `</section>`;
-    H += `<div class="sec"><h2>History</h2></div><div class="stack">` + v.workouts.slice(-12).reverse().map(w => {
-      const i = v.workouts.indexOf(w);
-      const best = (w.exercises || []).slice(0, 3).map(e => {
-        const b1 = (e.sets || []).reduce((a, s) => (L.e1rm(+s.w || 0, +s.r || 0) > L.e1rm(+a.w || 0, +a.r || 0) ? s : a), { w: 0, r: 0 });
-        return `<div class="hx"><span>${(e.sets || []).length} × ${esc(e.n)}</span><span class="num">${fmt1(b1.w)} × ${b1.r}</span></div>`;
-      }).join('');
-      return `<button class="card frost hist" data-act="session-sheet" data-i="${i}">
-        <div class="row"><b style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(w.name || (w.type ? w.type.charAt(0).toUpperCase() + w.type.slice(1) + ' day' : 'Workout'))}</b>
-          <span class="sub">${fmtDay(w.date, { weekday: 'short', day: 'numeric', month: 'short' })}</span></div>
-        <div class="hm">${w.duration ? `<span>⏱ ${fmtDur(w.duration)}</span>` : ''}<span>🏋 ${Math.round(w.volume || 0).toLocaleString()} ${w.unit || unit()}</span>${w.prCount ? `<span>🏆 ${w.prCount} PR</span>` : ''}${w.src === 'phone' ? '<span>📱</span>' : ''}${w.edited ? '<span>edited</span>' : ''}</div>
-        ${best}${(w.exercises || []).length > 3 ? `<div class="hx sub">+${w.exercises.length - 3} more</div>` : ''}</button>`;
-    }).join('') + `</div>`;
+    // History, as Strong lays it out: month headers, then a card per workout with every exercise and its best set.
+    const rec = records(), order = v.workouts.map((w, i) => i).reverse();
+    let mo = '', hist = '';
+    order.slice(0, histN).forEach(i => {
+      const w = v.workouts[i], m = L.strongMonth(w.date);
+      if (m !== mo) { hist += `<div class="hist-mo">${esc(m)}</div>`; mo = m; }
+      hist += histCard(w, i, rec[i]);
+    });
+    H += `<div class="sec"><h2>History</h2><button class="link" data-act="cal-open">Calendar</button></div><div class="stack">${hist}</div>`
+      + (order.length > histN ? `<button class="btn btn-glass block" style="margin-top:10px" data-act="hist-more">Show ${Math.min(20, order.length - histN)} more</button>` : '');
   } else {
     H += `<div class="card frost empty" style="margin-top:10px">No workouts yet. Your first one sets the baseline every later target is built from.</div>`;
   }
@@ -351,7 +376,7 @@ export function openWorkout() {
   openSheet({
     id: 'workout', full: true, title: W.template ? 'New template' : W.edit ? 'Edit workout' : '',
     left: `<button class="circle sm btn-glass" data-act="sheet-close" aria-label="Minimise">${icon('down', 18)}</button>`
-      + (W.edit || W.template ? '' : `<span class="wo-timer num" data-elapsed></span>`),
+      + (W.edit || W.template ? '' : `<button class="circle sm btn-glass wo-clock" data-act="timer-sheet" aria-label="Rest timer">${icon('timer', 17)}</button><span class="wo-timer num" data-elapsed></span>`),
     right: `<button class="btn sm btn-prominent" style="--accent:${GREEN}" data-act="workout-finish">${W.template ? 'Save' : W.edit ? 'Save' : 'Finish'}</button>`,
     render: () => renderWorkout(),
     onClose: () => changed(),
@@ -365,7 +390,7 @@ function editSession(w) {
   const key = w.id || w.ts; if (!key) { toast('This session has no id to edit by'); return; }
   state.workout = {
     id: 'e' + uid(), start: Date.now(), restEnd: 0, name: w.name || '', notes: w.notes || '',
-    edit: { key, id: w.id || null, date: w.date, ts: w.ts, duration: w.duration || 0, notes: w.notes || '', type: w.type },
+    edit: { key, id: w.id || null, date: w.date, ts: w.ts, duration: w.duration || 0, notes: w.notes || '', type: w.type, src: w.src, start: w.start },
     ex: (w.exercises || []).map(e => ({
       n: e.n, c: e.c, g: e.g, m: e.m || [], e: e.e || 'other', note: e.note || '', ss: e.ss || undefined,
       sets: [...(e.warm || []).map(s => ({ w: String(s.w), r: String(s.r), done: true, warm: true })),
@@ -386,20 +411,21 @@ export function restTick() {
   if (left > 0) {
     if (bar && bar.hidden) { const s = topSheet(); if (s && s.id === 'workout') s.refresh(); }
     document.querySelectorAll('[data-rest]').forEach(el => { el.textContent = fmtMinS(left); });
-    const p = document.querySelector('[data-rest-p]'); if (p && W.restTotal) p.style.width = Math.max(0, Math.min(100, (1 - left / W.restTotal) * 100)) + '%';
+    if (W.restTotal) document.querySelectorAll('[data-rest-p]').forEach(p => { p.style.width = Math.max(0, Math.min(100, (1 - left / W.restTotal) * 100)) + '%'; });
     if (!restTm) restTm = setInterval(restTick, 250);
   } else {
     if (W && W.restEnd) { W.restEnd = 0; changed({ silent: true }); chime(); haptic(); toast('Rest over — ' + nextSetHint().replace('Next: ', '')); }
     if (bar && !bar.hidden) { bar.hidden = true; bar.innerHTML = ''; }
     document.querySelectorAll('[data-rest]').forEach(el => { el.textContent = ''; });
     clearInterval(restTm); restTm = null;
+    const ts = topSheet(); if (ts && ts.id === 'timer') ts.refresh();
   }
 }
 
 /* ── finish ── */
 function buildSession(W) {
   const exOut = [], muscles = {}, labels = {}, setsMap = {}, cats = {};
-  let vol = 0, total = 0;
+  let total = 0;
   W.ex.forEach(e => {
     const ok = s => s.done && s.w !== '' && s.r !== '';
     const done = e.sets.filter(s => ok(s) && !s.warm).map(s => {
@@ -418,13 +444,13 @@ function buildSession(W) {
     (e.m || []).forEach(m => { muscles[m] = true; });
     labels[e.g] = true; setsMap[e.g] = (setsMap[e.g] || 0) + done.length;
     cats[e.c] = (cats[e.c] || 0) + done.length;
-    done.forEach(s => { vol += s.w * s.r; total++; });
+    total += done.length;
   });
   const cnt = {}; exOut.forEach(e => { if (e.ss) cnt[e.ss] = (cnt[e.ss] || 0) + 1; });
   exOut.forEach(e => { if (e.ss && cnt[e.ss] < 2) delete e.ss; });
   const ck = Object.keys(cats);
   return { exOut, total, fields: { type: ck.length === 1 ? ck[0] : 'full', muscles: Object.keys(muscles), labels: Object.keys(labels),
-    sets: setsMap, exercises: exOut, volume: Math.round(vol), unit: unit() } };
+    sets: setsMap, exercises: exOut, volume: Math.round(L.workoutVolume({ date: '', exercises: exOut })), unit: unit() } };
 }
 /** Apple Health through a Shortcut named "ARK Workout" (web apps cannot write to HealthKit themselves). */
 function healthUrl(s) {
@@ -437,20 +463,19 @@ function finish() {
   if (W.template) { routineSheet(W.ex, W.name && W.name !== defaultName() ? W.name : '', true); return; }
   const { exOut, total, fields } = buildSession(W);
   if (!exOut.length) { toast(W.edit ? 'Keep at least one ticked working set — or delete the session instead' : 'Tick at least one set first'); return; }
+  // Records against everything before this workout, frozen onto the sets that set them (as Strong keeps its badges).
   const others = W.edit ? v.workouts.filter(w => (w.id || w.ts) !== W.edit.key && w.date <= W.edit.date) : v.workouts;
-  const prev = prs(others), hits = [];
-  exOut.forEach(e => {
-    let bw = 0, bo = 0; e.sets.forEach(s => { bw = Math.max(bw, s.w); bo = Math.max(bo, L.e1rm(s.w, s.r)); });
-    const p = prev[e.n];
-    if (p && bw > p.w + 0.01) hits.push(e.n + ' — ' + fmt1(bw) + ' ' + unit());
-    else if (p && bo > p.orm + 0.01) hits.push(e.n + ' — est. 1RM ' + Math.round(bo));
-  });
+  const R = L.recordsFor(others, { date: W.edit ? W.edit.date : today(), exercises: exOut });
+  exOut.forEach((e, x) => e.sets.forEach((s, i) => { const m = R.marks[x][i]; if (m.length) s.pr = m; else delete s.pr; }));
+  const hits = R.hits;
   const name = (W.name || '').trim();
   if (W.edit) {
     const E = W.edit;
-    const session = { ...fields, date: E.date, ts: E.ts, duration: E.duration, notes: (W.notes || '').trim(), prCount: hits.length };
+    const session = { ...fields, date: E.date, ts: E.ts, duration: E.duration, notes: (W.notes || '').trim(), prCount: R.count };
     if (name) session.name = name;
     if (E.id) session.id = E.id;
+    if (E.src) session.src = E.src;
+    if (E.start) session.start = E.start;
     state.workout = null; closeSheet(topSheet());
     emit('workout.set', { key: E.key, session });
     haptic(); toast('Changes saved · ' + fmtDay(E.date, { day: 'numeric', month: 'short' }));
@@ -458,22 +483,24 @@ function finish() {
   }
   const session = {
     id: W.id, date: today(), ts: new Date().toISOString(), ...fields, name: name || defaultName(),
-    duration: Math.floor((Date.now() - W.start) / 1000), prCount: hits.length, notes: (W.notes || '').trim(), src: 'phone',
+    duration: Math.floor((Date.now() - W.start) / 1000), prCount: R.count, notes: (W.notes || '').trim(), src: 'phone',
   };
   state.workout = null;
   closeSheet(topSheet());
   emit('workout.add', { session });
   haptic();
-  const nth = v.workouts.length + 1;
+  const nth = v.workouts.length + 1, u = unit();
   openSheet({
     id: 'summary', title: '',
-    render: () => `<div style="text-align:center;margin:0 0 18px"><div style="font-size:3.2rem;line-height:1">${hits.length ? '🏆' : '💪'}</div>
+    render: () => `<div style="text-align:center;margin:0 0 16px"><div style="font-size:3.2rem;line-height:1">${hits.length ? '🏆' : '💪'}</div>
         <h2 style="margin:8px 0 2px;font-size:1.5rem">Congratulations!</h2>
-        <div class="sub">That's your ${nth}${[, 'st', 'nd', 'rd'][nth % 100 > 10 && nth % 100 < 14 ? 0 : nth % 10] || 'th'} workout · ${esc(session.name)}</div></div>
-      <div class="stat3"><div class="frost"><div class="v num">${fmtDur(session.duration)}</div><div class="k">Duration</div></div>
-        <div class="frost"><div class="v num">${session.volume.toLocaleString()}</div><div class="k">Volume · ${unit()}</div></div>
-        <div class="frost"><div class="v num">${total}</div><div class="k">Sets</div></div></div>
-      ${hits.length ? `<div class="sec"><h2>New records</h2></div><section class="list frost">${hits.map(h => `<div class="li" style="--c:#ffd60a"><span class="ic">${icon('trophy', 18)}</span><span class="tx"><div class="tt">${esc(h)}</div></span></div>`).join('')}</section>` : ''}
+        <div class="sub">That's your ${nth}${[, 'st', 'nd', 'rd'][nth % 100 > 10 && nth % 100 < 14 ? 0 : nth % 10] || 'th'} workout!</div></div>
+      <section class="card frost hist" style="pointer-events:none"><b class="hist-t">${esc(session.name)}</b>
+        <div class="sub">${esc(L.strongDay(session))}</div>
+        <div class="hm"><span>${icon('clock', 13)}${L.durShort(session.duration)}</span><span>${icon('dumbbell', 13)}${session.volume} ${u}</span><span>${icon('trophy', 13)}${L.prLabel(R.count)}</span></div>
+        <div class="hx hx2 hx-h"><span>Exercise</span><span>Best Set</span></div>
+        ${session.exercises.map(e => { const b = L.bestSet(e.sets); return `<div class="hx hx2"><span>${e.sets.length} × ${esc(e.n)}</span><span class="num">${b ? setTxt(b, u) : ''}</span></div>`; }).join('')}</section>
+      ${hits.length ? `<div class="sec"><h2>New records</h2><span class="sub">${total} sets</span></div><section class="list frost">${hits.map(h => `<div class="li" style="--c:#ffd60a"><span class="ic">${icon('trophy', 18)}</span><span class="tx"><div class="tt">${esc(h.n)}</div><div class="st">${h.kind} · ${esc(PR_TXT[h.kind](h, u))}</div></span></div>`).join('')}</section>` : ''}
       <a class="btn btn-glass block" style="margin-top:18px;text-decoration:none" href="${esc(healthUrl(session))}">${icon('heart', 17)} Save to Apple Health</a>
       <p class="sub" style="text-align:center;margin:8px 0 16px;line-height:1.45">Runs your "ARK Workout" shortcut — set it up once in Settings › Siri &amp; Apple Watch.</p>
       <button class="btn btn-prominent block" style="--accent:${BLUE}" data-act="sheet-close">Done</button>`,
@@ -548,7 +575,7 @@ function exHistSheet(name) {
     render: () => {
       const v = view(), lib = L.findExercise(name), lo = L.loadingOf({ n: name, m: (lib || {}).m });
       const pts = L.exerciseHistory(v.workouts.map(w => ({ ...w, exercises: (w.exercises || []).map(e => L.sameExercise(e.n, name) ? { ...e, n: name } : e) })), name);
-      let H = `<div class="seg" style="margin-bottom:14px">${[['about', 'About'], ['history', 'History'], ['charts', 'Charts']].map(([k, l]) =>
+      let H = `<div class="seg" style="margin-bottom:14px">${[['about', 'About'], ['history', 'History'], ['charts', 'Charts'], ['records', 'Records']].map(([k, l]) =>
         `<button class="${seg === k ? 'on' : ''}" data-act="exh-seg" data-seg="${k}">${l}</button>`).join('')}</div>`;
       if (seg === 'about') {
         const mus = Object.entries(lo.load).sort((a, b) => b[1] - a[1]);
@@ -565,7 +592,21 @@ function exHistSheet(name) {
         const rows = v.workouts.filter(w => (w.exercises || []).some(e => L.sameExercise(e.n, name))).slice(-20).reverse();
         H += `<div class="stack">${rows.map(w => { const e = w.exercises.find(x => L.sameExercise(x.n, name));
           return `<section class="card frost tight"><div class="row"><b style="flex:1">${esc(w.name || fmtDay(w.date, { weekday: 'long' }))}</b><span class="sub">${fmtDay(w.date, { day: 'numeric', month: 'short', year: '2-digit' })}</span></div>
-            ${e.sets.map((st, i) => `<div class="hx"><span>${i + 1}</span><span class="num">${fmt1(st.w)} ${unit()} × ${st.r}${st.rpe ? ' @' + st.rpe : ''}</span><span class="num sub">${Math.round(L.e1rm(+st.w || 0, +st.r || 0))}</span></div>`).join('')}</section>`; }).join('')}</div>`;
+            ${e.sets.map((st, i) => { const o = L.e1rm(+st.w || 0, +st.r || 0); return `<div class="hx"><span>${i + 1}</span><span class="num">${setTxt(st, unit())}${st.rpe ? ' @' + st.rpe : ''}</span><span class="num sub">${o ? Math.round(o) : ''}</span></div>`; }).join('')}</section>`; }).join('')}</div>`;
+      } else if (seg === 'records') {
+        // Strong's Records: personal records, then the heaviest set at each rep count beside what your best 1RM predicts.
+        const R = L.exerciseRecords(v.workouts.map(w => ({ ...w, exercises: (w.exercises || []).map(e => L.sameExercise(e.n, name) ? { ...e, n: name } : e) })), name);
+        const u = unit(), when = d => fmtDay(d, { day: 'numeric', month: 'short', year: 'numeric' });
+        const row = (k, val, d) => `<div class="li"><span class="tx"><div class="tt">${k}</div><div class="st">${when(d)}</div></span><b class="num">${val}</b></div>`;
+        H += `<div class="eyebrow" style="margin-bottom:6px">Personal records</div><section class="list frost">
+          ${R.orm ? row('Estimated 1RM', Math.round(R.orm.v) + ' ' + u, R.orm.date) : ''}
+          ${R.weight ? row('Max weight', setTxt({ w: R.weight.v, r: R.weight.r }, u), R.weight.date) : ''}
+          ${R.volume ? row('Max volume', Math.round(R.volume.v) + ' ' + u + ' <small class="sub">(' + setTxt(R.volume, u) + ')</small>', R.volume.date) : ''}
+          ${R.reps ? row('Max reps', R.reps.v + ' reps', R.reps.date) : ''}</section>`;
+        if (R.orm) H += `<div class="eyebrow" style="margin:14px 0 6px">Best performance</div><section class="card frost tight">
+          <div class="hx rp-h"><span>Reps</span><span>Best performance</span><span>Predicted</span></div>
+          ${R.table.map(t => `<div class="hx rp"><span class="num">${t.r}</span><span class="num">${t.best ? kgf(t.best.w) + ' ' + u + ' <small class="sub">' + fmtDay(t.best.date, { day: 'numeric', month: 'short' }) + '</small>' : '<span class="sub">—</span>'}</span><span class="num sub">${kgf(t.predicted)} ${u}</span></div>`).join('')}</section>
+          <p class="sub" style="line-height:1.5;margin-top:10px">Predicted = your best estimated 1RM run backwards (Brzycki to 10 reps, Epley above — Strong's formula).</p>`;
       } else {
         const best = pts.reduce((a, p) => (p.e1rm > a.e1rm ? p : a), pts[0]);
         const top = pts.reduce((a, p) => Math.max(a, p.top), 0);
@@ -583,30 +624,63 @@ function exHistSheet(name) {
   s.seg = v => { seg = v; s.refresh(); };
 }
 
+/** A past workout, laid out like Strong's: "15:33, Friday, Oct 2 2026", duration · volume · PRs, then each set with its 1RM and badges. */
 function sessionSheet(i) {
   const w0 = view().workouts[i]; if (!w0) return;
   const key = w0.id || w0.ts;
   openSheet({
-    id: 'session', title: w0.name || fmtDay(w0.date, { weekday: 'long', day: 'numeric', month: 'short' }),
+    id: 'session', title: sessName(w0),
+    left: `<button class="circle sm btn-glass" data-act="sheet-close" aria-label="Close">${icon('x', 16)}</button>`,
+    right: key ? `<button class="link sess-edit" data-act="session-edit" data-key="${esc(key)}">Edit</button>` : null,
     render: () => {
-      const w = view().workouts.find(x => (x.id || x.ts) === key);
+      const ws = view().workouts, idx = ws.findIndex(x => (x.id || x.ts) === key), w = ws[idx];
       if (!w) return `<div class="empty">This session has been deleted.</div>`;
-      return `<div class="sub" style="text-align:center;margin:-6px 0 12px">${fmtDay(w.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>
-      <div class="stat3" style="margin-bottom:14px"><div class="frost"><div class="v num">${w.duration ? fmtDur(w.duration) : '—'}</div><div class="k">Duration</div></div>
-      <div class="frost"><div class="v num">${Math.round(w.volume).toLocaleString()}</div><div class="k">Volume · ${w.unit || unit()}</div></div>
-      <div class="frost"><div class="v num">${w.exercises.reduce((a, e) => a + e.sets.length, 0)}</div><div class="k">Sets</div></div></div>
-      <div class="stack">${w.exercises.map(e => `<section class="card frost tight${e.ss ? ' ss' : ''}"${e.ss ? ` style="--ssc:${ssColor(e.ss)}"` : ''}>
-        <div class="row"><button class="ex-name blue" style="flex:1" data-act="ex-hist" data-n="${esc(e.n)}"><b>${esc(e.n)}</b></button>
-          ${e.ss ? `<span class="tag" style="--c:${ssColor(e.ss)}">Superset ${esc(e.ss)}</span>` : ''}</div>
-        ${(e.warm || []).map(s => `<div class="hx"><span style="color:var(--orange)">W</span><span class="num">${fmt1(s.w)} × ${s.r}</span><span></span></div>`).join('')}
-        ${e.sets.map((s, j) => `<div class="hx"><span>${s.type === 'd' ? 'D' : s.type === 'f' ? 'F' : j + 1}</span><span class="num">${fmt1(s.w)} ${w.unit || unit()} × ${s.r}${s.rpe ? ' @' + s.rpe : ''}</span><span class="num sub">${Math.round(L.e1rm(+s.w || 0, +s.r || 0))}</span></div>`).join('')}
+      const u = w.unit || unit(), rec = records()[idx] || { count: 0, marks: [] };
+      return `<div class="sub sess-stamp">${esc(L.strongStamp(w))}</div>
+      <div class="hm sess-hm">${w.duration ? `<span>${icon('clock', 15)}${L.durShort(w.duration)}</span>` : ''}<span>${icon('dumbbell', 15)}${Math.round(L.workoutVolume(w))} ${u}</span><span>${icon('trophy', 15)}${L.prLabel(rec.count)}</span></div>
+      <div class="sess-ex">${w.exercises.map((e, x) => `<section class="sx${e.ss ? ' ss' : ''}"${e.ss ? ` style="--ssc:${ssColor(e.ss)}"` : ''}>
+        <div class="sx-h"><button class="ex-name" data-act="ex-hist" data-n="${esc(e.n)}"><b>${esc(e.n)}</b></button>
+          ${e.ss ? `<span class="tag" style="--c:${ssColor(e.ss)}">Superset ${esc(e.ss)}</span>` : ''}<b class="sx-k">1RM</b></div>
+        ${(e.warm || []).map(s => `<div class="sx-r"><span class="sx-n" style="color:var(--orange)">W</span><span class="num">${setTxt(s, u)}</span><span></span></div>`).join('')}
+        ${e.sets.map((s, j) => { const o = L.e1rm(+s.w || 0, +s.r || 0), m = ((rec.marks || [])[x] || [])[j] || [];
+          return `<div class="sx-r"><span class="sx-n">${s.type === 'd' ? 'D' : s.type === 'f' ? 'F' : j + 1}</span><span class="num">${setTxt(s, u)}${s.rpe ? ' @' + s.rpe : ''}${m.map(prPill).join('')}</span><span class="num sx-o">${o ? Math.round(o) : ''}</span></div>`; }).join('')}
         ${e.note ? `<div class="sub" style="margin-top:6px;display:flex;gap:6px;align-items:center">${icon('note', 13)}<span>${esc(e.note)}</span></div>` : ''}</section>`).join('')}</div>
       ${w.notes ? `<p class="sub" style="margin-top:14px">${esc(w.notes)}</p>` : ''}
-      ${key ? `<div class="row" style="gap:10px;margin-top:18px">
-        <button class="btn btn-glass" style="flex:1" data-act="session-edit" data-key="${esc(key)}">${icon('pencil', 16)} Edit</button>
-        <button class="btn btn-glass" style="flex:1" data-act="routine-from-session" data-key="${esc(key)}">Save as template</button></div>
+      ${key ? `<button class="btn btn-glass block" style="margin-top:18px" data-act="routine-from-session" data-key="${esc(key)}">Save as template</button>
         <a class="btn btn-glass block" style="margin-top:10px;text-decoration:none" href="${esc(healthUrl({ ...w, ts: w.ts || new Date().toISOString() }))}">${icon('heart', 16)} Save to Apple Health</a>
         <button class="btn btn-danger block" style="margin-top:10px" data-act="session-del" data-key="${esc(key)}">${icon('trash', 16)} Delete session</button>` : ''}`;
+    },
+  });
+}
+
+/* ── Calendar: every month you trained, workout days filled in (Strong's History › Calendar) ── */
+function calendarSheet() {
+  openSheet({
+    id: 'calendar', title: 'Calendar',
+    render: () => {
+      const ws = view().workouts, t = today();
+      if (!ws.length) return '<div class="empty">No workouts yet.</div>';
+      const byDay = {}; ws.forEach((w, i) => { (byDay[w.date] = byDay[w.date] || []).push(i); });
+      const first = ws.reduce((a, w) => (w.date < a ? w.date : a), t);
+      let [y, m] = t.split('-').map(Number);
+      const [y0, m0] = first.split('-').map(Number);
+      const yearN = ws.filter(w => w.date.slice(0, 4) === t.slice(0, 4)).length;
+      let H = `<div class="sub" style="text-align:center;margin:-4px 0 12px">${yearN} workout${yearN === 1 ? '' : 's'} in ${t.slice(0, 4)} · ${ws.length} in all</div>`;
+      for (let n = 0; n < 36 && (y > y0 || (y === y0 && m >= m0)); n++) {
+        const days = new Date(y, m, 0).getDate(), lead = (new Date(y, m - 1, 1).getDay() + 6) % 7;
+        const pre = y + '-' + String(m).padStart(2, '0') + '-';
+        const cnt = Object.keys(byDay).filter(k => k.startsWith(pre)).reduce((a, k) => a + byDay[k].length, 0);
+        H += `<section class="cal frost"><div class="cal-h"><b>${new Date(y, m - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</b><span class="sub">${cnt ? cnt + ' workout' + (cnt === 1 ? '' : 's') : ''}</span></div>
+          <div class="cal-g">${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map(d => `<span class="cal-w">${d}</span>`).join('')}${'<span></span>'.repeat(lead)}`;
+        for (let d = 1; d <= days; d++) {
+          const k = pre + String(d).padStart(2, '0'), hit = byDay[k];
+          H += hit ? `<button class="cal-d on${k === t ? ' now' : ''}" data-act="session-sheet" data-i="${hit[hit.length - 1]}" aria-label="${esc(sessName(ws[hit[hit.length - 1]]))}, ${esc(fmtDay(k, { weekday: 'long', day: 'numeric', month: 'long' }))}">${d}</button>`
+            : `<span class="cal-d${k === t ? ' now' : ''}">${d}</span>`;
+        }
+        H += '</div></section>';
+        if (--m < 1) { m = 12; y--; }
+      }
+      return H;
     },
   });
 }
@@ -739,6 +813,33 @@ function routineSheet(exList, suggested, templateMode = false) {
 }
 
 /* ══════════════ actions ══════════════ */
+/* ── Strong's rest timer: the clock in the workout header — pick a length, or adjust the running one ── */
+const TIMER_PRESETS = [30, 60, 90, 120, 150, 180, 240, 300];
+function timerSheet() {
+  openSheet({
+    id: 'timer', title: 'Rest Timer',
+    render: () => {
+      const W = state.workout; if (!W) return '<div class="empty">No workout in progress.</div>';
+      const left = W.restEnd ? Math.max(0, Math.ceil((W.restEnd - Date.now()) / 1000)) : 0;
+      const lock = state.push && state.push.on
+        ? 'With the phone locked, your PC sends “Rest over” when it ends — while ARK on the PC is running.'
+        : 'Turn on Notifications (More) to get “Rest over” on the lock screen — your PC sends it.';
+      if (left) {
+        const pct = W.restTotal ? Math.max(0, Math.min(100, (1 - left / W.restTotal) * 100)) : 0;
+        return `<div class="tm-big num" data-rest>${fmtMinS(left)}</div><div class="rb-p tm-p"><i data-rest-p style="width:${pct}%"></i></div>
+          <div class="tm-row"><button class="btn btn-glass" data-act="rest-adj" data-d="-15">−15s</button><button class="btn btn-glass" data-act="rest-adj" data-d="15">+15s</button>
+            <button class="btn btn-tint" style="--accent:#ff453a" data-act="timer-skip">Skip</button></div>
+          <p class="sub tm-note">${lock}</p>`;
+      }
+      const last = state.settings.lastTimer || 0;
+      return `<p class="sub tm-note" style="margin-top:0">Choose a duration. Rest also starts by itself after every set you tick.</p>
+        <div class="tm-grid">${TIMER_PRESETS.map(t => `<button class="btn btn-glass${t === last ? ' on' : ''}" data-act="timer-start" data-s="${t}"><span class="num">${fmtMinS(t)}</span></button>`).join('')}</div>
+        <p class="sub tm-note">${lock}</p>`;
+    },
+  });
+}
+const refreshTimer = () => { const t = topSheet(); if (t && t.id === 'timer') t.refresh(); };
+
 export const actions = {
   'start-empty'() { startWith([]); if (state.workout && !state.workout.ex.length) openPicker(); },
   'tpl-new'() { startWith([], { template: true, name: '' }); if (state.workout && !state.workout.ex.length) openPicker(); },
@@ -929,6 +1030,16 @@ export const actions = {
     state.workout = null; closeSheet(topSheet()); actions['rest-skip'](); changed({ now: true });
   },
   'session-sheet'(d) { sessionSheet(Number(d.i)); },
+  'cal-open'() { calendarSheet(); },
+  'hist-more'() { histN += 20; changed(); },
+  'timer-sheet'() { unlockAudio(); timerSheet(); },
+  'timer-start'(d) {
+    unlockAudio();
+    const W = state.workout, sec = Number(d.s); if (!W || !(sec > 0)) return;
+    W.restEnd = Date.now() + sec * 1000; W.restTotal = sec; state.settings.lastTimer = sec;
+    haptic(); changed({ now: true }); restTick(); refreshTimer();
+  },
+  'timer-skip'() { actions['rest-skip'](); refreshTimer(); },
 };
 /** Typing into a set, the name or the notes updates state without redrawing (keeps focus and the keyboard). */
 export function onSetInput(el) {

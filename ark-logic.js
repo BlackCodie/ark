@@ -509,9 +509,9 @@ const ROWS = [
     ['Decline Bench Press (Dumbbell)', 'dumbbell', 'dpress'],
     ['Chest Press (Machine)', 'machine', 'hpress', { pec: 0.55, cuff: 0.2 }, ['Machine Chest Press', 'Chest Press']],
     ['Incline Chest Press (Machine)', 'machine', 'ipress', { pec: 0.45 }],
-    ['Chest Fly (Dumbbell)', 'dumbbell', 'fly', undefined, ['Chest Fly', 'Dumbbell Fly', 'Dumbbell Flyes']],
+    ['Chest Fly (Dumbbell)', 'dumbbell', 'fly', undefined, ['Dumbbell Fly', 'Dumbbell Flyes']],
     ['Incline Chest Fly (Dumbbell)', 'dumbbell', 'fly', { deltoids: 0.45 }],
-    ['Chest Fly (Machine)', 'machine', 'fly', { pec: 0.45 }, ['Pec Deck', 'Pec Deck Fly', 'Machine Fly']],
+    ['Chest Fly (Machine)', 'machine', 'fly', { pec: 0.45 }, ['Chest Fly', 'Pec Deck', 'Pec Deck Fly', 'Machine Fly']],
     ['Cable Crossover', 'cable', 'fly', { pec: 0.5 }, ['Cable Fly', 'Cable Chest Fly']],
     ['Low-to-High Cable Fly', 'cable', 'fly', { deltoids: 0.45, pec: 0.4 }],
     ['High-to-Low Cable Fly', 'cable', 'fly', { pec: 0.45 }],
@@ -531,7 +531,7 @@ const ROWS = [
     ['Bent Over Row (Dumbbell)', 'dumbbell', 'srow', { 'lower-back': 0.2, lumbar: 0.2 }, ['Dumbbell Row', 'One-Arm Dumbbell Row', 'Single Arm Dumbbell Row']],
     ['Kroc Row (Dumbbell)', 'dumbbell', 'srow', { forearm: 0.6, elbow: 0.45 }],
     ['Seated Cable Row', 'cable', 'srow', undefined, ['Cable Row', 'Seated Row']],
-    ['Seated Row (Machine)', 'machine', 'srow'],
+    ['Seated Row (Machine)', 'machine', 'srow', undefined, ['Seated Row Plated', 'Plate-Loaded Seated Row']],
     ['T-Bar Row', 'machine', 'row', { lumbar: 0.35 }, ['T Bar Row']],
     ['Chest-Supported Row (Dumbbell)', 'dumbbell', 'srow'],
     ['Chest-Supported Row (Machine)', 'machine', 'srow'],
@@ -546,7 +546,7 @@ const ROWS = [
     ['Chin Up (Weighted)', 'plate', 'vpull', { biceps: 0.85, biceps_t: 0.65 }],
     ['Lat Pulldown (Cable)', 'cable', 'vpull', { elbow: 0.3 }, ['Lat Pulldown', 'Lat Pull Down', 'Wide-Grip Lat Pulldown']],
     ['Lat Pulldown - Close Grip (Cable)', 'cable', 'vpull', { biceps: 0.7 }],
-    ['Lat Pulldown (Machine)', 'machine', 'vpull', { elbow: 0.3 }],
+    ['Lat Pulldown (Machine)', 'machine', 'vpull', { elbow: 0.3 }, ['Lat Pulldown Plated', 'Plate-Loaded Lat Pulldown']],
     ['Single-Arm Lat Pulldown (Cable)', 'cable', 'vpull'],
     ['Straight-Arm Pulldown (Cable)', 'cable', 'pullover', { chest: 0.2 }, ['Straight Arm Pulldown']],
     ['Pullover (Dumbbell)', 'dumbbell', 'pullover'],
@@ -612,7 +612,7 @@ const ROWS = [
     ['Bayesian Curl (Cable)', 'cable', 'curl', { biceps_t: 0.7 }],
     ['Reverse Curl (EZ Bar)', 'ez', 'hammer', { forearm: 1, elbow: 0.6 }, ['Reverse Curl', 'Reverse Barbell Curl']],
     ['Drag Curl (Barbell)', 'barbell', 'curl'],
-    ['Triceps Pushdown (Cable)', 'cable', 'triext', undefined, ['Triceps Pushdown', 'Tricep Pushdown', 'Cable Pushdown']],
+    ['Triceps Pushdown (Cable)', 'cable', 'triext', undefined, ['Triceps Pushdown', 'Tricep Pushdown', 'Cable Pushdown', 'Tricep Pushdown Triangle', 'Triceps Pushdown - V-Bar']],
     ['Triceps Pushdown - Rope (Cable)', 'cable', 'triext', undefined, ['Rope Pushdown', 'Tricep Rope Pushdown']],
     ['Overhead Triceps Extension (Cable)', 'cable', 'ohtri', undefined, ['Cable Overhead Triceps Extension']],
     ['Overhead Triceps Extension (Dumbbell)', 'dumbbell', 'ohtri', undefined, ['Overhead Triceps Extension', 'Overhead Tricep Extension']],
@@ -925,11 +925,22 @@ function cleanExperiment(x, ts) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.fatigueRadar = fatigueRadar;
+/**
+ * FATIGUE RADAR — several independent signals, read together.
+ *
+ * No single marker says "overreached": HRV dips after one bad night, RPE is noisy, a lift can stall for a
+ * dozen reasons. What the monitoring literature does support is CONVERGENCE — HRV below your normal
+ * (Plews 2013), resting HR above it, performance down at the same loads, effort up at the same loads
+ * (session RPE, Foster 2001), short sleep and a load spike (acute:chronic, Gabbett 2016). The radar counts
+ * which of those are firing against your own history and only recommends a deload when several agree and
+ * at least one is physiological. A signal with no data is "not measured" — never counted as fine.
+ */
+const strong_1 = require("./strong");
 const back = (k, n) => { const [y, m, d] = k.split('-').map(Number); const t = new Date(y, m - 1, d - n); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); };
 const mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
 const median = (a) => { const v = a.slice().sort((x, y) => x - y), m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
 const r1 = (x) => Math.round(x * 10) / 10;
-const e1 = (w, r) => w * (1 + r / 30);
+const e1 = (w, r) => (0, strong_1.e1rm)(w, r);
 function series(inp, field, from, to) {
     const out = [];
     for (let i = from; i <= to; i++) {
@@ -1158,6 +1169,7 @@ exports.parseHealthHash = parseHealthHash;
  * per-exercise history, and the Apple Health import mapping.
  */
 const dates_1 = require("./dates");
+const strong_1 = require("./strong");
 exports.DEFAULT_PLATES = [25, 20, 15, 10, 5, 2.5, 1.25];
 /**
  * Plates per side for a barbell target. Greedy from the heaviest plate is exact
@@ -1239,7 +1251,7 @@ function deloadAdvice(sessions, name, round = w => Math.round(w * 2) / 2) {
     const rpes = last3.map(rpeOf);
     if (rpes.some(r => r === null || r < 9))
         return { deload: false };
-    const e1 = (sets) => Math.max(...sets.map(s => (Number(s.w) || 0) * (1 + (Number(s.r) || 0) / 30)));
+    const e1 = (sets) => Math.max(...sets.map(s => (0, strong_1.e1rm)(Number(s.w) || 0, Number(s.r) || 0)));
     const latest = e1(last3[2]), before = Math.max(...rows.slice(0, -1).map(s => e1((s.exercises || []).find(e => e.n === name).sets)));
     if (latest > before + 0.01)
         return { deload: false };
@@ -1271,7 +1283,7 @@ function exerciseHistory(sessions, name) {
         e.sets.forEach(st => {
             const w = Number(st.w) || 0, r = Number(st.r) || 0;
             top = Math.max(top, w);
-            best = Math.max(best, w * (1 + r / 30));
+            best = Math.max(best, (0, strong_1.e1rm)(w, r));
             vol += w * r;
         });
         out.push({ date: s.date, top, e1rm: Math.round(best * 10) / 10, sets: e.sets.length, volume: Math.round(vol) });
@@ -1795,6 +1807,7 @@ __exportStar(require("./whatif"), exports);
 __exportStar(require("./fuel"), exports);
 __exportStar(require("./lymph"), exports);
 __exportStar(require("./sanitize"), exports);
+__exportStar(require("./strong"), exports);
 
   },
   "./lymph": function (exports, module, require) {
@@ -3302,6 +3315,7 @@ exports.muscleStory = muscleStory;
  * best estimated 1RM on the lifts that train it, and the injuries that overlapped.
  */
 const exercises_1 = require("./exercises");
+const strong_1 = require("./strong");
 const tissue_1 = require("./tissue");
 const EQUIV = { barbell: 1, smith: 1.05, ez: 0.95, trap: 1.08, machine: 1, cable: 0.75, dumbbell: 0.42, kettlebell: 0.42, plate: 0.4 };
 const BW_SHARE = { vpull: 1, dip: 1, pushup: 0.64 };
@@ -3332,7 +3346,7 @@ function setE1(exName, s, bw) {
     if (share !== undefined && !(bw > 0))
         return null; // a bodyweight lift needs the body weight — never guessed
     const load = share !== undefined ? bw * share + w : w / ((_a = EQUIV[ex.e]) !== null && _a !== void 0 ? _a : 1);
-    return load > 0 ? { p: ex.p, v: load * (1 + r / 30) } : null;
+    return load > 0 ? { p: ex.p, v: (0, strong_1.e1rm)(load, r) } : null;
 }
 function dungeons(sessions, bw, sex) {
     if (!bw || bw < 30)
@@ -3394,7 +3408,7 @@ function muscleStory(sessions, slug, today, injuries = [], weeks = 13, bw = null
                     return;
                 W[i].sets += share * (st.rpe != null && Number(st.rpe) < 6 ? 0.5 : 1);
                 if (e.n === liftName && Number(st.w) > 0)
-                    W[i].best = Math.max(W[i].best || 0, Math.round(Number(st.w) * (1 + Number(st.r) / 30)));
+                    W[i].best = Math.max(W[i].best || 0, Math.round((0, strong_1.e1rm)(Number(st.w), Number(st.r))));
             });
         });
     });
@@ -3977,6 +3991,7 @@ exports.weekStartOf = weekStartOf;
 exports.weeklyReview = weeklyReview;
 exports.reviewHeadline = reviewHeadline;
 const sanitize_1 = require("./sanitize");
+const strong_1 = require("./strong");
 /**
  * The weekly review — one week of what actually happened, next to the week
  * before. Every figure comes from a record; a part with nothing logged is
@@ -3991,7 +4006,7 @@ function weekStartOf(day) {
     return (0, series_1.shiftDayKey)(day, -dow);
 }
 const inRange = (k, a, b) => k >= a && k <= b;
-const e1 = (w, r) => (Number(w) || 0) * (1 + (Number(r) || 0) / 30);
+const e1 = (w, r) => (0, strong_1.e1rm)(Number(w) || 0, Number(r) || 0);
 const round1 = (x) => Math.round(x * 10) / 10;
 /** Review of the week starting `start` (a Monday), counting only days up to `today`. */
 function weeklyReview(inp0, start, today) {
@@ -4594,6 +4609,261 @@ function muscleFill(mode, m, last, vol30, peak, now, isActive = false, zone) {
 }
 
   },
+  "./strong": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.prLabel = exports.isImported = void 0;
+exports.e1rm = e1rm;
+exports.isDumbbell = isDumbbell;
+exports.exerciseVolume = exerciseVolume;
+exports.workoutVolume = workoutVolume;
+exports.bestSet = bestSet;
+exports.recordsTimeline = recordsTimeline;
+exports.recordsFor = recordsFor;
+exports.weightFor = weightFor;
+exports.exerciseRecords = exerciseRecords;
+exports.durShort = durShort;
+exports.sessionStart = sessionStart;
+exports.strongStamp = strongStamp;
+exports.strongDay = strongDay;
+exports.strongMonth = strongMonth;
+/**
+ * Strong's training numbers, so ARK's workout screens read exactly like the app
+ * the history came from. Every rule here was checked against real Strong
+ * screenshots (tests/strong.test.ts):
+ *
+ *  - estimated 1RM: Brzycki up to 10 reps, Epley above 10 (both give the same
+ *    number at 10 reps, and the weight itself at 1 rep);
+ *  - volume: Σ weight × reps, dumbbell weights counted twice (one per hand);
+ *  - best set: the heaviest weight, then the most reps;
+ *  - records: est. 1RM, heaviest weight and the biggest single set (weight ×
+ *    reps); bodyweight work: most reps. A first-ever session has nothing to beat,
+ *    so it holds no records.
+ */
+const exercises_1 = require("./exercises");
+const num = (v) => { const n = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v); return isFinite(n) ? n : 0; };
+/** Strong's estimated one-rep max: Brzycki to 10 reps, Epley above. 0 when there is nothing to estimate. */
+function e1rm(w, r) {
+    w = num(w);
+    r = num(r);
+    if (!(w > 0) || !(r > 0))
+        return 0;
+    return r <= 10 ? w * 36 / (37 - r) : w * (1 + r / 30);
+}
+/** Dumbbell work counts both hands. The logged equipment wins; the library decides when none was logged. */
+function isDumbbell(ex) {
+    if (ex.e && ex.e !== 'other')
+        return ex.e === 'dumbbell';
+    const lib = (0, exercises_1.findExercise)(ex.n);
+    if (lib)
+        return lib.e === 'dumbbell';
+    return /\bdumbbells?\b|\(db\)/i.test(ex.n || '');
+}
+/** Sessions copied in from Strong keep Strong's own totals (some screenshots were cut off). */
+const isImported = (s) => s.src === 'strong' || /^Imported\b/.test(String(s.notes || ''));
+exports.isImported = isImported;
+function exerciseVolume(ex) {
+    const k = isDumbbell(ex) ? 2 : 1;
+    return (ex.sets || []).reduce((a, s) => a + Math.max(0, num(s.w)) * Math.max(0, num(s.r)) * k, 0);
+}
+/** Strong's session volume. Warm-ups live apart (ex.warm) and never count. */
+function workoutVolume(s) {
+    if ((0, exports.isImported)(s) && num(s.volume) > 0)
+        return Math.round(num(s.volume));
+    if (!Array.isArray(s.exercises) || !s.exercises.length)
+        return Math.round(num(s.volume));
+    return Math.round(s.exercises.reduce((a, e) => a + exerciseVolume(e), 0) * 10) / 10;
+}
+/** Strong's "Best Set": heaviest weight, then most reps. Bodyweight sets compare by reps. */
+function bestSet(sets) {
+    let best = null;
+    (sets || []).forEach(s => {
+        const w = Math.max(0, num(s.w)), r = Math.max(0, num(s.r));
+        if (!(r > 0))
+            return;
+        if (!best || w > best.w || (w === best.w && r > best.r))
+            best = { w, r };
+    });
+    return best;
+}
+const KINDS = ['1RM', 'Weight', 'Volume', 'Reps'];
+const key = (n) => String(n || '').trim().toLowerCase();
+const when = (s) => Date.parse(s.ts || '') || Date.parse(s.date + 'T12:00:00') || 0;
+function storedRecords(s) {
+    const ex = s.exercises || [];
+    const any = ex.some(e => (e.sets || []).some(st => Array.isArray(st.pr) && st.pr.length));
+    if (!any && !(0, exports.isImported)(s))
+        return null;
+    const hits = [];
+    const marks = ex.map((e, x) => (e.sets || []).map((st, i) => {
+        const k = (Array.isArray(st.pr) ? st.pr : []).filter(p => KINDS.includes(p));
+        k.forEach(kind => hits.push({ x, i, n: e.n, kind, w: num(st.w), r: num(st.r),
+            value: kind === '1RM' ? e1rm(num(st.w), num(st.r)) : kind === 'Weight' ? num(st.w) : kind === 'Volume' ? num(st.w) * num(st.r) : num(st.r) }));
+        return k;
+    }));
+    const count = (0, exports.isImported)(s) && typeof s.prCount === 'number' ? s.prCount : hits.length;
+    return { count, marks, hits, stored: true };
+}
+function evaluate(s, best) {
+    const ex = s.exercises || [];
+    const marks = ex.map(e => (e.sets || []).map(() => []));
+    // The same exercise twice in one workout is one exercise for records.
+    const cur = new Map();
+    ex.forEach((e, x) => (e.sets || []).forEach((st, i) => {
+        const w = Math.max(0, num(st.w)), r = Math.max(0, num(st.r));
+        if (!(r > 0))
+            return;
+        const k = key(e.n);
+        const c = cur.get(k) || { '1RM': { v: 0, x: -1, i: -1 }, Weight: { v: 0, x: -1, i: -1 }, Volume: { v: 0, x: -1, i: -1 }, Reps: { v: 0, x: -1, i: -1 } };
+        const put = (kind, v) => { if (v > c[kind].v + 1e-9)
+            c[kind] = { v, x, i }; };
+        if (w > 0) {
+            put('1RM', e1rm(w, r));
+            put('Weight', w);
+            put('Volume', w * r);
+        }
+        else
+            put('Reps', r);
+        cur.set(k, c);
+    }));
+    const hits = [];
+    cur.forEach((c, k) => {
+        const p = best.get(k);
+        if (p) {
+            const beat = (kind, prev) => {
+                if (!(prev > 0) || !(c[kind].v > prev + 1e-6))
+                    return;
+                const { x, i } = c[kind], st = ex[x].sets[i];
+                marks[x][i].push(kind);
+                hits.push({ x, i, n: ex[x].n, kind, value: c[kind].v, w: num(st.w), r: num(st.r) });
+            };
+            beat('1RM', p.orm);
+            beat('Weight', p.w);
+            beat('Volume', p.vol);
+            if (!(c.Weight.v > 0))
+                beat('Reps', p.reps);
+        }
+        best.set(k, { orm: Math.max(p ? p.orm : 0, c['1RM'].v), w: Math.max(p ? p.w : 0, c.Weight.v),
+            vol: Math.max(p ? p.vol : 0, c.Volume.v), reps: Math.max(p ? p.reps : 0, c.Reps.v) });
+    });
+    hits.sort((a, b) => a.x - b.x || a.i - b.i);
+    return { count: hits.length, marks, hits, stored: false };
+}
+/**
+ * Records for every session, in the order given. Stored badges (a Strong import,
+ * or ones frozen when the workout was finished) are shown as they were; older
+ * sessions are worked out against everything before them.
+ */
+function recordsTimeline(sessions) {
+    const order = sessions.map((s, i) => i).sort((a, b) => when(sessions[a]) - when(sessions[b]) || a - b);
+    const best = new Map(), out = new Array(sessions.length);
+    order.forEach(i => {
+        const s = sessions[i] || {};
+        const live = evaluate(s, best);
+        out[i] = storedRecords(s) || live;
+    });
+    return out;
+}
+/** Records a new session sets against the ones before it — what the finish screen shows and stores. */
+function recordsFor(prior, s) {
+    const best = new Map();
+    prior.slice().sort((a, b) => when(a) - when(b)).forEach(p => evaluate(p, best));
+    return evaluate(s, best);
+}
+/** The weight a 1RM predicts for `r` reps — Strong's formula run backwards. */
+function weightFor(orm, r) {
+    if (!(orm > 0) || !(r > 0))
+        return 0;
+    return r <= 10 ? orm * (37 - r) / 36 : orm / (1 + r / 30);
+}
+/** One exercise's records across history (matched by name, case-insensitive). */
+function exerciseRecords(sessions, name) {
+    const k = key(name), out = { orm: null, weight: null, volume: null, reps: null, table: [] };
+    const byReps = new Map();
+    sessions.forEach(s => (s.exercises || []).forEach(e => {
+        if (key(e.n) !== k)
+            return;
+        (e.sets || []).forEach(st => {
+            const w = Math.max(0, num(st.w)), r = Math.max(0, num(st.r));
+            if (!(r > 0))
+                return;
+            if (!(w > 0)) {
+                if (!out.reps || r > out.reps.v)
+                    out.reps = { v: r, date: s.date };
+                return;
+            }
+            const o = e1rm(w, r);
+            if (!out.orm || o > out.orm.v)
+                out.orm = { v: o, w, r, date: s.date };
+            if (!out.weight || w > out.weight.v || (w === out.weight.v && r > out.weight.r))
+                out.weight = { v: w, r, date: s.date };
+            if (!out.volume || w * r > out.volume.v)
+                out.volume = { v: w * r, w, r, date: s.date };
+            const rr = Math.round(r), b = byReps.get(rr);
+            if (!b || w > b.w)
+                byReps.set(rr, { w, date: s.date });
+        });
+    }));
+    const orm = out.orm ? out.orm.v : 0;
+    for (let r = 1; r <= 12; r++)
+        out.table.push({ r, best: byReps.get(r) || null, predicted: Math.round(weightFor(orm, r) * 10) / 10 });
+    return out;
+}
+/* ── how Strong writes things ── */
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** "2h 9m", "38m". */
+function durShort(sec) {
+    sec = Math.max(0, Math.floor(num(sec)));
+    const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60);
+    return h ? h + 'h ' + m + 'm' : m + 'm';
+}
+/** When the workout started: its own start, else the finish stamp minus its length. Null when only the day is known. */
+function sessionStart(s) {
+    if (s.start) {
+        const t = Date.parse(s.start);
+        if (isFinite(t))
+            return new Date(t);
+    }
+    const end = Date.parse(s.ts || '');
+    if (!isFinite(end))
+        return null;
+    return new Date(end - Math.max(0, num(s.duration)) * 1000);
+}
+const pad = (n) => String(n).padStart(2, '0');
+function dayParts(s) {
+    const st = sessionStart(s);
+    if (st && /^\d{4}-\d{2}-\d{2}$/.test(s.date || '')) {
+        // The logged day wins over a start that crossed midnight.
+        const [y, m, dd] = s.date.split('-').map(Number);
+        if (st.getFullYear() !== y || st.getMonth() !== m - 1 || st.getDate() !== dd)
+            return { d: new Date(y, m - 1, dd, st.getHours(), st.getMinutes()), timed: true };
+    }
+    if (st)
+        return { d: st, timed: true };
+    const [y, m, dd] = String(s.date || '').split('-').map(Number);
+    return { d: new Date(y || 1970, (m || 1) - 1, dd || 1), timed: false };
+}
+/** "15:33, Friday, Oct 2 2026" — the session-detail subtitle. */
+function strongStamp(s) {
+    const { d, timed } = dayParts(s);
+    return (timed ? pad(d.getHours()) + ':' + pad(d.getMinutes()) + ', ' : '') + DAYS[d.getDay()] + ', ' + MONS[d.getMonth()] + ' ' + d.getDate() + ' ' + d.getFullYear();
+}
+/** "Friday, Sep 11" on a history card (the year only when it is not this year). */
+function strongDay(s, now = new Date()) {
+    const { d } = dayParts(s);
+    return DAYS[d.getDay()] + ', ' + MONS[d.getMonth()] + ' ' + d.getDate() + (d.getFullYear() !== now.getFullYear() ? ' ' + d.getFullYear() : '');
+}
+/** "SEPTEMBER 2026" — the month header in History. */
+function strongMonth(date) {
+    const [y, m] = String(date || '').split('-').map(Number);
+    return ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'][(m || 1) - 1] + ' ' + (y || '');
+}
+/** "1 PR", "0 PRs". */
+const prLabel = (n) => n + (n === 1 ? ' PR' : ' PRs');
+exports.prLabel = prLabel;
+
+  },
   "./survivability": function (exports, module, require) {
 "use strict";
 /**
@@ -4904,7 +5174,6 @@ exports.projectSnapshot = projectSnapshot;
 exports.prunePending = prunePending;
 exports.streakFromDays = streakFromDays;
 exports.habitStreakOf = habitStreakOf;
-exports.e1rm = e1rm;
 exports.progressionTarget = progressionTarget;
 exports.goalProgress = goalProgress;
 exports.daysSinceCapture = daysSinceCapture;
@@ -5535,10 +5804,6 @@ function streakFromDays(days, today) {
 function habitStreakOf(log, hid, today) {
     return streakFromDays(Object.keys(log).filter(k => log[k] && log[k][hid]), today);
 }
-/** Epley estimate - the same formula the desktop's PR detection uses. */
-function e1rm(w, r) {
-    return w * (1 + r / 30);
-}
 /**
  * Double progression from the last time an exercise was done.
  *
@@ -5644,6 +5909,7 @@ exports.tissue = tissue;
  *    without a biopsy, and shown as such.
  */
 const exercises_1 = require("./exercises");
+const strong_1 = require("./strong");
 const sanitize_1 = require("./sanitize");
 const clamp = (x, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, x));
 exports.MUSCLE_MASS = {
@@ -5750,11 +6016,11 @@ function tissue(inp0, days = 240) {
             const lib = (0, exercises_1.findExercise)(ex.n);
             const bwShare = lib && lib.e === 'bodyweight' && lib.p ? BW_SHARE[lib.p] : undefined;
             (ex.sets || []).forEach(st => {
-                const w = Number(st.w) || 0, r = Number(st.r) || 0, e1 = w * (1 + r / 30);
+                const w = Number(st.w) || 0, r = Number(st.r) || 0, e1 = (0, strong_1.e1rm)(w, r);
                 // strength: best e1RM per exercise (bodyweight moves count the body they lift)
                 if (lib && lib.p && exports.STRENGTH_STD[lib.p] && r > 0 && r <= 20) {
                     const load = bwShare !== undefined && inp.bodyweight ? (inp.bodyweight * bwShare + w) : w;
-                    const e1l = load * (1 + r / 30);
+                    const e1l = (0, strong_1.e1rm)(load, r);
                     const cur = lifts.get(lib.n);
                     if (e1l > 0 && (!cur || e1l * retention(Math.max(0, (keyToTime(inp.today) - keyToTime(s.date)) / dayMs)) > cur.e1 * retention(Math.max(0, (keyToTime(inp.today) - keyToTime(cur.day)) / dayMs))))
                         lifts.set(lib.n, { e1: e1l, day: s.date, ex: lib, bw: bwShare !== undefined });
@@ -5781,7 +6047,7 @@ function tissue(inp0, days = 240) {
                         rpeEarlier.push(Number(st.rpe));
                 }
             });
-            (ex.sets || []).forEach(st => { const e1 = (Number(st.w) || 0) * (1 + (Number(st.r) || 0) / 30); if (e1 > (best.get(ex.n) || 0))
+            (ex.sets || []).forEach(st => { const e1 = (0, strong_1.e1rm)(Number(st.w) || 0, Number(st.r) || 0); if (e1 > (best.get(ex.n) || 0))
                 best.set(ex.n, e1); });
         });
     });
