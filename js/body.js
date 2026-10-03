@@ -17,16 +17,16 @@ import {
   haptic, toast, openSheet, topSheet, closeSheet, scheduleSync, daysBetween,
 } from './core.js';
 import { GROUPS, trainNext, syncButton, bioPatch, MOODS } from './views.js';
-import { startForMuscles, tissueNow, plateausNow, neglectNow } from './train.js';
+import { startForMuscles, tissueNow } from './train.js';
 import { secMind } from './mind.js';
 import { standing, fmtAmt } from './doses.js';
 import { hormoneRows } from './hormones.js';
-import { fatigueCard, dungeonCard, photoCard, storyBlock, fatigueNow } from './system.js';
-import { secLymph, lymphSummary, lymphLayer, paintLymph, lymphZone } from './lymph.js';
+import { fatigueCard, storyBlock, fatigueNow } from './system.js';
+import { secLymph, lymphSummary, lymphLayer, paintLymph, lymphZone, lymphNow } from './lymph.js';
 
 const ui = { face: 'front', mode: 'status', tl: 0, sel: null, open: {} };
 const MODES = [['status', 'Status'], ['strength', 'Strength'], ['mobility', 'Mobility'], ['soreness', 'Soreness'], ['volume', 'Thermal'], ['range', 'Range'], ['lymph', 'Lymph']];
-const SECTIONS = [['ba-scan', 'Scanner'], ['ba-rec', 'Recovery'], ['ba-dev', 'Develop'], ['ba-lymph', 'Lymph'], ['ba-prof', 'Profile'], ['ba-vit', 'Vitals'], ['ba-mind', 'Mind'], ['ba-mic', 'Micros'], ['ba-endo', 'Endocrine']];
+const SECTIONS = [['ba-scan', 'Scanner'], ['ba-sys', 'Systems'], ['ba-rec', 'Recovery'], ['ba-dev', 'Develop'], ['ba-vit', 'Vitals'], ['ba-lymph', 'Lymph'], ['ba-mind', 'Mind'], ['ba-mic', 'Supplements'], ['ba-endo', 'Endocrine']];
 const STATE_LBL = {
   fresh: ['Fresh', '#30d158'], recovering: ['Recovering', '#ffb340'], ready: ['Ready', '#40c8e0'],
   detrained: ['Detrained', '#ff6b5a'], untouched: ['Untouched', 'rgba(235,240,245,.5)'],
@@ -327,7 +327,8 @@ function readinessCard(v, t) {
       <div style="flex:1"><div class="eyebrow">Readiness</div><div style="font-size:1.2rem;font-weight:700;margin-top:2px">${lbl}</div>
         <div class="sub" style="margin-top:3px">${r == null ? 'Sleep, energy, mood, water or protein — any one starts it' : 'From today\'s vitals — the same score your PC shows'}</div></div></div>
     ${pres.length ? `<div class="row num" style="gap:14px;margin-top:10px;font-size:.78rem"><span><b>${Math.round(pres.slice(-7).reduce((a, b) => a + b, 0) / Math.min(7, pres.length))}</b> <span class="sub">7-day avg</span></span><span><b>${Math.max(...pres)}</b> <span class="sub">14-day best</span></span></div>
-      <div style="margin-top:6px">${barsSvg(hist.map(x => x || 0), col, 40)}</div>` : ''}`);
+      <div class="strip7 in-card">${hist.slice(-7).map((r7, i) => { const k = shiftDay(t, i - 6), c7 = r7 == null ? '' : r7 >= 80 ? '#30d158' : r7 >= 60 ? '#ffd60a' : r7 >= 40 ? '#ff9f0a' : '#ff453a';
+        return `<div class="${k === t ? 't' : ''}"><b ${c7 ? `style="color:${c7}"` : ''}>${r7 ?? '—'}</b>${fmtDay(k, { weekday: 'narrow' })}</div>`; }).join('')}</div>` : ''}`);
 }
 function hud(v, t) {
   const d = v.bio[t] || {}, y = v.bio[shiftDay(t, -1)] || {}, G = (v.bioDefs && v.bioDefs.goals) || { cal: 2500, water: 3, sleep: 8 };
@@ -371,11 +372,6 @@ function secVitals(v) {
   let H = readinessCard(v, t);
   H += `<div class="ba-h"><h2 style="font-size:1.05rem">Survivor vitals</h2><span class="k">vs yesterday</span></div>` + hud(v, t);
   H += `<div class="ba-h"><h2 style="font-size:1.05rem">Log today</h2><span class="k">${fmtDay(t, { weekday: 'long' })}</span></div>` + card(vitalsInputs(v, t), 'tight');
-  const days = [6, 5, 4, 3, 2, 1, 0].map(i => shiftDay(t, -i));
-  H += `<div class="ba-h"><h2 style="font-size:1.05rem">Last 7 days</h2><span class="k">readiness</span></div><div class="strip7">${days.map(k => {
-    const r = v.readiness[k], c = r == null ? '' : r >= 80 ? '#30d158' : r >= 60 ? '#ffd60a' : r >= 40 ? '#ff9f0a' : '#ff453a';
-    return `<div class="${k === t ? 't' : ''}"><b ${c ? `style="color:${c}"` : ''}>${r ?? '—'}</b>${fmtDay(k, { weekday: 'narrow' })}</div>`;
-  }).join('')}</div>`;
   return H;
 }
 
@@ -387,12 +383,9 @@ function secMicros(v) {
   const fmtN = n => n >= 1000 ? (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + 'k' : (n % 1 === 0 ? '' + n : (+n).toFixed(1));
   const goals = D.micros.filter(m => !m.limit);
   const hit = goals.filter(m => (amt[m.k] || 0) >= m.goal).length;
-  let H = `<div class="sub" style="margin:-4px 2px 8px;line-height:1.45">${hit}/${goals.length} at target today · open a group, tap a nutrient to log it with the time you took it. Amounts in blood are estimates from dose times and average kinetics (±30–50 %), not lab values.</div>`;
-  (D.cats || []).forEach(cat => {
-    const items = D.micros.filter(m => m.cat === cat);
-    if (!items.length) return;
-    const lim = items.every(m => m.limit);
-    H += `<div class="ba-h"><h2 style="font-size:1.05rem">${esc(cat)}</h2><span class="k">${lim ? (items.some(m => (amt[m.k] || 0) > (m.goal || 0)) ? 'over a limit today' : 'within limits') : items.filter(m => (amt[m.k] || 0) >= m.goal).length + ' of ' + items.length + ' at target'}</span></div>`;
+  let H = `<div class="sub" style="margin:-4px 2px 8px;line-height:1.45">${hit}/${goals.length} at target today · tap one to log it with the time you took it. Amounts in blood are estimates from dose times and average kinetics (±30–50 %), not lab values.</div>`;
+  // One list, in the PC's order — no category groups.
+  [[...(D.cats || []).flatMap(c => D.micros.filter(m => m.cat === c)), ...D.micros.filter(m => !(D.cats || []).includes(m.cat))]].forEach(items => {
     H += card(items.map(m => {
       const a = amt[m.k] || 0, saf = L.microSafety(m.k, a), over = (saf && saf.level === 'over') || (m.limit && a > (m.goal || 0));
       const pct = m.limit ? (a > 0 ? 1 : 0) : Math.min(1, a / (m.goal || 1));
@@ -490,13 +483,13 @@ export function renderBodyArch() {
 
 const SEC_DEFS = [
   ['ba-scan', 'Scanner', 'biomechanical matrix', secScanner],
+  ['ba-sys', 'Body Systems', 'report card · body age', secSystems],
   ['ba-rec', 'Bio-Regen Matrix', 'muscle telemetry · 72 h cycle', secRecovery],
-  ['ba-dev', 'Body Development', 'volume · injuries · tape · balance', secDevelop],
+  ['ba-dev', 'Body Development', 'volume · injuries · balance', secDevelop],
+  ['ba-vit', 'Biometric Status', 'readiness · vitals · today', secVitals],
   ['ba-lymph', 'Lymphatic System', 'pump · fluid · nodes', secLymph],
-  ['ba-prof', 'Specimen Profile', 'biometry · composition', secProfile],
-  ['ba-vit', 'Biometric Status', '', secVitals],
   ['ba-mind', 'Mental State', 'neural link', secMind],
-  ['ba-mic', 'Micronutrients', '', secMicros],
+  ['ba-mic', 'Supplements', 'what you took · what is in you', secMicros],
   ['ba-endo', 'Endocrine Estimate', '', secEndo],
 ];
 /* ── compact page: every section is a header with a live one-line summary; tap to open ──
@@ -509,6 +502,8 @@ const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
 const SUMMARY = {
   'ba-scan': v => { const c = v.body.counts || {}; const tn = v.body.muscles.filter(m => m.priority > 0.05).slice(0, 2).map(m => m.name);
     return (c.ready ?? 0) + ' ready · ' + ((c.recovering || 0) + (c.fresh || 0)) + ' recovering' + (tn.length ? ' · next: ' + tn.join(', ') : ''); },
+  'ba-sys': v => { const R = systemsNow(v); const g = R.rows.filter(r => r.grade === 'good').length, w = R.rows.filter(r => r.grade === 'watch' || r.grade === 'poor').length;
+    return g + ' good · ' + w + ' to watch' + (R.age.known ? ' · body age ' + R.age.bodyAge : ''); },
   'ba-rec': v => (v.body.balance == null ? 'balance —' : 'balance ' + v.body.balance + ' %') + ' · coverage ' + (v.body.coverage ?? '—') + ' %',
   'ba-dev': v => { const under = v.body.muscles.filter(m => m.vol && (m.vol.zone === 'under' || m.vol.zone === 'none')).length;
     const inj = Object.keys(L.activeInjuries(v.injuries || [], today())).length, F = fatigueNow(v);
@@ -537,12 +532,8 @@ const SUBSUM = {
   'Do today': () => 'small things that help',
   'Weekly sets vs your range': v => plural(v.body.muscles.filter(m => m.vol && (m.vol.zone === 'under' || m.vol.zone === 'none')).length, 'muscle') + ' under range',
   'Fatigue radar': v => fatigueNow(v).title,
-  'Stalled lifts': () => { const P = plateausNow(); return P.length ? P.length + ' stalled · ' + P.map(p => p.n.replace(/ \(.*\)$/, '')).slice(0, 2).join(', ') : 'none — every regular lift still rising'; },
   'Strength per kg': v => { const R = relNow(v); return R.known ? R.verdict.title.toLowerCase() + (R.index != null ? ' · ' + (R.index > 0 ? '+' : '') + R.index + ' % per kg' : '') : 'needs weigh-ins and a regular lift'; },
-  'Not trained lately': () => { const N = neglectNow(); return N.length ? N.map(a => a.name + (a.never ? ' (never)' : ' (' + a.weeks + ' wk)')).join(', ') : 'every area trained in 3 weeks'; },
   'Injuries': v => { const n = (v.injuries || []).filter(j => !j.cleared).length; return n ? n + ' active' : 'none'; },
-  'Tape measurements': v => { const R = L.measureReport(v.measures || {}, v.weights || {}, { height: +(v.profile || {}).height || null, sex: (v.profile || {}).sex || null });
-    return R.latest ? (R.latest.bf != null ? R.latest.bf + ' % body fat' : 'measured ' + R.latest.day) + (R.verdict ? ' · ' + R.verdict.title.toLowerCase() : '') : 'not measured yet'; },
 };
 function subs(sec, v, html) {
   const parts = html.split('<div class="ba-h">');
@@ -844,17 +835,6 @@ function secDevelop(v) {
         <div class="st">${a ? 'day ' + (a.days + 1) + ' · ' + esc(a.advice) : 'from ' + esc(j.start)}</div></span><span class="chev">${icon('chev', 16)}</span></button>`; }).join('')}</section>`
       : card(`<div class="empty" style="padding:6px">Nothing logged. Hurt beyond normal soreness? Log it — TRAIN NEXT routes around it until you mark it healed.</div>`))
     + `<button class="btn btn-glass block" style="margin-top:10px" data-act="inj-open">${icon('plus', 16)} Log an injury</button>`;
-  /* tape */
-  const R = L.measureReport(v.measures || {}, v.weights || {}, { height: +(v.profile || {}).height || null, sex: (v.profile || {}).sex || null });
-  const Lt = R.latest;
-  const kpi = (k, val, u, d) => `<div class="frost"><div class="v num">${val == null ? '—' : val}<small style="font-size:.7rem;color:var(--t3)">${val == null ? '' : u}</small></div><div class="k">${k}</div>
-    ${d != null && d !== 0 ? `<div class="s" style="color:${d > 0 ? '#ff9f0a' : '#30d158'}">${d > 0 ? '+' : ''}${d} since ${esc(R.from.day.slice(5))}</div>` : ''}</div>`;
-  H += `<div class="ba-h"><h2 style="font-size:1.05rem">Tape measurements</h2><span class="k">${R.count ? R.count + ' day' + (R.count === 1 ? '' : 's') : 'cm'}</span></div>`
-    + (Lt ? `<div class="stat4">${kpi('Body fat · Navy ±3–4', Lt.bf, '%', R.deltas.bf)}${kpi('Lean mass', Lt.lean, ' kg', R.deltas.lean)}${kpi('Waist', Lt.m.waist, ' cm', R.deltas.waist)}${kpi('Weight', Lt.weight, ' kg', R.deltas.weight)}</div>` : '')
-    + (R.caution ? `<p class="sub" style="color:#ff9f0a;line-height:1.45;margin:8px 2px">⚠ ${esc(R.caution)}</p>` : '')
-    + (R.verdict ? card(`<div style="border-left:3px solid ${R.verdict.color};padding-left:10px"><b>${esc(R.verdict.title)}</b><div class="sub" style="line-height:1.45;margin-top:2px">${esc(R.verdict.text)}</div></div>`) : '')
-    + (!Lt ? card(`<div class="empty" style="padding:6px">Waist and neck${String((v.profile || {}).sex).toLowerCase() === 'female' ? ' and hips' : ''} give a body-fat estimate; two measurements 2+ weeks apart show whether you are gaining muscle, fat or both.</div>`) : '')
-    + `<button class="btn btn-glass block" style="margin-top:10px" data-act="tape-open">${icon('plus', 16)} Log measurements</button>`;
   /* strength balance */
   let rs = [];
   try { rs = L.strengthRatios(tissueNow().lifts || [], today()); } catch (e) { rs = []; }
@@ -865,10 +845,39 @@ function secDevelop(v) {
         ${r.verdict !== 'balanced' ? `<p class="sub" style="margin:0 0 8px;line-height:1.4">${esc(r.note)}</p>` : ''}`;
     }).join('') + `<p class="sub" style="margin:6px 0 0;line-height:1.4">Green band = the usual coaching range. A nudge, not a diagnosis.</p>`
       : `<div class="empty" style="padding:6px">Shows once both lifts of a pair are logged — row &amp; bench, overhead &amp; bench, leg curl &amp; extension, squat &amp; deadlift.</div>`);
-  H += relBlock(v) + stalledBlock() + neglectBlock(v);
-  H += dungeonCard(v);
-  H += photoCard();
+  H += relBlock(v);
   return H;
+}
+
+/* ── Body Systems: a report card per system and a body age (logic/systems.ts) ── */
+let sysCache = null, sysFor = null;
+function systemsNow(v) {
+  const k = (v.rev || 0) + ':' + state.pending.length + ':' + today();
+  if (sysFor === k) return sysCache;
+  const t = today(), p = v.profile || {}, w = latestWeight(v) || (+p.weight || null), sp = L.specimen(Object.assign({}, p, w ? { weight: w } : {}));
+  const inp = { today: t, bio: v.bio || {}, age: sp.age, sex: p.sex || null, height: +p.height || null, weight: w, bodyfat: p.bodyfat != null && p.bodyfat !== '' ? +p.bodyfat : null, vo2max: +p.vo2max || null };
+  sysCache = { rows: L.systemsReport({ ...inp, endo: v.endo || null, lymph: lymphNow(v), injuries: Object.keys(L.activeInjuries(v.injuries || [], t)).length, coverage: v.body.coverage ?? null }), age: L.bodyAge(inp) };
+  sysFor = k; return sysCache;
+}
+const GRADE = { good: ['#30d158', 'Good'], watch: ['#ffd60a', 'Watch'], poor: ['#ff453a', 'Needs work'] };
+function secSystems(v) {
+  const R = systemsNow(v), A = R.age;
+  let H = card(R.rows.map(r => { const g = r.grade ? GRADE[r.grade] : ['var(--t4)', 'Not measured'];
+    return `<div class="sys-r"><span class="sys-ic">${r.icon}</span><div class="sys-t"><div class="sys-n"><b>${esc(r.name)}</b><span class="sys-g" style="--g:${g[0]}">${g[1]}</span></div>
+      <div class="sub">${esc(r.line)}</div>${r.action ? `<div class="sys-a">→ ${esc(r.action)}</div>` : ''}</div>${r.score != null ? `<b class="num sys-s" style="color:${g[0]}">${r.score}</b>` : ''}</div>`; }).join(''), 'tight sys');
+  H += `<div class="ba-h"><h2 style="font-size:1.05rem">Body age</h2><span class="k">from your markers · a range, not a verdict</span></div>`;
+  H += card(A.known ? `<div class="bage"><div><div class="bage-n num" style="color:${A.bodyAge <= A.age ? '#30d158' : A.bodyAge - A.age <= 3 ? '#ffd60a' : '#ff9f0a'}">${A.bodyAge}</div><div class="sub">likely ${A.low}–${A.high} · you are ${A.age}</div></div>
+      ${A.lever ? `<div class="bage-l"><b>Biggest lever</b><span>${esc(A.lever.text)}</span></div>` : ''}</div>
+    <div class="bage-m">${A.markers.map(m => `<div><span>${esc(m.label)}<small>${esc(m.value)} · ${esc(m.ref)}</small></span><b class="num" style="color:${m.years > 0.3 ? '#ff9f0a' : m.years < -0.3 ? '#30d158' : 'var(--t2)'}">${m.years > 0 ? '+' : ''}${m.years} yr</b></div>`).join('')}</div>
+    ${A.missing.length ? `<p class="sub" style="line-height:1.45;margin:8px 0 0">Not included yet: ${esc(A.missing.join(' · '))}.</p>` : ''}
+    <p class="sub" style="line-height:1.45;margin:6px 0 0">Each marker's published risk turned into years (mortality doubles about every 8 years). Markers overlap, so it is a range — steer by it, don't diagnose with it.</p>`
+    : `<div class="empty" style="padding:6px">${esc(A.why)}</div>${A.markers.length ? `<div class="bage-m">${A.markers.map(m => `<div><span>${esc(m.label)}<small>${esc(m.value)}</small></span><b class="num">${m.years > 0 ? '+' : ''}${m.years} yr</b></div>`).join('')}</div>` : ''}`);
+  return H;
+}
+
+/* ── the body profile: set once, edited rarely — under More, not in Body Arch ── */
+export function bodyProfileSheet() {
+  openSheet({ id: 'body-profile', title: 'Body profile', render: () => secProfile(view()) });
 }
 
 /* ── strength per kg of body weight (logic/lifts.ts relativeStrength) ── */
@@ -893,31 +902,6 @@ function relBlock(v) {
   return `<div class="ba-h"><h2 style="font-size:1.05rem">Strength per kg</h2><span class="k">bulk or cut — is it strength?</span></div>` + card(body);
 }
 
-/* ── lifts that stopped rising, areas left out (logic/lifts.ts) ── */
-function stalledBlock() {
-  const P = plateausNow(), seen = new Set();
-  return `<div class="ba-h"><h2 style="font-size:1.05rem">Stalled lifts</h2><span class="k">best not beaten in 6+ weeks</span></div>`
-    + card(P.length ? P.map(p => {
-      // A tip shared by several lifts (same muscle, same frequency) is shown once, under the first.
-      const tips = p.tips.filter(t => !seen.has(t)); tips.forEach(t => seen.add(t));
-      return `<div class="pl-r" role="button" tabindex="0" data-act="ex-hist" data-n="${esc(p.n)}" data-seg="records">
-        <div class="pl-h"><b>${esc(p.n)}</b><span class="num">${Math.round(p.peak)} <small>→</small> ${Math.round(p.recent)}</span></div>
-        <div class="sub">Best est. 1RM ${fmt1(p.peak)} kg (${fmt1(p.peakSet.w)} × ${p.peakSet.r}) on ${fmtDay(p.peakDate, { day: 'numeric', month: 'short' })} · ${p.sessionsSince} sessions since, none higher · ${p.weeks} weeks</div>
-        ${tips.length ? `<ul class="pl-tips">${tips.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}</div>`;
-    }).join('') + `<p class="sub" style="line-height:1.45;margin:8px 0 0">Read from sets of 1–12 reps — the 1RM formula overshoots beyond that. Stalls are normal after the first months; change one thing at a time for 4–6 weeks.</p>`
-      : `<div class="empty" style="padding:6px">Nothing stalled — no lift with 5+ logged sessions has gone 6 weeks without beating its best.</div>`);
-}
-function neglectBlock(v) {
-  const N = neglectNow(), have = new Set((v.routines || []).map(r => r.name));
-  return `<div class="ba-h"><h2 style="font-size:1.05rem">Not trained lately</h2><span class="k">no hard sets in 3+ weeks</span></div>`
-    + card(N.length ? N.map(a => {
-      const T = L.AREA_TEMPLATES[a.key], got = T && have.has(T.name);
-      return `<div class="ng-r"><div class="ng-t"><b>${esc(a.name)}</b><div class="sub">${a.never ? 'Not once in your logged history' : 'Last trained ' + fmtDay(a.last, { day: 'numeric', month: 'short' }) + ' · ' + a.weeks + ' weeks ago'}</div>
-        ${a.key === 'legs' ? '<div class="sub ng-why">About half your skeletal muscle is below the waist (Janssen 2000) — the biggest lever for strength and long-term health you are not using yet.</div>' : ''}</div>
-        ${T ? `<button class="btn sm ${got ? 'btn-glass' : 'btn-tint'}" style="--accent:#30d158" data-act="tpl-area" data-a="${a.key}" ${got ? 'disabled' : ''}>${got ? '✓ In Train' : '+ Template'}</button>` : ''}</div>`;
-    }).join('') + `<p class="sub" style="line-height:1.45;margin:8px 0 0">Templates hold exercises and set counts only — your first session sets the weights, then ARK's targets take over.</p>`
-      : `<div class="empty" style="padding:6px">${!(v.workouts || []).length ? 'Shows once you have logged workouts.' : !(v.workouts || []).some(w => daysBetween(w.date, today()) <= 21) ? 'No workouts in the last 3 weeks — a break, not one area left out.' : 'Every area has had hard sets in the last 3 weeks.'}</div>`);
-}
 /* The lifts you have logged that train this muscle — tapping the figure leads to your numbers. */
 function liftsBlock(v, slug) {
   const Ls = L.liftsForMuscle(v.workouts || [], slug, today(), 5);
@@ -1012,6 +996,7 @@ const devActions = {
 const ROUND = Object.fromEntries(VIT.map(x => [x.f, x.round || 1]));
 const RANGE = { sleep: [0, 14], deep: [0, 6], prot: [0, 500], water: [0, 10], weight: [30, 250], steps: [0, 100000], cal: [0, 10000] };
 export const actions = {
+  'body-profile'() { bodyProfileSheet(); },
   'tpl-area'(d) {
     const T = L.areaTemplate(d.a); if (!T) return;
     if ((view().routines || []).some(r => r.name === T.name)) { toast('Already in your templates'); return; }

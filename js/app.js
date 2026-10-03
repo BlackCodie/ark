@@ -14,13 +14,15 @@ import { actions as hormoneActions } from './hormones.js';
 import { actions as systemActions, onPhotoInput, onWhatIfInput } from './system.js';
 import { actions as dailyActions, importHealthLink } from './daily.js';
 import { actions as lymphActions } from './lymph.js';
+import { renderBoards, actions as habitActions, onHabitInput, onHabitSearch } from './habits.js';
+import { actions as weatherActions, onWeatherKey } from './weather.js';
 
 applyTheme();
 
 const TABS = [
   ['today', 'Today', 'hex', renderToday, '#2ee6a6'],
   ['train', 'Train', 'dumbbell', renderTrain, '#ff9f0a'],
-  ['habits', 'Habits', 'check', renderHabits, '#30d158'],
+  ['habits', 'Habits', 'check', renderBoards, '#30d158'],
   ['body', 'Body', 'heart', renderBodyArch, '#40c8e0', mountFigure],
   ['grow', 'Grow', 'sprout', renderGrow, '#bf5af2'],
 ];
@@ -143,7 +145,7 @@ setInterval(tickElapsed, 1000);
 
 /* ── events ── */
 const ACT = {
-  ...viewActions, ...trainActions, ...sheetActions, ...bodyActions, ...moreActions, ...reviewActions, ...doseActions, ...mindActions, ...routineActions, ...hormoneActions, ...systemActions, ...dailyActions, ...lymphActions,
+  ...viewActions, ...trainActions, ...sheetActions, ...bodyActions, ...moreActions, ...reviewActions, ...doseActions, ...mindActions, ...routineActions, ...hormoneActions, ...systemActions, ...dailyActions, ...lymphActions, ...habitActions, ...weatherActions,
   tab(d) { closeAllSheets(); haptic(); switchTab(d.tab, d.seg); },
   'sheet-close'() { closeSheet(topSheet()); },
 };
@@ -164,11 +166,13 @@ document.addEventListener('input', e => {
   else if (el.matches('[data-tl]')) onTimeline(el);
   else if (el.matches('[data-pl-input]')) onPlatesInput(el);
   else if (el.matches('[data-ds-amt]')) onDoseInput(el);
+  else if (onHabitInput(el, false) || onHabitSearch(el)) { /* handled */ }
   else if (onWhatIfInput(el) || onPhotoInput(el)) { /* handled */ }
 });
-document.addEventListener('change', e => { if (e.target.matches('[data-ph-file]')) onPhotoInput(e.target); else if (e.target.matches('[data-strong-file]')) onStrongFile(e.target); });
+document.addEventListener('change', e => { if (onHabitInput(e.target, true)) return; if (e.target.matches('[data-ph-file]')) onPhotoInput(e.target); else if (e.target.matches('[data-strong-file]')) onStrongFile(e.target); });
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.id === 'pair-code') ACT['pair-go']();
+  if (onWeatherKey(e)) return;
   if (e.key === 'Escape' && topSheet()) closeSheet(topSheet());
   // Non-button controls (the figure's muscles) answer Enter and Space like buttons.
   const t = e.target;

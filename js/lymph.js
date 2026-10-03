@@ -12,18 +12,19 @@ import { bioPatch } from './views.js';
 
 let key = '', cache = null;
 export function lymphNow(v = view()) {
-  const k = (v.rev || 0) + ':' + state.pending.length + ':' + today();
+  const wc = state.weatherCache, heat = wc && wc.w && Date.now() - wc.t < 3 * 3600e3 ? wc.w.feels : null;
+  const k = (v.rev || 0) + ':' + state.pending.length + ':' + today() + ':' + heat;
   if (cache && key === k) return cache;
   const p = v.profile || {};
   cache = L.lymphReport({ today: today(), bio: v.bio || {}, sessions: v.workouts || [], doses: v.doses || [],
-    bodyfat: p.bodyfat || null, sex: p.sex || null, inflammation: v.endo && v.endo.infl != null ? v.endo.infl : null });
+    bodyfat: p.bodyfat || null, sex: p.sex || null, inflammation: v.endo && v.endo.infl != null ? v.endo.infl : null, heat });
   key = k; return cache;
 }
 /** Region score for a muscle — the LYMPH overlay's colour. */
 export function lymphZone(v, slug) { const R = lymphNow(v), r = L.regionOfSlug(slug); return r && R.known ? String(R.regions[r]) : null; }
 export function lymphSummary(v) {
   const R = lymphNow(v);
-  return R.known ? 'pump ' + R.pump + ' · fluid load ' + R.load + ' · ' + R.balance.title.toLowerCase() : 'log steps to start';
+  return R.known ? 'pump ' + R.pump + ' · fluid load ' + R.load + ' · ' + R.balance.title.toLowerCase() + (R.basis === 'estimate' ? ' · estimate' : '') : 'needs steps, active energy or a workout';
 }
 
 /* the node layer — built once into the figure, shown in LYMPH mode */
@@ -43,6 +44,7 @@ export function paintLymph(figEl, v) {
   });
 }
 
+const fmtNarrow = d => { const [y, m, dd] = d.split('-').map(Number); return 'SMTWTFS'[new Date(y, m - 1, dd).getDay()]; };
 const EV = { A: ['Strong', '#30d158'], B: ['Good', '#40c8e0'], C: ['Early', '#ffb340'] };
 const PUFF = ['None', 'Mild', 'Noticeable', 'Marked'];
 const card = (inner, cls = '') => `<section class="card frost ${cls}">${inner}</section>`;
@@ -56,8 +58,10 @@ export function secLymph(v) {
       <div><div class="v num" style="color:#40c8e0">${R.pump}</div><div class="k">Lymph pump</div></div>
       <div><div class="v num" style="color:${R.load >= 55 ? '#ff9f0a' : R.load >= 42 ? '#ffd60a' : '#30d158'}">${R.load}</div><div class="k">Fluid load</div></div></div>
       <div class="ly-bal" style="border-color:${R.balance.color}"><b style="color:${R.balance.color}">${esc(R.balance.title)}</b><span>${esc(R.balance.text)}</span></div>
-      <div class="ly-regs">${reg}</div>`
-    : `<div class="empty" style="padding:6px">Steps are the pump — once steps arrive (Apple Health or logged), the estimate starts.</div>`);
+      <div class="ly-regs">${reg}</div>
+      ${R.trend.some(p => p.pump != null) ? `<div class="ly-trend"><span class="eyebrow">Pump · 7 days</span><div>${R.trend.map(p => `<span><i style="height:${p.pump == null ? 2 : Math.max(4, p.pump * 0.42)}px"></i><b>${fmtNarrow(p.day)}</b></span>`).join('')}</div></div>` : ''}
+      ${R.basis === 'estimate' ? '<p class="sub" style="line-height:1.45;margin:8px 0 0">No step count yet, so the pump is estimated from active energy, exercise minutes or training. Apple Health steps make it exact.</p>' : ''}`
+    : `<div class="empty" style="padding:6px">Movement is the pump — steps, active energy (Apple Health) or a logged workout start the estimate.</div>`);
   H += `<div class="ba-h"><h2 style="font-size:1.05rem">Morning puffiness</h2><span class="k">teaches the model your pattern</span></div>`
     + card(`<div class="chips">${PUFF.map((l, i) => `<button class="chip ${puff === i ? 'on' : ''}" data-act="ly-puff" data-v="${i}">${l}</button>`).join('')}</div>
       <p class="sub" style="line-height:1.45;margin:8px 0 0">${R.puffiness.lines.length ? R.puffiness.lines.map(esc).join('<br>') : 'Rate your face and ankles on waking. After ' + Math.max(0, 8 - R.puffiness.n) + ' more mornings ARK shows what makes you puffy — drinks, salt or short nights.'}</p>`);

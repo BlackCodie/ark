@@ -32,7 +32,8 @@ export function staleNote(min = 15) {
 
 /* ══════════════ create: habit ══════════════ */
 const HABIT_ICONS = ['⭐', '💪', '🏃', '🧘', '📖', '🧠', '💧', '🥗', '😴', '🚶', '🎯', '💻', '✍️', '🎸', '🧹', '🌅', '🥶', '☀️'];
-let hIcon = '⭐', hPillar = 'body', hEff = 'none', hMin = 0;
+let hIcon = '⭐', hPillar = 'body', hEff = 'none', hMin = 0, hColor = null;
+const H_KEEP = ['data-h-name', 'data-h-unit', 'data-h-amin', 'data-h-amax', 'data-h-astep'];
 /** What ticking the habit feeds: minutes of light, cold, calm… (logic/routines.ts). */
 function effectPicker() {
   const ch = L.EFFECT_CHOICES;
@@ -79,6 +80,7 @@ let editId = null;
 export function habitEditSheet(id) {
   const h0 = view().habits.find(x => x.id === id); if (!h0) return;
   editId = id; hIcon = h0.icon || '⭐'; hPillar = h0.pillar || 'custom'; loadEffect(L.habitEffect(h0));
+  hColor = h0.color || L.HABIT_COLORS[Math.max(0, view().habits.findIndex(x => x.id === id)) % L.HABIT_COLORS.length];
   const icons = HABIT_ICONS.includes(hIcon) ? HABIT_ICONS : [hIcon, ...HABIT_ICONS.slice(0, 17)];
   openSheet({
     id: 'habit-edit', title: 'Edit habit',
@@ -95,6 +97,13 @@ export function habitEditSheet(id) {
         <label class="field"><span>Name</span><input class="inp" data-h-name maxlength="60" value="${esc(h.name)}" autocomplete="off"></label>
         <div class="eyebrow" style="margin:4px 0 8px">Icon</div>
         <div class="emo-pick">${icons.map(i => `<button class="${i === hIcon ? 'on' : ''}" data-act="h-icon" data-i="${i}" aria-label="Icon ${i}">${i}</button>`).join('')}</div>
+        <div class="eyebrow" style="margin:16px 0 8px">Colour</div>
+        <div class="hb-sw">${L.HABIT_COLORS.map(c => `<button class="${c === hColor ? 'on' : ''}" style="--sw:${c}" data-act="h-color" data-c="${c}" aria-label="Colour ${c}"></button>`).join('')}</div>
+        <div class="eyebrow" style="margin:16px 0 8px">Track an amount <span class="sub" style="text-transform:none;letter-spacing:0;font-weight:500">— leave the unit empty for a simple tick</span></div>
+        <div class="hb-amtf"><label><span>Unit</span><input class="inp" data-h-unit maxlength="12" placeholder="min" value="${esc(h.unit || '')}"></label>
+          <label><span>From</span><input class="inp" data-h-amin inputmode="decimal" placeholder="0.5" value="${h.amin != null ? esc(String(h.amin)) : ''}"></label>
+          <label><span>To</span><input class="inp" data-h-amax inputmode="decimal" placeholder="5" value="${h.amax != null ? esc(String(h.amax)) : ''}"></label>
+          <label><span>Step</span><input class="inp" data-h-astep inputmode="decimal" placeholder="0.5" value="${h.astep != null ? esc(String(h.astep)) : ''}"></label></div>
         <div class="eyebrow" style="margin:16px 0 8px">Pillar</div>
         <div class="chips">${pillars().map(p => `<button class="chip ${p.k === hPillar ? 'on' : ''}" style="--accent:${pillarColor(p.k)}" data-act="h-pillar" data-k="${esc(p.k)}">${esc(PILLAR[p.k] ? PILLAR[p.k][0] : String(p.name).split(' — ')[0])}</button>`).join('')}</div>
         ${effectPicker()}
@@ -409,7 +418,8 @@ export function practiceList(skillId) {
 export const actions = {
   /* create */
   'habit-new'() { habitNewSheet(); },
-  'h-icon'(d) { keepDraft(['data-h-name'], () => { hIcon = d.i; }); },
+  'h-icon'(d) { keepDraft(H_KEEP, () => { hIcon = d.i; }); },
+  'h-color'(d) { keepDraft(H_KEEP, () => { hColor = d.c; }); },
   'h-pillar'(d) { keepDraft(['data-h-name'], () => { hPillar = d.k; }); },
   'h-eff'(d) {
     keepDraft(['data-h-name'], () => {
@@ -443,6 +453,17 @@ export const actions = {
     if (hPillar !== (h.pillar || 'custom')) patch.pillar = hPillar;
     const eff = effectOf(), cur = L.habitEffect(h);
     if (JSON.stringify(eff) !== JSON.stringify(cur)) patch.effect = eff;
+    // colour, unit and the amount slider's range (logic/habitlog.ts cleanHabitMeta checks them on the PC too)
+    if (hColor && hColor !== h.color) patch.color = hColor;
+    const unit = (val('[data-h-unit]') || '').trim(), n = q => { const x = parseFloat(String(val(q) || '').replace(',', '.')); return isFinite(x) ? x : null; };
+    if (unit !== (h.unit || '')) patch.unit = unit;
+    const lo = n('[data-h-amin]'), hi = n('[data-h-amax]'), st = n('[data-h-astep]');
+    if (unit && (lo != null || hi != null)) {
+      const L0 = lo != null ? lo : 0, H0 = hi != null ? hi : 10;
+      if (!(H0 > L0)) { toast('“To” must be more than “From”'); return; }
+      if (L0 !== h.amin || H0 !== h.amax) { patch.amin = L0; patch.amax = H0; }
+    }
+    if (st != null && st > 0 && st !== h.astep) patch.astep = st;
     closeSheet(topSheet());
     if (Object.keys(patch).length > 1) { emit('habit.edit', patch); haptic(); toast('Saved · ' + hIcon + ' ' + name); }
   },

@@ -203,7 +203,7 @@ export function renderTrain() {
   /* this week */
   const ws = (() => { const [y, m, d] = t.split('-').map(Number), dt = new Date(y, m - 1, d); dt.setDate(dt.getDate() - (dt.getDay() + 6) % 7); return L.dayKey(dt); })();
   const wk = v.workouts.filter(w => w.date >= ws);
-  const sets = wk.reduce((a, w) => a + w.exercises.reduce((b, e) => b + e.sets.length, 0), 0);
+  const sets = wk.reduce((a, w) => a + (w.exercises || []).reduce((b, e) => b + (e.sets || []).length, 0), 0);
   const vol = wk.reduce((a, w) => a + L.workoutVolume(w), 0);
   H += `<div class="sec"><h2>This week</h2><button class="link" data-act="lib-open">Exercises</button></div><div class="stat3">
     <div class="frost"><div class="v num">${wk.length}</div><div class="k">Workouts</div></div>
@@ -426,7 +426,7 @@ export function restTick() {
 /** Apple Health through a Shortcut named "ARK Workout" (web apps cannot write to HealthKit themselves). */
 function healthUrl(s) {
   const end = new Date(Date.parse(s.ts)), start = new Date(end.getTime() - (s.duration || 0) * 1000);
-  const payload = { name: s.name || 'Strength training', start: start.toISOString(), end: end.toISOString(), minutes: Math.round((s.duration || 0) / 60), sets: s.exercises.reduce((a, e) => a + e.sets.length, 0) };
+  const payload = { name: s.name || 'Strength training', start: start.toISOString(), end: end.toISOString(), minutes: Math.round((s.duration || 0) / 60), sets: (s.exercises || []).reduce((a, e) => a + (e.sets || []).length, 0) };
   return 'shortcuts://run-shortcut?name=' + encodeURIComponent('ARK Workout') + '&input=text&text=' + encodeURIComponent(JSON.stringify(payload));
 }
 function finish() {
@@ -614,11 +614,12 @@ function sessionSheet(i) {
       const u = w.unit || unit(), rec = records()[idx] || { count: 0, marks: [] };
       return `<div class="sub sess-stamp">${esc(L.strongStamp(w))}</div>
       <div class="hm sess-hm">${w.duration ? `<span>${icon('clock', 15)}${L.durShort(w.duration)}</span>` : ''}<span>${icon('dumbbell', 15)}${Math.round(L.workoutVolume(w))} ${u}</span><span>${icon('trophy', 15)}${L.prLabel(rec.count)}</span></div>
-      <div class="sess-ex">${w.exercises.map((e, x) => `<section class="sx${e.ss ? ' ss' : ''}"${e.ss ? ` style="--ssc:${ssColor(e.ss)}"` : ''}>
+      ${!(w.exercises || []).length ? `<p class="sub" style="line-height:1.5">Logged before ARK kept exercises — only the groups were saved: ${esc(Object.keys(w.sets || {}).map(k => k + (w.sets[k] ? " " + w.sets[k] + " sets" : "")).join(" · ") || (w.labels || []).join(" · ") || "none")}.</p>` : ""}
+      <div class="sess-ex">${(w.exercises || []).map((e, x) => `<section class="sx${e.ss ? ' ss' : ''}"${e.ss ? ` style="--ssc:${ssColor(e.ss)}"` : ''}>
         <div class="sx-h"><button class="ex-name" data-act="ex-hist" data-n="${esc(e.n)}"><b>${esc(e.n)}</b></button>
           ${e.ss ? `<span class="tag" style="--c:${ssColor(e.ss)}">Superset ${esc(e.ss)}</span>` : ''}<b class="sx-k">1RM</b></div>
         ${(e.warm || []).map(s => `<div class="sx-r"><span class="sx-n" style="color:var(--orange)">W</span><span class="num">${setTxt(s, u)}</span><span></span></div>`).join('')}
-        ${e.sets.map((s, j) => { const o = L.e1rm(+s.w || 0, +s.r || 0), m = ((rec.marks || [])[x] || [])[j] || [];
+        ${(e.sets || []).map((s, j) => { const o = L.e1rm(+s.w || 0, +s.r || 0), m = ((rec.marks || [])[x] || [])[j] || [];
           return `<div class="sx-r"><span class="sx-n">${s.type === 'd' ? 'D' : s.type === 'f' ? 'F' : j + 1}</span><span class="num">${setTxt(s, u)}${s.rpe ? ' @' + s.rpe : ''}${m.map(prPill).join('')}</span><span class="num sx-o">${o ? Math.round(o) : ''}</span></div>`; }).join('')}
         ${e.note ? `<div class="sub" style="margin-top:6px;display:flex;gap:6px;align-items:center">${icon('note', 13)}<span>${esc(e.note)}</span></div>` : ''}</section>`).join('')}</div>
       ${w.notes ? `<p class="sub" style="margin-top:14px">${esc(w.notes)}</p>` : ''}

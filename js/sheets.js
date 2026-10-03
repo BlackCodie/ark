@@ -113,6 +113,8 @@ export function syncSheet() {
           <div class="st">${state.push.on ? 'On — habits, vitals, weigh-in, rest timer' : 'Reminders sent by your PC'}</div></span><span class="chev">${icon('chev', 16)}</span></button>
         <button class="li" data-act="health-sheet" style="--c:#ff375f"><span class="ic">${icon('heart', 18)}</span><span class="tx"><div class="tt">Apple Health</div>
           <div class="st">${view().health ? 'Last import ' + esc(ago(Date.parse(view().health.ts))) : 'Sleep, HR, HRV, steps, weight via a Shortcut'}</div></span><span class="chev">${icon('chev', 16)}</span></button>
+        <button class="li" data-act="body-profile" style="--c:#30d158"><span class="ic">${icon('scale', 18)}</span><span class="tx"><div class="tt">Body profile</div>
+          <div class="st">Birthday, height, sex, body fat — set once</div></span><span class="chev">${icon('chev', 16)}</span></button>
         <button class="li" data-act="strong-import" style="--c:#0a84ff"><span class="ic">${icon('dumbbell', 18)}</span><span class="tx"><div class="tt">Import from Strong</div>
           <div class="st">Your whole Strong history, from its CSV export</div></span><span class="chev">${icon('chev', 16)}</span></button>
         <button class="li" data-act="siri-sheet" style="--c:#bf5af2"><span class="ic">${icon('bolt', 18)}</span><span class="tx"><div class="tt">Siri & Apple Watch</div>

@@ -6,6 +6,7 @@
    and says when it is waiting for a fresh one.
    ══════════════════════════════════════════════════════════════════════ */
 import { renderLab } from './system.js';
+import { weatherCard } from './weather.js';
 import { fuelCard } from './daily.js';
 import {
   L, state, view, emit, changed, esc, icon, today, shiftDay, fmt1, fmtMins, fmtDay, daysBetween, homeMove, anywhere, caState, checkCa, onPublicCopy, pair,
@@ -179,6 +180,7 @@ export function renderToday() {
       <p>Everything you log here lands in ARK on your PC. Start with whatever is easiest today.</p></section>`;
   }
 
+  H += weatherCard();
   H += `<section class="card frost rings">
     <div>${ringsSvg([
       { v: total ? done / total : 0, c: C.habits },
@@ -221,7 +223,7 @@ export function renderToday() {
       : { ic: 'dumbbell', c: C.train, t: 'Workout in progress', st: 'Tap to continue', act: 'open-workout' });
   } else if (todays.length) {
     const w = todays[todays.length - 1];
-    items.push({ done: true, ic: 'dumbbell', c: C.train, t: 'Workout logged', st: `${w.exercises.length} exercises · ${Math.round(w.volume).toLocaleString()} ${w.unit || 'kg'}` });
+    items.push({ done: true, ic: 'dumbbell', c: C.train, t: 'Workout logged', st: `${(w.exercises || []).length} exercises · ${Math.round(w.volume).toLocaleString()} ${w.unit || 'kg'}` });
   } else {
     const tn = trainNext(v);
     if (tn.length) {

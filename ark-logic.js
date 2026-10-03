@@ -1509,6 +1509,213 @@ function parseHealthHash(raw) {
 }
 
   },
+  "./habitlog": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.HABIT_COLORS = void 0;
+exports.cleanCheck = cleanCheck;
+exports.cleanHabitMeta = cleanHabitMeta;
+exports.upsertCheck = upsertCheck;
+exports.removeCheck = removeCheck;
+exports.clearDay = clearDay;
+exports.checkinsOf = checkinsOf;
+exports.habitStats = habitStats;
+/**
+ * HABIT CHECK-INS — a habit is more than a tick per day: each check-in has a time, an optional amount
+ * (minutes of cold, glasses of water…) and an optional note. The day log (`habitLog`) still says whether a
+ * habit was done; check-ins add the detail. Days ticked before check-ins existed count as check-ins with no
+ * time and no amount — never given an invented one.
+ *
+ * Everything the habit screens show comes from here: streaks, consistency, the heatmap, the summary and the
+ * analytics (timeline, weekdays, year comparison, monthly consistency, amount ranges, time of day, streaks).
+ */
+const series_1 = require("./series");
+const dates_1 = require("./dates");
+const isDay = (d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
+const num = (v) => { const n = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v); return isFinite(n) ? n : NaN; };
+/** A check-in from outside (the phone), or null when it is not one. */
+function cleanCheck(c) {
+    if (!c || typeof c.id !== 'string' || !c.id || c.id.length > 64 || typeof c.habit !== 'string' || !c.habit || !isDay(c.day))
+        return null;
+    const at = typeof c.at === 'string' && isFinite(Date.parse(c.at)) ? new Date(Date.parse(c.at)).toISOString() : null;
+    const out = { id: c.id, habit: c.habit, day: c.day, at };
+    const a = num(c.amount);
+    if (c.amount != null && c.amount !== '' && a >= 0 && a <= 100000)
+        out.amount = Math.round(a * 100) / 100;
+    if (typeof c.note === 'string' && c.note.trim())
+        out.note = c.note.trim().slice(0, 500);
+    if (typeof c.src === 'string')
+        out.src = c.src.slice(0, 12);
+    return out;
+}
+/** Colour, unit and the amount slider's range, validated. Unknown fields are dropped. */
+function cleanHabitMeta(d) {
+    const m = {};
+    if (typeof d.color === 'string' && /^#[0-9a-f]{6}$/i.test(d.color))
+        m.color = d.color.toLowerCase();
+    if (typeof d.unit === 'string')
+        m.unit = d.unit.trim().slice(0, 12);
+    const lo = num(d.amin), hi = num(d.amax), st = num(d.astep);
+    if (lo >= 0 && hi > lo && hi <= 100000) {
+        m.amin = lo;
+        m.amax = hi;
+    }
+    if (st > 0 && st <= 10000)
+        m.astep = st;
+    return m;
+}
+/** Insert or replace a check-in (by id). Returns the new list for that habit. */
+function upsertCheck(all, c) {
+    const list = (all[c.habit] || []).filter(x => x.id !== c.id);
+    list.push(c);
+    list.sort((a, b) => (a.day + (a.at || '')).localeCompare(b.day + (b.at || '')));
+    all[c.habit] = list;
+    return list;
+}
+function removeCheck(all, id) {
+    for (const h of Object.keys(all)) {
+        const i = (all[h] || []).findIndex(x => x.id === id);
+        if (i >= 0)
+            return all[h].splice(i, 1)[0];
+    }
+    return null;
+}
+/** Untick a day: its check-ins for that habit go too. */
+function clearDay(all, habit, day) {
+    const before = (all[habit] || []).length;
+    all[habit] = (all[habit] || []).filter(x => x.day !== day);
+    return before - all[habit].length;
+}
+/** Every check-in for one habit, oldest first: real ones, plus ticked days that have none (no time, no amount). */
+function checkinsOf(hid, habitLog, all) {
+    const real = (all[hid] || []).filter(c => !habitLog[c.day] || habitLog[c.day][hid] !== false);
+    const withChecks = new Set(real.map(c => c.day));
+    const out = real.map(c => ({ id: c.id, day: c.day, at: c.at, amount: c.amount == null ? null : c.amount, note: c.note || null }));
+    Object.keys(habitLog || {}).forEach(d => { if (isDay(d) && habitLog[d] && habitLog[d][hid] && !withChecks.has(d))
+        out.push({ id: null, day: d, at: null, amount: null, note: null }); });
+    return out.sort((a, b) => (a.day + (a.at || '')).localeCompare(b.day + (b.at || '')));
+}
+const MON = (d) => { const [y, m, dd] = d.split('-').map(Number); const t = new Date(y, m - 1, dd); return (t.getDay() + 6) % 7; }; // 0 = Monday
+const ym = (d) => d.slice(0, 7);
+const pad = (n) => String(n).padStart(2, '0');
+const r1 = (x) => Math.round(x * 10) / 10;
+const level = (s, n) => (n === 0 ? null : s >= 0.75 ? 'High' : s >= 0.4 ? 'Average' : 'Low');
+/**
+ * The habit screens' numbers. "Amount" is the logged amount when the habit has a unit and the day has
+ * amounts; otherwise each check-in counts 1. Consistency = share of weeks with at least one check-in
+ * (the last 8 weeks for the card, each month for the chart) — regular beats daily.
+ */
+function habitStats(hid, habitLog, all, today, meta = {}, weeks = 18) {
+    const C = checkinsOf(hid, habitLog, all).filter(c => c.day <= today);
+    const unit = meta.unit || null;
+    const byDay = new Map();
+    C.forEach(c => {
+        const d = byDay.get(c.day) || { n: 0, amt: null };
+        d.n++;
+        if (unit && c.amount != null)
+            d.amt = (d.amt || 0) + c.amount;
+        byDay.set(c.day, d);
+    });
+    const val = (d) => { const x = byDay.get(d); return !x ? 0 : unit ? (x.amt == null ? 0 : x.amt) : x.n; };
+    const days = [...byDay.keys()].sort();
+    const has = (d) => byDay.has(d);
+    // streaks
+    let current = 0, k = has(today) ? today : (0, series_1.shiftDayKey)(today, -1);
+    while (has(k)) {
+        current++;
+        k = (0, series_1.shiftDayKey)(k, -1);
+    }
+    const streaks = [];
+    days.forEach(d => {
+        const last = streaks[streaks.length - 1];
+        if (last && (0, series_1.shiftDayKey)(last.end, 1) === d) {
+            last.end = d;
+            last.len++;
+        }
+        else
+            streaks.push({ start: d, end: d, len: 1 });
+    });
+    const longest = streaks.reduce((a, s) => Math.max(a, s.len), 0);
+    // consistency over the last 8 weeks (Monday-based, this week included)
+    const monday = (d) => (0, series_1.shiftDayKey)(d, -MON(d));
+    const wk0 = monday(today);
+    let hit = 0;
+    for (let w = 0; w < 8; w++) {
+        const s = (0, series_1.shiftDayKey)(wk0, -7 * w);
+        if (days.some(d => d >= s && d <= (0, series_1.shiftDayKey)(s, 6)))
+            hit++;
+    }
+    const firstDay = days[0] || null;
+    const span = firstDay ? Math.min(8, Math.floor((0, dates_1.daysBetween)(monday(firstDay), wk0) / 7) + 1) : 0;
+    const cScore = span ? hit / span : 0;
+    // amounts
+    const amtDays = unit ? days.filter(d => (byDay.get(d).amt) != null) : days;
+    const amts = amtDays.map(d => ({ d, v: val(d) }));
+    const avg = amts.length ? r1(amts.reduce((a, x) => a + x.v, 0) / amts.length) : null;
+    const wd = [[], [], [], [], [], [], []];
+    amts.forEach(x => wd[MON(x.d)].push(x.v));
+    const weekdayAvg = wd.map(a => (a.length ? r1(a.reduce((p, q) => p + q, 0) / a.length) : null));
+    let lowest = null, highest = null;
+    amts.forEach(x => { if (!lowest || x.v < lowest.v)
+        lowest = { v: x.v, day: x.d }; if (!highest || x.v > highest.v)
+        highest = { v: x.v, day: x.d }; });
+    const thisMonth = ym(today), mDays = amts.filter(x => ym(x.d) === thisMonth);
+    const lastDay = days[days.length - 1];
+    // heatmap: `weeks` columns ending with this week, Monday on top
+    const heatmap = [];
+    for (let w = weeks - 1; w >= 0; w--) {
+        const s = (0, series_1.shiftDayKey)(wk0, -7 * w), col = [];
+        for (let i = 0; i < 7; i++) {
+            const d = (0, series_1.shiftDayKey)(s, i);
+            col.push({ day: d, on: has(d), future: d > today });
+        }
+        heatmap.push(col);
+    }
+    // the last 12 months
+    const months = [];
+    const [ty, tm] = today.split('-').map(Number);
+    for (let i = 11; i >= 0; i--) {
+        const dt = new Date(ty, tm - 1 - i, 1), key = dt.getFullYear() + '-' + pad(dt.getMonth() + 1);
+        const mdays = days.filter(d => ym(d) === key), vals = (unit ? mdays.filter(d => byDay.get(d).amt != null) : mdays).map(val);
+        const first = key + '-01', lastOf = key + '-' + pad(new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate());
+        const end = lastOf < today ? lastOf : today;
+        let wks = 0, wh = 0;
+        if (first <= today)
+            for (let s = monday(first); s <= end; s = (0, series_1.shiftDayKey)(s, 7)) {
+                wks++;
+                if (mdays.some(d => d >= s && d <= (0, series_1.shiftDayKey)(s, 6)))
+                    wh++;
+            }
+        const started = firstDay && lastOf >= firstDay && first <= today;
+        months.push({ ym: key, total: r1(mdays.reduce((a, d) => a + val(d), 0)), days: mdays.length, weeksHit: wh, weeks: wks,
+            level: started ? level(wks ? wh / wks : 0, wks) : null, min: vals.length ? Math.min(...vals) : null, max: vals.length ? Math.max(...vals) : null });
+    }
+    // weekdays over the last 365 days
+    const yearAgo = (0, series_1.shiftDayKey)(today, -365), totals = [0, 0, 0, 0, 0, 0, 0];
+    days.filter(d => d > yearAgo).forEach(d => { totals[MON(d)] += val(d); });
+    const sumT = totals.reduce((a, b) => a + b, 0) || 1;
+    // this year vs last
+    const yr = ty, monthsOf = (y) => Array.from({ length: 12 }, (_, m) => r1(days.filter(d => ym(d) === y + '-' + pad(m + 1)).reduce((a, d) => a + val(d), 0)));
+    const prevHas = days.some(d => d.startsWith(String(yr - 1)));
+    // time of day for check-ins that have one
+    const times = C.filter(c => c.at && c.day > yearAgo).map(c => { const t = new Date(c.at); return { day: c.day, minutes: t.getHours() * 60 + t.getMinutes() }; });
+    return {
+        unit, days: days.length, checkins: C.length, current, longest,
+        consistency: { level: level(cScore, span), score: Math.round(cScore * 100) },
+        avg, weekdayAvg,
+        latest: lastDay ? { day: lastDay, amount: unit ? (byDay.get(lastDay).amt) : byDay.get(lastDay).n } : null,
+        summary: { monthTotal: r1(mDays.reduce((a, x) => a + x.v, 0)), monthAvg: mDays.length ? r1(mDays.reduce((a, x) => a + x.v, 0) / mDays.length) : null,
+            total: r1(amts.reduce((a, x) => a + x.v, 0)), checkins: C.length, trackedDays: days.length, first: firstDay, latest: lastDay || null, lowest, highest },
+        heatmap, months,
+        weekdays: { totals: totals.map(r1), workdays: Math.round((totals.slice(0, 5).reduce((a, b) => a + b, 0)) / sumT * 100), weekends: Math.round((totals[5] + totals[6]) / sumT * 100) },
+        years: { year: yr, months: monthsOf(yr), prev: prevHas ? monthsOf(yr - 1) : null },
+        times, streaks: streaks.filter(s => s.end > yearAgo),
+    };
+}
+/** A palette for habits without a colour of their own, by position. */
+exports.HABIT_COLORS = ['#4fd1c5', '#c4b5fd', '#e5e7eb', '#f87171', '#facc15', '#a78bfa', '#4ade80', '#f9a8d4', '#38bdf8', '#fb923c', '#a3e635', '#fda4af'];
+
+  },
   "./hourly": function (exports, module, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -1810,6 +2017,9 @@ __exportStar(require("./sanitize"), exports);
 __exportStar(require("./strong"), exports);
 __exportStar(require("./lifts"), exports);
 __exportStar(require("./logger"), exports);
+__exportStar(require("./habitlog"), exports);
+__exportStar(require("./systems"), exports);
+__exportStar(require("./weather"), exports);
 
   },
   "./lifts": function (exports, module, require) {
@@ -2377,7 +2587,7 @@ exports.LYMPH_RED_FLAGS = [
     'Red, hot, spreading skin is cellulitis — antibiotics, not massage.',
 ];
 function lymphReport(inp) {
-    var _a;
+    var _a, _b;
     const t = inp.today, B = inp.bio || {};
     const D = [];
     const v = (day, k, lo, hi) => (0, sanitize_1.numIn)((B[day] || {})[k], lo, hi);
@@ -2385,13 +2595,36 @@ function lymphReport(inp) {
     const stepsToday = v(t, 'steps', 1, 150000);
     const past = [1, 2, 3, 4, 5, 6, 7].map(i => v(dk(t, -i), 'steps', 1, 150000)).filter((x) => x !== null);
     const steps7 = past.length >= 3 ? past.reduce((a, b) => a + b, 0) / past.length : null;
-    const known = stepsToday !== null || steps7 !== null;
+    // Without a step count, movement still shows: Apple Health's active energy (~40 kcal per 1,000 steps) or
+    // exercise minutes, else training in the last 2 days. That is an estimate and is labelled as one.
+    const stepEq = (day) => {
+        const st = v(day, 'steps', 1, 150000);
+        if (st !== null)
+            return st;
+        const act = v(day, 'active', 1, 8000), exm = v(day, 'exmin', 1, 600);
+        if (act !== null)
+            return Math.min(20000, act * 25);
+        if (exm !== null)
+            return Math.min(16000, 3000 + exm * 100);
+        return null;
+    };
+    const trainedRecently = (inp.sessions || []).some(s => s && s.date >= dk(t, -1) && s.date <= t && (s.exercises || []).length);
+    const eqToday = stepsToday !== null ? null : stepEq(t);
+    const eqPast = [1, 2, 3, 4, 5, 6, 7].map(i => stepEq(dk(t, -i))).filter((x) => x !== null);
+    const eq7 = eqPast.length >= 3 ? eqPast.reduce((a, b) => a + b, 0) / eqPast.length : null;
+    const bySteps = stepsToday !== null || steps7 !== null;
+    const known = bySteps || eqToday !== null || eq7 !== null || trainedRecently;
+    const basis = !known ? null : bySteps ? 'steps' : 'estimate';
     // ── the pump ──
     // Today's movement counts most; your usual week fills in before today's steps arrive.
-    const stepsBasis = stepsToday !== null && steps7 !== null ? 0.6 * stepsToday + 0.4 * steps7 : ((_a = stepsToday !== null && stepsToday !== void 0 ? stepsToday : steps7) !== null && _a !== void 0 ? _a : 6000);
+    const stepsBasis = bySteps
+        ? (stepsToday !== null && steps7 !== null ? 0.6 * stepsToday + 0.4 * steps7 : ((_a = stepsToday !== null && stepsToday !== void 0 ? stepsToday : steps7) !== null && _a !== void 0 ? _a : 6000))
+        : eqToday !== null && eq7 !== null ? 0.6 * eqToday + 0.4 * eq7 : ((_b = eqToday !== null && eqToday !== void 0 ? eqToday : eq7) !== null && _b !== void 0 ? _b : (trainedRecently ? 6000 : 6000));
     let pump = stepPump(stepsBasis);
-    if (known)
+    if (bySteps)
         D.push({ label: 'Walking: ' + Math.round(stepsBasis).toLocaleString() + ' steps' + (stepsToday === null ? ' (your usual day)' : ''), d: r0(pump - 50), ev: 'A', src: 'Exercise raises lymph flow 2–3× (Lane 2005)', area: 'pump' });
+    else if (known)
+        D.push({ label: eqToday !== null || eq7 !== null ? 'Movement ≈ ' + Math.round(stepsBasis / 500) * 500 + ' steps (from active energy / exercise — no step count)' : 'Training in the last 2 days (no step count — an estimate)', d: r0(pump - 50), ev: 'B', src: 'Exercise raises lymph flow 2–3× (Lane 2005)', area: 'pump' });
     const ex = v(t, 'exmin', 0, 600);
     if (ex !== null && ex > 0) {
         const b = Math.min(8, ex / 4);
@@ -2437,11 +2670,12 @@ function lymphReport(inp) {
         load += x;
         D.push({ label: Math.round(sodium).toLocaleString() + ' mg sodium today', d: -r0(x), ev: 'B', src: 'Salt is buffered in skin and cleared by lymphatics (Machnik 2009); WHO: <2 g sodium/day', area: 'load' });
     }
-    const lastNight = doses.filter(d => d.k === 'alcohol' && Date.parse(d.at) >= new Date(t + 'T00:00:00').getTime() - 12 * 3600e3).reduce((a, d) => a + (0, sanitize_1.numOr)(d.amount, 0, 40, 0), 0);
-    if (lastNight >= 2) {
-        const x = Math.min(25, (lastNight - 1) * 8);
+    // Alcohol and illness were taken out of the model on request (2026-10-03).
+    const heat = (0, sanitize_1.numIn)(inp.heat, -40, 55);
+    if (heat !== null && heat >= 26) {
+        const x = Math.min(15, (heat - 25) * 2);
         load += x;
-        D.push({ label: lastNight + ' drinks since last evening', d: -r0(x), ev: 'B', src: 'A cause of morning puffiness; heavy doses suppressed brain clearance in mice (Lundgaard 2018)', area: 'load' });
+        D.push({ label: 'Heat — feels like ' + Math.round(heat) + '°', d: -r0(x), ev: 'B', src: 'Heat widens vessels and pools fluid in the lower legs (heat oedema)', area: 'load' });
     }
     const infl = (0, sanitize_1.numIn)(inp.inflammation, 0, 100);
     if (infl !== null && Math.abs(infl - 50) >= 5) {
@@ -2454,17 +2688,13 @@ function lymphReport(inp) {
         load += 8;
         D.push({ label: 'Short night (' + sleep + ' h)', d: -8, ev: 'C', src: 'Short sleep and salt/alcohol are the usual causes of a puffy face', area: 'load' });
     }
-    if ((B[t] || {}).sick || ((B[t] || {}).tags || []).includes('sick')) {
-        load += 10;
-        D.push({ label: 'Ill today', d: -10, ev: 'B', src: 'Nodes swell while they fight infection', area: 'load' });
-    }
     load = clamp(load);
     // head & face: drained by gravity once upright; puffiness tracks salt, alcohol and short sleep
     regions.head = clamp(70 - (load - 30) * 0.9);
     // Puffiness is about the LOAD (salt, drinks, short sleep, inflammation); little movement is its own
     // message — a still day is not the same thing as fluid building up.
     const balance = load >= 55 || (load >= 45 && pump < 40)
-        ? { key: 'puffy', title: 'Puffiness likely', text: 'More fluid to clear than usual and not much moving it — expect puffy eyes or ankles. Walk, cut the salt, skip the evening drink.', color: '#ff9f0a' }
+        ? { key: 'puffy', title: 'Puffiness likely', text: 'More fluid to clear than usual and not much moving it — expect puffy eyes or ankles. Walk, cut the salt, drink water through the day.', color: '#ff9f0a' }
         : load >= 42
             ? { key: 'mild', title: 'Mild fluid load', text: 'Some extra fluid to clear today — a walk and an ordinary salt intake handle it.', color: '#ffd60a' }
             : pump < 35
@@ -2485,10 +2715,6 @@ function lymphReport(inp) {
         const x = clamp((deep - 1) * 8, -8, 8);
         brain += x;
     }
-    if (lastNight >= 2) {
-        brain -= 10;
-        D.push({ label: 'Alcohol last night', d: -10, ev: 'C', src: 'Higher doses suppressed CSF influx ~30 % in mice (Lundgaard 2018)', area: 'brain' });
-    }
     const vo2 = (0, sanitize_1.numIn)([0, 1, 2, 3, 4, 5, 6, 7].map(i => (B[dk(t, -i)] || {}).vo2).find(x => (0, sanitize_1.numIn)(x, 10, 90) !== null), 10, 90);
     if (vo2 !== null) {
         const x = clamp((vo2 - 40) * 0.5, -6, 8);
@@ -2497,15 +2723,15 @@ function lymphReport(inp) {
     }
     // ── tips: the vault's practical lines, picked by what is actually weak ──
     const tips = [];
-    if (steps7 !== null && steps7 < 7000)
+    if ((steps7 !== null && steps7 < 7000) || !bySteps)
         tips.push('Walking is the pump: aim for 7,000–10,000 steps or 30–45 min a day.');
+    if (heat !== null && heat >= 26)
+        tips.push('Hot day: water through the day, legs up for 10 min this evening, and walk in the cooler hours.');
     tips.push('Every 30–60 min of sitting or standing still: 2–5 min of walking or 10–20 calf raises.');
     if (regionSets.legs < 3)
         tips.push('Include standing and seated calf raises when you lift — the calf is the leg\'s pump.');
     if (sodium > 2000)
         tips.push('Keep salt under 5 g (~2 g sodium) a day — avoid a big salty dinner before an important morning.');
-    if (lastNight >= 1)
-        tips.push('Keep alcohol to 0–1 drinks, especially in the evening.');
     if (over > 0)
         tips.push('A healthier waist is the strongest long-term lymph protector in the data.');
     tips.push('Flights over 4–5 h: knee-high 15–20 mmHg compression socks and ankle pumps every 20–30 min.');
@@ -2515,11 +2741,9 @@ function lymphReport(inp) {
         const day = dk(t, -i), p = (0, sanitize_1.numIn)((B[day] || {}).puff, 0, 3);
         if (p === null)
             continue;
-        const startPrev = new Date(dk(day, -1) + 'T17:00:00').getTime(), startDay = new Date(day + 'T06:00:00').getTime();
-        const alc = doses.filter(d => d.k === 'alcohol' && Date.parse(d.at) >= startPrev && Date.parse(d.at) < startDay).reduce((a, d) => a + (0, sanitize_1.numOr)(d.amount, 0, 40, 0), 0);
         const salt = doses.filter(d => d.k === 'sodium' && dayOf(d.at) === dk(day, -1)).reduce((a, d) => a + (0, sanitize_1.numOr)(d.amount, 0, 20000, 0), 0);
         const sl = (0, sanitize_1.numIn)((B[day] || {}).sleep, 0, 16);
-        P.push({ puff: p, alc, salt, short: sl !== null && sl < 6 });
+        P.push({ puff: p, salt, short: sl !== null && sl < 6 });
     }
     const lines = [];
     const cmp = (label, f) => {
@@ -2531,13 +2755,14 @@ function lymphReport(inp) {
         }
     };
     if (P.length >= 8) {
-        cmp('After 2+ drinks the evening before', x => x.alc >= 2);
         cmp('After a salty day (3,000+ mg sodium)', x => x.salt >= 3000);
         cmp('After a night under 6 h', x => x.short);
         if (!lines.length)
-            lines.push('No clear pattern yet between your puffiness and drinks, salt or short nights.');
+            lines.push('No clear pattern yet between your puffiness and salt or short nights.');
     }
-    return { known, pump: r0(pump), load: r0(load), balance, regions: { legs: r0(regions.legs), trunk: r0(regions.trunk), arms: r0(regions.arms), head: r0(regions.head) },
+    // the pump over the last 7 days (movement only — the quick read of a week)
+    const trend = [6, 5, 4, 3, 2, 1, 0].map(i => { const day = dk(t, -i), e = stepEq(day); return { day, pump: e === null ? null : r0(clamp(stepPump(e) + fatHit)) }; });
+    return { known, basis, trend, pump: r0(pump), load: r0(load), balance, regions: { legs: r0(regions.legs), trunk: r0(regions.trunk), arms: r0(regions.arms), head: r0(regions.head) },
         brain: { score: r0(clamp(brain)), known: brainKnown, note: 'Contested science, almost all from mice — shown for interest, not as a target.' },
         drivers: D.filter(d => d.d !== 0 || d.area === 'brain'), tips: tips.slice(0, 5), puffiness: { n: P.length, lines } };
 }
@@ -5847,6 +6072,7 @@ const gym_1 = require("./gym");
 const readiness_1 = require("./readiness");
 const bloodwork_1 = require("./bloodwork");
 const strong_1 = require("./strong");
+const habitlog_1 = require("./habitlog");
 function emptySnapshot() {
     return {
         v: 1, rev: 0, appliedSeq: 0, day: (0, dates_1.dayKey)(new Date()),
@@ -5898,8 +6124,29 @@ function applyEvent(s, e) {
             const day = s.habitLog[d.day] || (s.habitLog[d.day] = {});
             if (d.done)
                 day[d.habit] = true;
-            else
+            else {
                 delete day[d.habit];
+                if (s.habitChecks)
+                    (0, habitlog_1.clearDay)(s.habitChecks, d.habit, d.day);
+            }
+            return;
+        }
+        case 'habit.check': {
+            // A check-in with its time, amount and note (upsert by id); it ticks the day too.
+            const c = (0, habitlog_1.cleanCheck)(d.check);
+            if (!c || !s.habits.some(h => h.id === c.habit))
+                return;
+            (0, habitlog_1.upsertCheck)(s.habitChecks || (s.habitChecks = {}), c);
+            (s.habitLog[c.day] || (s.habitLog[c.day] = {}))[c.habit] = true;
+            return;
+        }
+        case 'habit.uncheck': {
+            if (!s.habitChecks || typeof d.id !== 'string')
+                return;
+            const gone = (0, habitlog_1.removeCheck)(s.habitChecks, d.id);
+            // The last check-in of a day takes the tick with it.
+            if (gone && !(s.habitChecks[gone.habit] || []).some(x => x.day === gone.day) && s.habitLog[gone.day])
+                delete s.habitLog[gone.day][gone.habit];
             return;
         }
         case 'workout.add': {
@@ -6165,6 +6412,7 @@ function applyEvent(s, e) {
                 h.pillar = d.pillar;
             if (d.effect !== undefined)
                 h.effect = d.effect;
+            Object.assign(h, (0, habitlog_1.cleanHabitMeta)(d));
             return;
         }
         case 'habit.hide': {
@@ -6546,6 +6794,236 @@ function daysSinceCapture(s, today) {
     const [y1, m1, d1] = last.split('-').map(Number);
     const [y2, m2, d2] = today.split('-').map(Number);
     return Math.round((new Date(y2, m2 - 1, d2).getTime() - new Date(y1, m1 - 1, d1).getTime()) / 864e5);
+}
+
+  },
+  "./systems": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.vo2Median = vo2Median;
+exports.bodyAge = bodyAge;
+exports.systemsReport = systemsReport;
+/**
+ * THE BODY AT A GLANCE — a report card per body system, and a body age.
+ *
+ * Body age: each marker you have is compared with a published reference and turned into years with one
+ * rule — adult all-cause mortality roughly doubles every ~8 years (Gompertz), so a hazard ratio HR is worth
+ * 8·log2(HR) years. Markers and sources:
+ *   resting HR  — HR 1.09 per 10 bpm above 60 (Zhang 2016, CMAJ meta-analysis)
+ *   VO₂max      — HR 0.87 per MET of fitness (Kodama 2009, JAMA) against the FRIEND age/sex medians (Kaminsky 2015)
+ *   BMI         — HR 1.31 per 5 kg/m² above 25 (Global BMI Mortality Collaboration 2016); ignored when your
+ *                 body fat says the weight is muscle
+ *   sleep       — HR 1.12 for habitual nights under 6 h (Cappuccio 2010), scaled between 6 and 7 h
+ *   steps       — HR 0.85 per 1,000 steps a day around 8,000 (Paluch 2022, Lancet Public Health)
+ * Each marker is capped, the result is a range, and it needs your age plus two markers. It is an estimate
+ * to steer by, not a diagnosis — the markers overlap, so the sum overstates precision; the range says so.
+ */
+const series_1 = require("./series");
+const GOMPERTZ = 8;
+const yrs = (hr, units) => GOMPERTZ * Math.log2(hr) * units;
+const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+const r1 = (x) => Math.round(x * 10) / 10;
+const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+function recent(bio, today, f, days, lo = -Infinity) {
+    const out = [];
+    for (let i = 0; i < days; i++) {
+        const v = Number((bio[(0, series_1.shiftDayKey)(today, -i)] || {})[f]);
+        if (isFinite(v) && v > lo)
+            out.push(v);
+    }
+    return out;
+}
+function latest(bio, today, f, days = 120) {
+    for (let i = 0; i < days; i++) {
+        const v = Number((bio[(0, series_1.shiftDayKey)(today, -i)] || {})[f]);
+        if (isFinite(v) && v > 0)
+            return v;
+    }
+    return null;
+}
+/** FRIEND registry (treadmill) 50th-percentile VO₂max by decade, ml/kg/min. */
+const FRIEND = { male: [48.0, 42.4, 37.8, 32.6, 28.2, 24.4], female: [37.6, 30.2, 26.7, 23.4, 20.0, 18.3] };
+function vo2Median(age, sex) {
+    const s = /^f/i.test(sex || '') ? 'female' : /^m/i.test(sex || '') ? 'male' : null;
+    if (!s || !(age >= 18))
+        return null;
+    const t = FRIEND[s], x = clamp((age - 25) / 10, 0, t.length - 1), i = Math.floor(x), f = x - i;
+    return r1(i + 1 < t.length ? t[i] + (t[i + 1] - t[i]) * f : t[i]);
+}
+function bodyAge(inp) {
+    const M = [], missing = [];
+    let lever = null;
+    const consider = (label, text, gain) => { if (gain > 0.3 && (!lever || gain > lever.years))
+        lever = { label, text, years: r1(gain) }; };
+    const rhr = mean(recent(inp.bio, inp.today, 'rhr', 14, 25));
+    if (rhr != null) {
+        const y = clamp(yrs(1.09, (rhr - 60) / 10), -3, 6);
+        M.push({ key: 'rhr', label: 'Resting heart rate', value: Math.round(rhr) + ' bpm', years: r1(y), ref: 'vs 60 bpm', source: 'Zhang 2016' });
+        if (rhr > 60)
+            consider('Resting heart rate', 'Bring resting HR toward 60 bpm (zone-2 cardio, sleep, less alcohol)', y);
+    }
+    else
+        missing.push('Resting heart rate (Apple Watch via the Health link)');
+    const vo2 = latest(inp.bio, inp.today, 'vo2') || (inp.vo2max && inp.vo2max > 0 ? inp.vo2max : null);
+    const med = inp.age != null ? vo2Median(inp.age, inp.sex || null) : null;
+    if (vo2 && med) {
+        const mets = (vo2 - med) / 3.5, y = clamp(yrs(0.87, mets), -8, 8);
+        M.push({ key: 'vo2', label: 'VO₂max', value: r1(vo2) + ' ml/kg/min', years: r1(y), ref: 'vs ' + med + ' typical for your age', source: 'Kodama 2009 · FRIEND' });
+        consider('VO₂max', '+3.5 ml/kg/min (one MET) is worth about ' + r1(-yrs(0.87, 1)) + ' years — intervals and zone-2 cardio raise it', -yrs(0.87, 1));
+    }
+    else
+        missing.push(vo2 ? 'VO₂max reference (needs sex in your profile)' : 'VO₂max (Apple Watch estimates it on outdoor walks/runs)');
+    const w = inp.weight, h = inp.height ? inp.height / 100 : null;
+    if (w && h) {
+        const bmi = w / (h * h), lean = inp.bodyfat != null && inp.bodyfat < (/^f/i.test(inp.sex || '') ? 28 : 20);
+        const y = bmi > 25 && !lean ? clamp(yrs(1.31, (bmi - 25) / 5), 0, 8) : 0;
+        M.push({ key: 'bmi', label: 'BMI', value: r1(bmi) + (lean ? ' · lean (' + inp.bodyfat + ' % fat)' : ''), years: r1(y), ref: lean && bmi > 25 ? 'muscle, not fat — not counted' : 'vs 25', source: 'GBMC 2016' });
+        if (y > 0)
+            consider('BMI', 'Each 1 kg/m² toward 25 is worth about ' + r1(yrs(1.31, 0.2)) + ' years', y);
+    }
+    else
+        missing.push('Height and weight (More › Body profile)');
+    const sleep = mean(recent(inp.bio, inp.today, 'sleep', 14, 2));
+    if (sleep != null) {
+        const short = clamp(7 - sleep, 0, 1), y = yrs(1.12, short);
+        M.push({ key: 'sleep', label: 'Sleep', value: r1(sleep) + ' h a night', years: r1(y), ref: '7 h or more', source: 'Cappuccio 2010' });
+        if (y > 0)
+            consider('Sleep', 'Reach 7 h a night', y);
+    }
+    else
+        missing.push('Sleep (logged or from Apple Health)');
+    const steps = mean(recent(inp.bio, inp.today, 'steps', 14, 0));
+    if (steps != null) {
+        const y = clamp(yrs(0.85, (Math.min(steps, 10000) - 8000) / 1000), -1.5, 6);
+        M.push({ key: 'steps', label: 'Daily steps', value: Math.round(steps).toLocaleString('en-US') + ' a day', years: r1(y), ref: 'vs 8,000', source: 'Paluch 2022' });
+        if (steps < 8000)
+            consider('Daily steps', '+2,000 steps a day is worth about ' + r1(-yrs(0.85, 2)) + ' years', Math.min(y, -yrs(0.85, 2)));
+    }
+    else
+        missing.push('Steps (Apple Health)');
+    if (inp.age == null)
+        return { known: false, why: 'Add your birthday in More › Body profile — body age is measured against it.', age: null, bodyAge: null, low: null, high: null, markers: M, missing, lever };
+    if (M.length < 2)
+        return { known: false, why: 'Needs two or more markers — ' + missing.slice(0, 2).join(', ') + '.', age: inp.age, bodyAge: null, low: null, high: null, markers: M, missing, lever };
+    const sum = M.reduce((a, m) => a + m.years, 0), spread = 1.5 + 0.6 * M.length;
+    const est = inp.age + sum;
+    return { known: true, age: inp.age, bodyAge: Math.round(est), low: Math.round(est - spread), high: Math.round(est + spread), markers: M, missing, lever };
+}
+const grade = (s) => (s == null ? null : s >= 70 ? 'good' : s >= 45 ? 'watch' : 'poor');
+const avgScore = (parts) => {
+    if (!parts.length)
+        return { score: null, weakest: null, action: null };
+    const w = parts.slice().sort((a, b) => a.s - b.s)[0];
+    return { score: Math.round(parts.reduce((a, p) => a + p.s, 0) / parts.length), weakest: w.s < 70 ? w.label : null, action: w.s < 70 ? w.act : null };
+};
+function systemsReport(inp) {
+    const rows = [], T = inp.today;
+    // heart & fitness
+    {
+        const P = [], bits = [];
+        const rhr = mean(recent(inp.bio, T, 'rhr', 7, 25));
+        if (rhr != null) {
+            P.push({ s: clamp(100 - (rhr - 52) * 3, 0, 100), label: 'resting HR ' + Math.round(rhr), act: 'Zone-2 cardio and earlier nights bring resting HR down' });
+            bits.push('RHR ' + Math.round(rhr));
+        }
+        const h7 = mean(recent(inp.bio, T, 'hrv', 7, 5)), h28 = mean(recent(inp.bio, T, 'hrv', 28, 5));
+        if (h7 != null && h28 != null) {
+            const pct = (h7 / h28 - 1) * 100;
+            P.push({ s: clamp(75 + pct * 2, 0, 100), label: 'HRV ' + (pct >= 0 ? '+' : '') + Math.round(pct) + ' % vs your normal', act: 'HRV below your normal — an easier day and a full night' });
+            bits.push('HRV ' + Math.round(h7));
+        }
+        const vo2 = latest(inp.bio, T, 'vo2') || inp.vo2max || null, med = inp.age != null ? vo2Median(inp.age, inp.sex || null) : null;
+        if (vo2 && med) {
+            P.push({ s: clamp(60 + (vo2 - med) * 3, 0, 100), label: 'VO₂max ' + r1(vo2), act: 'VO₂max is the strongest single fitness marker — intervals once a week' });
+            bits.push('VO₂max ' + r1(vo2));
+        }
+        const st = mean(recent(inp.bio, T, 'steps', 7, 0));
+        if (st != null) {
+            P.push({ s: clamp(st / 100, 0, 100), label: Math.round(st).toLocaleString('en-US') + ' steps a day', act: 'More daily steps — the easiest lever for heart and lymph' });
+            bits.push(Math.round(st / 100) / 10 + 'k steps');
+        }
+        const A = avgScore(P);
+        rows.push({ key: 'heart', name: 'Heart & fitness', icon: '❤️', grade: grade(A.score), score: A.score, line: bits.join(' · ') || 'not measured — Apple Health brings RHR, HRV, VO₂max, steps', weakest: A.weakest, action: A.action });
+    }
+    // sleep
+    {
+        const P = [];
+        const s7 = mean(recent(inp.bio, T, 'sleep', 7, 2));
+        if (s7 != null)
+            P.push({ s: s7 >= 7 && s7 <= 9.5 ? 100 : clamp(100 - Math.abs((s7 < 7 ? 7 : 9.5) - s7) * 45, 0, 100), label: r1(s7) + ' h a night', act: s7 < 7 ? 'Half an hour earlier to bed — sleep is short this week' : 'Very long nights — check how rested you feel' });
+        const beds = recent(inp.bio, T, 'bed', 7, -1).map(b => (b < 12 ? b + 24 : b));
+        if (beds.length >= 4) {
+            const m = mean(beds), sd = Math.sqrt(mean(beds.map(b => (b - m) * (b - m))));
+            P.push({ s: clamp(100 - sd * 40, 0, 100), label: 'bedtime varies ±' + Math.round(sd * 60) + ' min', act: 'Same bedtime within 30 min — regularity matters as much as length' });
+        }
+        const dp = mean(recent(inp.bio, T, 'deep', 7, 0));
+        if (dp != null && s7)
+            P.push({ s: clamp(dp / s7 * 100 * 5, 0, 100), label: r1(dp) + ' h deep', act: 'Deep sleep is low — no alcohol or late heavy meals before bed' });
+        const A = avgScore(P);
+        rows.push({ key: 'sleep', name: 'Sleep', icon: '🌙', grade: grade(A.score), score: A.score, line: P.map(p => p.label).join(' · ') || 'no nights logged this week', weakest: A.weakest, action: A.action });
+    }
+    // hormones (ARK's estimate)
+    {
+        const ax = ((inp.endo && inp.endo.axes) || []).filter(a => typeof a.score === 'number');
+        if (ax.length) {
+            const inBand = (a) => a.lo == null || a.hi == null || (a.score >= a.lo && a.score <= a.hi);
+            const off = ax.filter(a => !inBand(a)).sort((a, b) => Math.abs(b.score - ((b.lo + b.hi) / 2)) - Math.abs(a.score - ((a.lo + a.hi) / 2)));
+            const s = Math.round(ax.filter(inBand).length / ax.length * 100);
+            const w = off[0];
+            rows.push({ key: 'hormones', name: 'Hormones', icon: '⚗️', grade: grade(s), score: s, line: ax.filter(inBand).length + ' of ' + ax.length + ' in their band (estimate, not blood)',
+                weakest: w ? w.name + ' ' + (w.score < (w.lo || 0) ? 'low' : 'high') : null, action: w && w.neg && w.neg[0] ? 'Biggest drag: ' + w.neg[0].label : w ? 'Open Endocrine for what moves it' : null });
+        }
+        else
+            rows.push({ key: 'hormones', name: 'Hormones', icon: '⚗️', grade: null, score: null, line: 'not estimated yet — needs a few logged days on the PC', weakest: null, action: null });
+    }
+    // mind & nervous system
+    {
+        const P = [];
+        const st = mean(recent(inp.bio, T, 'stress', 7, 0)), en = mean(recent(inp.bio, T, 'energy', 7, 0)), md = mean(recent(inp.bio, T, 'mood', 7, -1));
+        if (st != null)
+            P.push({ s: clamp((11 - st) * 10, 0, 100), label: 'stress ' + r1(st) + '/10', act: 'Stress is high this week — daylight, a walk and a real break each day' });
+        if (en != null)
+            P.push({ s: clamp(en * 10, 0, 100), label: 'energy ' + r1(en) + '/10', act: 'Energy is low — sleep first, then morning light' });
+        if (md != null)
+            P.push({ s: clamp(md * 20, 0, 100), label: 'mood ' + r1(md) + '/5', act: 'Mood has been low — time outside and with people helps most' });
+        const A = avgScore(P);
+        rows.push({ key: 'mind', name: 'Mind & nerves', icon: '🧠', grade: grade(A.score), score: A.score, line: P.map(p => p.label).join(' · ') || 'no check-ins this week', weakest: A.weakest, action: A.action });
+    }
+    // lymph & fluid
+    {
+        const L = inp.lymph;
+        if (L && L.known) {
+            const s = Math.round(clamp(L.pump * 0.6 + (100 - L.load) * 0.4, 0, 100));
+            rows.push({ key: 'lymph', name: 'Lymph & fluid', icon: '💧', grade: grade(s), score: s, line: 'pump ' + Math.round(L.pump) + ' · fluid load ' + Math.round(L.load) + ' · ' + L.balance.title.toLowerCase(),
+                weakest: s < 70 ? (L.pump < 60 ? 'the pump (movement)' : 'fluid load') : null, action: s < 70 ? (L.pump < 60 ? 'Walk 10 min after meals — muscles are the lymph pump' : 'Less salt in the evening and water through the day') : null });
+        }
+        else
+            rows.push({ key: 'lymph', name: 'Lymph & fluid', icon: '💧', grade: null, score: null, line: 'needs steps or movement data', weakest: null, action: null });
+    }
+    // body composition
+    {
+        const w = inp.weight, h = inp.height ? inp.height / 100 : null;
+        if (w && h) {
+            const bmi = w / (h * h), bf = inp.bodyfat, male = !/^f/i.test(inp.sex || '');
+            const s = bf != null ? clamp(100 - Math.max(0, bf - (male ? 15 : 23)) * 5, 0, 100) : clamp(100 - Math.max(0, bmi - 25) * 12, 0, 100);
+            rows.push({ key: 'comp', name: 'Body composition', icon: '⚖️', grade: grade(s), score: Math.round(s), line: 'BMI ' + r1(bmi) + (bf != null ? ' · ' + bf + ' % fat' : ' · body fat not set'),
+                weakest: s < 70 ? (bf != null ? 'body fat' : 'BMI') : null, action: s < 70 ? 'A small daily deficit with protein high keeps the muscle while fat drops' : null });
+        }
+        else
+            rows.push({ key: 'comp', name: 'Body composition', icon: '⚖️', grade: null, score: null, line: 'needs height and weight (More › Body profile)', weakest: null, action: null });
+    }
+    // muscles & joints
+    {
+        const cov = inp.coverage, inj = inp.injuries || 0;
+        if (cov != null) {
+            const s = Math.round(clamp(cov - inj * 15, 0, 100));
+            rows.push({ key: 'msk', name: 'Muscles & joints', icon: '🦴', grade: grade(s), score: s, line: cov + ' % of muscles worked this week' + (inj ? ' · ' + inj + ' injur' + (inj === 1 ? 'y' : 'ies') : ''),
+                weakest: s < 70 ? (inj ? 'an injury' : 'coverage') : null, action: s < 70 ? (inj ? 'Let the injury settle — train around it' : 'Some muscle groups had nothing this week') : null });
+        }
+        else
+            rows.push({ key: 'msk', name: 'Muscles & joints', icon: '🦴', grade: null, score: null, line: 'not enough logged yet', weakest: null, action: null });
+    }
+    return rows;
 }
 
   },
@@ -6943,6 +7421,66 @@ function strengthProgression(sessions, now = Date.now()) {
  * That is the whole reason it can be tested.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+
+  },
+  "./weather": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.WMO = void 0;
+exports.weatherUrl = weatherUrl;
+exports.geocodeUrl = geocodeUrl;
+exports.parseWeather = parseWeather;
+/**
+ * WEATHER — Open-Meteo (free, no key). The phone asks for it with your location rounded to ~1 km (two
+ * decimals); nothing else is sent. This module builds the request and reads the answer.
+ */
+exports.WMO = {
+    0: ['Clear', '☀️'], 1: ['Mostly clear', '🌤️'], 2: ['Partly cloudy', '⛅'], 3: ['Overcast', '☁️'],
+    45: ['Fog', '🌫️'], 48: ['Freezing fog', '🌫️'],
+    51: ['Light drizzle', '🌦️'], 53: ['Drizzle', '🌦️'], 55: ['Heavy drizzle', '🌧️'], 56: ['Freezing drizzle', '🌧️'], 57: ['Freezing drizzle', '🌧️'],
+    61: ['Light rain', '🌦️'], 63: ['Rain', '🌧️'], 65: ['Heavy rain', '🌧️'], 66: ['Freezing rain', '🌧️'], 67: ['Freezing rain', '🌧️'],
+    71: ['Light snow', '🌨️'], 73: ['Snow', '🌨️'], 75: ['Heavy snow', '❄️'], 77: ['Snow grains', '🌨️'],
+    80: ['Showers', '🌦️'], 81: ['Showers', '🌧️'], 82: ['Violent showers', '⛈️'], 85: ['Snow showers', '🌨️'], 86: ['Snow showers', '❄️'],
+    95: ['Thunderstorm', '⛈️'], 96: ['Thunderstorm, hail', '⛈️'], 99: ['Thunderstorm, hail', '⛈️'],
+};
+const round2 = (x) => Math.round(x * 100) / 100;
+function weatherUrl(lat, lon) {
+    return 'https://api.open-meteo.com/v1/forecast?latitude=' + round2(lat) + '&longitude=' + round2(lon)
+        + '&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m,is_day'
+        + '&hourly=temperature_2m,precipitation_probability,weather_code&forecast_hours=12'
+        + '&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,precipitation_probability_max,weather_code&forecast_days=1&timezone=auto';
+}
+function geocodeUrl(name) {
+    return 'https://geocoding-api.open-meteo.com/v1/search?count=5&language=en&format=json&name=' + encodeURIComponent(name.trim().slice(0, 60));
+}
+const hm = (iso) => (iso ? iso.slice(11, 16) : null);
+/** Read Open-Meteo's answer; null when it is not one. */
+function parseWeather(j) {
+    var _a;
+    const c = j && j.current, d = j && j.daily;
+    if (!c || typeof c.temperature_2m !== 'number')
+        return null;
+    const code = Number(c.weather_code) || 0, [text, icon] = exports.WMO[code] || ['—', '🌡️'];
+    const first = (k) => (d && Array.isArray(d[k]) && d[k].length ? d[k][0] : null);
+    const H = j.hourly || {};
+    // A clear hour after sunset or before sunrise is a moon, not a sun.
+    const sr = hm(first('sunrise')), ss = hm(first('sunset'));
+    const hours = (H.time || []).slice(0, 12).map((t, i) => {
+        const code = Number(H.weather_code && H.weather_code[i]) || 0, at = hm(t), night = !!(sr && ss && (at < sr || at >= ss));
+        return { t: at, temp: Math.round(H.temperature_2m[i]), rain: H.precipitation_probability ? H.precipitation_probability[i] : null,
+            icon: night && code <= 1 ? '🌙' : night && code === 2 ? '☁️' : (exports.WMO[code] || ['', '🌡️'])[1] };
+    });
+    const W = { at: c.time || '', temp: Math.round(c.temperature_2m), feels: Math.round((_a = c.apparent_temperature) !== null && _a !== void 0 ? _a : c.temperature_2m), code, text, icon: c.is_day === 0 && code <= 1 ? '🌙' : icon,
+        wind: Math.round(c.wind_speed_10m || 0), humidity: Math.round(c.relative_humidity_2m || 0), day: c.is_day !== 0,
+        hi: first('temperature_2m_max') != null ? Math.round(first('temperature_2m_max')) : null, lo: first('temperature_2m_min') != null ? Math.round(first('temperature_2m_min')) : null,
+        rain: first('precipitation_probability_max'), uv: first('uv_index_max') != null ? Math.round(first('uv_index_max') * 10) / 10 : null,
+        sunrise: hm(first('sunrise')), sunset: hm(first('sunset')), hours, note: null };
+    W.note = W.feels >= 30 ? 'Hot — drink more and expect some ankle and hand swelling; heat slows lymph return.'
+        : W.uv != null && W.uv >= 6 ? 'UV ' + W.uv + ' — morning light is the useful kind; shade at midday.'
+            : W.feels <= 0 ? 'Freezing — a good day for short, deliberate cold; warm up well before lifting.'
+                : W.sunrise && W.day ? 'Sunrise ' + W.sunrise + ' — 10 minutes of outdoor light in the first hour sets your body clock.' : null;
+    return W;
+}
 
   },
   "./webpush": function (exports, module, require) {
