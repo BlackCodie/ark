@@ -5,7 +5,7 @@
    desktop computes something (readiness), the phone shows the desktop's value
    and says when it is waiting for a fresh one.
    ══════════════════════════════════════════════════════════════════════ */
-import { questsCard, renderLab } from './system.js';
+import { renderLab } from './system.js';
 import { fuelCard } from './daily.js';
 import {
   L, state, view, emit, changed, esc, icon, today, shiftDay, fmt1, fmtMins, fmtDay, daysBetween, homeMove, anywhere, caState, checkCa, onPublicCopy, pair,
@@ -191,11 +191,27 @@ export function renderToday() {
       <div class="rl" style="--c:${C.practice}"><div class="k">Practice</div><div class="v num">${pm}<small>/ ${s.practiceMins} min</small></div></div>
     </div></section>`;
 
-  H += questsCard(v);
+  // Straight under the rings: log something, today's routine, the week at a glance (Daily Quests removed 2026-10-03).
+  H += `<div class="sec"><h2>Quick log</h2></div><section class="quick">
+    ${quick('weigh-sheet', 'scale', '#40c8e0', 'Weigh-in', lastWeightLabel(v))}
+    ${quick('vitals-sheet', 'moon', '#7d7aff', 'Vitals', v.bio[t] ? 'Logged today' : 'Sleep · energy · mood')}
+    ${quick('practice-sheet', 'timer', '#30d158', 'Practice', pm ? pm + ' min today' : 'Log a session')}
+    ${quick('note-sheet', 'note', '#ffb340', 'Note', 'Goes to your Journal')}
+  </section>`;
+  H += routineCard();
+
+  H += `<div class="sec"><h2>This week</h2><button class="link" data-act="review-sheet">Review</button></div><section class="card frost"><div class="week">` +
+    [6, 5, 4, 3, 2, 1, 0].map(i => {
+      const k = shiftDay(t, -i), frac = total ? doneOn(v, k) / total : 0;
+      const trained = v.workouts.some(w => w.date === k);
+      return `<div class="wd${i === 0 ? ' today' : ''}">${fmtDay(k, { weekday: 'narrow' })}
+        ${ringSvg(frac, C.habits, 34, 5)}<span class="pip${trained ? ' on' : ''}"></span></div>`;
+    }).join('') + `</div></section>`;
+
   H += fuelCard(v);
   H += healthCard(v, t);
-  H += routineCard();
   H += mindGlance();
+
 
   /* up next — one list, each item doable from here */
   const items = [];
@@ -246,21 +262,6 @@ export function renderToday() {
       <span class="tx"><div class="tt">${esc(it.t)}</div><div class="st">${esc(it.st)}</div></span>
       ${it.act ? `<span class="chev">${icon('chev', 16)}</span>` : ''}
     </button>`).join('') + `</section>`;
-
-  H += `<div class="sec"><h2>Quick log</h2></div><section class="quick">
-    ${quick('weigh-sheet', 'scale', '#40c8e0', 'Weigh-in', lastWeightLabel(v))}
-    ${quick('vitals-sheet', 'moon', '#7d7aff', 'Vitals', v.bio[t] ? 'Logged today' : 'Sleep · energy · mood')}
-    ${quick('practice-sheet', 'timer', '#30d158', 'Practice', pm ? pm + ' min today' : 'Log a session')}
-    ${quick('note-sheet', 'note', '#ffb340', 'Note', 'Goes to your Journal')}
-  </section>`;
-
-  H += `<div class="sec"><h2>This week</h2><button class="link" data-act="review-sheet">Review</button></div><section class="card frost"><div class="week">` +
-    [6, 5, 4, 3, 2, 1, 0].map(i => {
-      const k = shiftDay(t, -i), frac = total ? doneOn(v, k) / total : 0;
-      const trained = v.workouts.some(w => w.date === k);
-      return `<div class="wd${i === 0 ? ' today' : ''}">${fmtDay(k, { weekday: 'narrow' })}
-        ${ringSvg(frac, C.habits, 34, 5)}<span class="pip${trained ? ' on' : ''}"></span></div>`;
-    }).join('') + `</div></section>`;
 
   const J = (v.journal || []).slice(0, 4);
   H += `<div class="sec"><h2>Journal</h2><button class="link" data-act="journal-sheet">${J.length ? 'See all' : 'Open'}</button></div>`;

@@ -2,7 +2,7 @@
    The app shell is cached so the app opens with no signal at the gym. Your data
    is never cached here — it lives in the page's own storage and the sync API is
    always network-only. Bump VERSION whenever a shell file changes. */
-const VERSION = 'ark-mobile-33';
+const VERSION = 'ark-mobile-34';
 const SHELL = [
   'index.html', 'app.css', 'body.css', 'ark-logic.js', 'body-data.js', 'manifest.webmanifest',
   'js/app.js', 'js/core.js', 'js/views.js', 'js/train.js', 'js/sheets.js', 'js/body.js', 'js/more.js', 'js/review.js',

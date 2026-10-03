@@ -387,12 +387,12 @@ function secMicros(v) {
   const fmtN = n => n >= 1000 ? (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + 'k' : (n % 1 === 0 ? '' + n : (+n).toFixed(1));
   const goals = D.micros.filter(m => !m.limit);
   const hit = goals.filter(m => (amt[m.k] || 0) >= m.goal).length;
-  let H = `<div class="sub" style="margin:-4px 2px 8px;line-height:1.45">${hit}/${goals.length} at target today · tap one to log it with the time you took it and see what is in you now.</div>`;
+  let H = `<div class="sub" style="margin:-4px 2px 8px;line-height:1.45">${hit}/${goals.length} at target today · open a group, tap a nutrient to log it with the time you took it. Amounts in blood are estimates from dose times and average kinetics (±30–50 %), not lab values.</div>`;
   (D.cats || []).forEach(cat => {
     const items = D.micros.filter(m => m.cat === cat);
     if (!items.length) return;
     const lim = items.every(m => m.limit);
-    H += `<div class="mcat"><span>${esc(cat)}</span><span>${lim ? 'limits' : items.filter(m => (amt[m.k] || 0) >= m.goal).length + '/' + items.length}</span></div>`;
+    H += `<div class="ba-h"><h2 style="font-size:1.05rem">${esc(cat)}</h2><span class="k">${lim ? (items.some(m => (amt[m.k] || 0) > (m.goal || 0)) ? 'over a limit today' : 'within limits') : items.filter(m => (amt[m.k] || 0) >= m.goal).length + ' of ' + items.length + ' at target'}</span></div>`;
     H += card(items.map(m => {
       const a = amt[m.k] || 0, saf = L.microSafety(m.k, a), over = (saf && saf.level === 'over') || (m.limit && a > (m.goal || 0));
       const pct = m.limit ? (a > 0 ? 1 : 0) : Math.min(1, a / (m.goal || 1));
@@ -410,7 +410,6 @@ function secMicros(v) {
         ${step ? `<button class="mic2-add" data-act="dose-quick" data-k="${m.k}" data-v="${step}" aria-label="Log ${fmtN(step)} ${esc(m.unit)} of ${esc(m.name)} now">+${fmtN(step)}</button>` : ''}</div>`;
     }).join(''), 'tight mic-list');
   });
-  H += `<p class="sub" style="margin:10px 4px 0;line-height:1.45">Amounts in blood are estimates from dose times and population-average kinetics (±30–50 % between people), not lab values. Caffeine at bedtime, alcohol, creatine, vitamin D and ashwagandha feed the hormone and mind models.</p>`;
   return H;
 }
 
@@ -524,8 +523,18 @@ const SUMMARY = {
   'ba-endo': v => { const E = v.endo; if (!E) return 'not estimated yet'; const a = (E.axes || []).find(x => x.k === 'testosterone');
     return Math.round(E.confidence * 100) + ' % confidence' + (a ? ' · testosterone ' + a.score : ''); },
 };
-/* Inside Body Development the seven blocks fold the same way, each with its own one-liner. */
+/* Inside every section the blocks fold the same way, each with its own one-liner (the Scanner stays open). */
+const SUB_OPEN = new Set(['ba-vit:Log today']);
+const PUFF = ['none', 'mild', 'noticeable', 'marked'];
 const SUBSUM = {
+  'Survivor vitals': v => { const b = v.bio[today()] || {}; return [b.sleep ? 'sleep ' + fmt1(b.sleep) + ' h' : null, b.prot ? 'protein ' + Math.round(b.prot) + ' g' : null, b.water ? 'water ' + fmt1(b.water) + ' L' : null].filter(Boolean).join(' · ') || 'nothing logged yet today'; },
+  'Log today': v => { const b = v.bio[today()] || {}; const n = VIT.filter(x => b[x.f] != null).length; return n + ' of ' + VIT.length + ' logged today'; },
+  'Last 7 days': v => { const r = [0, 1, 2, 3, 4, 5, 6].map(i => (v.readiness || {})[shiftDay(today(), -i)]).filter(x => x != null); return r.length ? 'readiness avg ' + Math.round(r.reduce((a, b) => a + b, 0) / r.length) : 'readiness —'; },
+  'Composition': () => 'age · BMI · lean and fat mass · FFMI',
+  'Energy & daily targets': () => 'BMR · TDEE · protein and water targets',
+  'Morning puffiness': v => { const p = (v.bio[today()] || {}).puff; return p == null ? 'not rated today' : 'today: ' + PUFF[p]; },
+  'Why': () => 'what moves your lymph today',
+  'Do today': () => 'small things that help',
   'Weekly sets vs your range': v => plural(v.body.muscles.filter(m => m.vol && (m.vol.zone === 'under' || m.vol.zone === 'none')).length, 'muscle') + ' under range',
   'Fatigue radar': v => fatigueNow(v).title,
   'Stalled lifts': () => { const P = plateausNow(); return P.length ? P.length + ' stalled · ' + P.map(p => p.n.replace(/ \(.*\)$/, '')).slice(0, 2).join(', ') : 'none — every regular lift still rising'; },
@@ -541,9 +550,9 @@ function subs(sec, v, html) {
   const open = baSub();
   return parts[0] + parts.slice(1).map(p => {
     const end = p.indexOf('</div>'), head = p.slice(0, end), body = p.slice(end + 6);
-    const title = ((head.match(/<h2[^>]*>([\s\S]*?)<\/h2>/) || [])[1] || '').trim(), k = ((head.match(/<span class="k">([\s\S]*?)<\/span>/) || [])[1] || '');
-    const extras = head.replace(/<h2[^>]*>[\s\S]*?<\/h2>/, '').replace(/<span class="k">[\s\S]*?<\/span>/, '');
-    const key = sec + ':' + title.replace(/<[^>]+>/g, ''), on = !!open[key];
+    const title = ((head.match(/<h2[^>]*>([\s\S]*?)<\/h2>/) || [])[1] || '').trim(), k = ((head.match(/<span class="k(?: [^"]*)?">([\s\S]*?)<\/span>/) || [])[1] || '');
+    const extras = head.replace(/<h2[^>]*>[\s\S]*?<\/h2>/, '').replace(/<span class="k(?: [^"]*)?">[\s\S]*?<\/span>/, '');
+    const key = sec + ':' + title.replace(/<[^>]+>/g, ''), on = key in open ? !!open[key] : SUB_OPEN.has(key);
     let sum = k; try { if (SUBSUM[title]) sum = esc(SUBSUM[title](v)); } catch (e) { /* keep the static line */ }
     return `<div class="sub-blk${on ? ' open' : ''}"><div class="sub-h"><button class="sub-t" data-act="ba-sub" data-key="${esc(key)}" aria-expanded="${on}">
       <b>${title}</b><span>${sum}</span>${icon('chev', 14)}</button>${extras}</div>${on ? `<div class="sub-b">${body}</div>` : ''}</div>`;
@@ -556,7 +565,7 @@ function sections(v) {
     let sum = ''; try { sum = SUMMARY[id] ? SUMMARY[id](v) : k; } catch (e) { sum = k; }
     out[id] = `<section class="ba-sec${on ? ' open' : ''}" id="${id}"><button class="ba-hd" data-act="ba-toggle" data-sec="${id}" aria-expanded="${on}">
       <span class="t"><h2>${title}</h2><span class="s">${esc(on ? k : sum)}</span></span>${icon('chev', 18)}</button>
-      ${on ? `<div class="ba-bd">${id === 'ba-dev' ? subs(id, v, fn(v)) : fn(v)}</div>` : ''}</section>`;
+      ${on ? `<div class="ba-bd">${id === 'ba-scan' ? fn(v) : subs(id, v, fn(v))}</div>` : ''}</section>`;
   });
   return out;
 }
@@ -1024,7 +1033,7 @@ export const actions = {
     emitUndoable('bloodwork.del', { id: d.id }, 'Result deleted');
   },
   'ba-toggle'(d) { const o = baOpen(); o[d.sec] = !o[d.sec]; haptic(); changed({ now: true }); },
-  'ba-sub'(d) { const o = baSub(); o[d.key] = !o[d.key]; haptic(); changed({ now: true }); },
+  'ba-sub'(d) { const o = baSub(); o[d.key] = !(d.key in o ? o[d.key] : SUB_OPEN.has(d.key)); haptic(); changed({ now: true }); },
   'ba-all'() {
     const o = baOpen(), all = SECTIONS.every(x => o[x[0]]);
     SECTIONS.forEach(x => { o[x[0]] = !all; }); if (all) o['ba-scan'] = true;
