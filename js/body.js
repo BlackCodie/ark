@@ -591,9 +591,7 @@ export function patchBodyArch() {
   const lbl = SECTIONS.every(x => baOpen()[x[0]]) ? 'Fold all' : 'Open all';
   document.querySelectorAll('.jump .all').forEach(b => { b.textContent = lbl; });
   if (scan) mountFigure(); else paint();
-  // Once now, and again after the next frame — the figure and rings settle a few pixels later.
-  restoreAnchor(anchor);
-  requestAnimationFrame(() => requestAnimationFrame(() => restoreAnchor(anchor)));
+  holdAnchor(anchor);
   return true;
 }
 /* What you last tapped in Body Arch, as a selector that finds its rebuilt copy. */
@@ -615,7 +613,25 @@ function restoreAnchor(a) {
   if (!a) return;
   const el = document.querySelector(a.sel); if (!el) return;
   const d = el.getBoundingClientRect().top - a.top;
-  if (Math.abs(d) > 1) window.scrollBy(0, d);
+  if (Math.abs(d) > 1) window.scrollTo({ top: window.scrollY + d, behavior: 'instant' });
+}
+/* Hold it there for ~1 s — now, before each paint while sections resize (the figure and rings settle a little
+   later), and on a few timers. Corrections are instant; your own touch or scroll lets go at once. */
+let hold = null;
+function holdAnchor(a) {
+  if (hold) hold.stop();
+  if (!a) return;
+  const H = { done: false, timers: [], ro: null };
+  const off = () => H.stop();
+  H.stop = () => { if (H.done) return; H.done = true; H.timers.forEach(clearTimeout); if (H.ro) H.ro.disconnect(); ['touchstart', 'wheel'].forEach(t => window.removeEventListener(t, off, true)); };
+  ['touchstart', 'wheel'].forEach(t => window.addEventListener(t, off, { capture: true, passive: true }));
+  const fix = () => { if (!H.done) restoreAnchor(a); };
+  fix();
+  requestAnimationFrame(() => requestAnimationFrame(fix));
+  [120, 300, 600, 950].forEach(ms => H.timers.push(setTimeout(fix, ms)));
+  H.timers.push(setTimeout(() => H.stop(), 1000));
+  try { if (window.ResizeObserver) { H.ro = new ResizeObserver(fix); document.querySelectorAll('.ba-sec').forEach(s => H.ro.observe(s)); } } catch (e) { /* old Safari */ }
+  hold = H;
 }
 
 /* keep the jump chips in step with where you are */
