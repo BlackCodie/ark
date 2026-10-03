@@ -31,13 +31,7 @@ const EQUIP_LBL = { barbell: 'Barbell', dumbbell: 'Dumbbell', machine: 'Machine'
 /** Working sets from the last session with this exercise, under any of its names. */
 function lastSetsFor(name) { const e = lastExFor(name); return e ? e.sets : null; }
 function lastExFor(name) {
-  const ws = view().workouts, skip = state.workout && state.workout.edit ? state.workout.edit.key : null;
-  for (let i = ws.length - 1; i >= 0; i--) {
-    if (skip && (ws[i].id || ws[i].ts) === skip) continue;
-    const e = (ws[i].exercises || []).find(x => L.sameExercise(x.n, name));
-    if (e && e.sets && e.sets.length) return e;
-  }
-  return null;
+  return L.previousSets(view().workouts, name, state.workout && state.workout.edit ? state.workout.edit.key : null);
 }
 let libCache = null, libKey = '';
 /** The full library (logic/exercises.ts) plus your own, under the names your history already uses. */
@@ -289,21 +283,15 @@ const workIdx = (ex, i) => ex.sets.slice(0, i).filter(isWork).length;
 function placeholder(ex, i) {
   if (ex.sets[i] && ex.sets[i].warm) return { w: '', r: '', tgt: null, prev: null };
   const last = lastSetsFor(ex.n), wi = workIdx(ex, i);
-  let tgt = L.progressionTarget(last, ex.e === 'dumbbell' ? 2 : state.settings.step, 12, trainGap());
+  const u = unit() === 'lb' ? 'lb' : 'kg';
+  let tgt = L.targetFor(last, ex, { unit: u, gapDays: trainGap(), step: state.settings.step, bar: BARS[u].includes(state.settings.bar) ? state.settings.bar : BARS[u][0] });
   if (ex.deloadW) tgt = { w: ex.deloadW, r: tgt ? tgt.r : (last && last[wi] ? last[wi].r : 8), reason: 'Lighter session - about 90% of your recent top weight' };
-  if (tgt && tgt.w && ex.e === 'barbell') {
-    const u = unit() === 'lb' ? 'lb' : 'kg', bar = BARS[u].includes(state.settings.bar) ? state.settings.bar : BARS[u][0];
-    const w2 = L.loadable(tgt.w, bar, PLATE_SETS[u]);
-    if (Math.abs(w2 - tgt.w) > 0.01) tgt = { ...tgt, w: w2, reason: tgt.reason + ' (rounded to your plates)' };
-  }
   if (tgt) return { w: fmt1(tgt.w), r: tgt.r, tgt, prev: last && last[wi] };
   return { w: '', r: '', tgt: null, prev: last && last[wi] };
 }
-/** Rest for this exercise: your own setting for it, else the default by kind (logic/gym.ts). */
-export function restFor(ex) {
-  const own = (state.settings.restByEx || {})[ex.n];
-  return own > 0 ? own : L.restSeconds(ex, state.settings.rest || 90);
-}
+/** Rest for this exercise: your own setting, else what you actually rest on it, else the default by kind (logic/logger.ts). */
+export function restFor(ex) { return restInfo(ex).sec; }
+function restInfo(ex) { return L.restPlan(ex, view().workouts, { own: (state.settings.restByEx || {})[ex.n] || 0, base: state.settings.rest || 90 }); }
 function soreSlugs() { return (view().body.muscles || []).filter(m => (m.soreness || 0) >= 2).map(m => m.slug); }
 const SS_COL = ['#bf5af2', '#40c8e0', '#ff375f', '#ffd60a', '#30d158'];
 const ssColor = k => SS_COL[(k.charCodeAt(0) - 65) % SS_COL.length];
@@ -406,7 +394,7 @@ function editSession(w) {
     ex: (w.exercises || []).map(e => ({
       n: e.n, c: e.c, g: e.g, m: e.m || [], e: e.e || 'other', note: e.note || '', ss: e.ss || undefined,
       sets: [...(e.warm || []).map(s => ({ w: String(s.w), r: String(s.r), done: true, warm: true })),
-        ...(e.sets || []).map(s => ({ w: String(s.w), r: String(s.r), done: true, rpe: s.rpe, type: s.type }))],
+        ...(e.sets || []).map(s => ({ w: String(s.w), r: String(s.r), done: true, rpe: s.rpe, type: s.type, t: s.t }))],
     })),
   };
   changed({ now: true });
@@ -435,35 +423,6 @@ export function restTick() {
 }
 
 /* ── finish ── */
-function buildSession(W) {
-  const exOut = [], muscles = {}, labels = {}, setsMap = {}, cats = {};
-  let total = 0;
-  W.ex.forEach(e => {
-    const ok = s => s.done && s.w !== '' && s.r !== '';
-    const done = e.sets.filter(s => ok(s) && !s.warm).map(s => {
-      const o = { w: +s.w || 0, r: +s.r || 0 };
-      if (s.rpe != null && s.rpe !== '') o.rpe = +s.rpe;
-      if (s.type) o.type = s.type;
-      return o;
-    });
-    if (!done.length) return;
-    const warm = e.sets.filter(s => ok(s) && s.warm).map(s => ({ w: +s.w || 0, r: +s.r || 0 }));
-    const o = { n: e.n, c: e.c, g: e.g, m: e.m, e: e.e, sets: done };
-    if (warm.length) o.warm = warm;
-    if (e.note) o.note = e.note;
-    if (e.ss) o.ss = e.ss;
-    exOut.push(o);
-    (e.m || []).forEach(m => { muscles[m] = true; });
-    labels[e.g] = true; setsMap[e.g] = (setsMap[e.g] || 0) + done.length;
-    cats[e.c] = (cats[e.c] || 0) + done.length;
-    total += done.length;
-  });
-  const cnt = {}; exOut.forEach(e => { if (e.ss) cnt[e.ss] = (cnt[e.ss] || 0) + 1; });
-  exOut.forEach(e => { if (e.ss && cnt[e.ss] < 2) delete e.ss; });
-  const ck = Object.keys(cats);
-  return { exOut, total, fields: { type: ck.length === 1 ? ck[0] : 'full', muscles: Object.keys(muscles), labels: Object.keys(labels),
-    sets: setsMap, exercises: exOut, volume: Math.round(L.workoutVolume({ date: '', exercises: exOut })), unit: unit() } };
-}
 /** Apple Health through a Shortcut named "ARK Workout" (web apps cannot write to HealthKit themselves). */
 function healthUrl(s) {
   const end = new Date(Date.parse(s.ts)), start = new Date(end.getTime() - (s.duration || 0) * 1000);
@@ -473,13 +432,13 @@ function healthUrl(s) {
 function finish() {
   const W = state.workout, v = view();
   if (W.template) { routineSheet(W.ex, W.name && W.name !== defaultName() ? W.name : '', true); return; }
-  const { exOut, total, fields } = buildSession(W);
-  if (!exOut.length) { toast(W.edit ? 'Keep at least one ticked working set — or delete the session instead' : 'Tick at least one set first'); return; }
-  // Records against everything before this workout, frozen onto the sets that set them (as Strong keeps its badges).
+  const loose = L.untickedFilled(W.ex);
+  const incl = loose > 0 && confirm(loose + ' set' + (loose === 1 ? ' has' : 's have') + ' weight and reps but ' + (loose === 1 ? 'is' : 'are') + ' not ticked. Count ' + (loose === 1 ? 'it' : 'them') + '?');
+  // One builder for both loggers (logic/logger.ts): records against everything before this workout, frozen onto the sets.
   const others = W.edit ? v.workouts.filter(w => (w.id || w.ts) !== W.edit.key && w.date <= W.edit.date) : v.workouts;
-  const R = L.recordsFor(others, { date: W.edit ? W.edit.date : today(), exercises: exOut });
-  exOut.forEach((e, x) => e.sets.forEach((s, i) => { const m = R.marks[x][i]; if (m.length) s.pr = m; else delete s.pr; }));
-  const hits = R.hits;
+  const B = L.buildWorkout(W.ex, { date: W.edit ? W.edit.date : today(), start: W.edit ? 0 : W.start, prior: others, unit: unit(), includeFilled: incl });
+  const exOut = B.exercises, total = B.total, fields = B.fields, R = B.records, hits = R.hits;
+  if (!exOut.length) { toast(W.edit ? 'Keep at least one ticked working set — or delete the session instead' : 'Tick at least one set first'); return; }
   const name = (W.name || '').trim();
   if (W.edit) {
     const E = W.edit;
@@ -629,6 +588,11 @@ function exHistSheet(name, seg0) {
           <section class="card frost"><div class="card-h"><span class="t">Estimated 1RM</span></div>${chart('e1rm', BLUE)}</section>
           <section class="card frost" style="margin-top:10px"><div class="card-h"><span class="t">Best set weight</span></div>${chart('top', GREEN)}</section>
           <section class="card frost" style="margin-top:10px"><div class="card-h"><span class="t">Volume</span><span class="k">${unit()}</span></div>${chart('volume', '#ffb340')}</section>`;
+        // Strength per kg of body weight — what a bulk or cut is really doing to this lift.
+        const rel = L.relativeStrength(v.workouts, v.weights || {}, today(), { weeks: 26 }).lifts.find(l => L.sameExercise(l.n, name));
+        H += rel ? `<section class="card frost" style="margin-top:10px"><div class="card-h"><span class="t">Per kg of body weight</span><span class="k">${rel.relTo.toFixed(2)}× · ${rel.relPct > 0 ? '+' : ''}${rel.relPct} %</span></div>
+            ${sparkSvg(rel.series.map(p => ({ t: Date.parse(p.date), y: p.rel })), '#bf5af2', 80)}<p class="sub" style="margin:6px 0 0">Est. 1RM ÷ your weight that day · last 26 weeks</p></section>`
+          : `<p class="sub" style="line-height:1.5;margin:12px 2px 0">Log your weight now and then to see this lift per kg of body weight.</p>`;
       }
       return H;
     },
@@ -757,15 +721,16 @@ function exNoteSheet(x) {
   openSheet({
     id: 'ex-note', title: 'Note · ' + ex.n,
     render: () => {
-      const own = (state.settings.restByEx || {})[ex.n] || 0, auto = L.restSeconds(ex, state.settings.rest || 90);
-      const fmtS = sec => sec < 120 ? sec + ' s' : (sec / 60) + ' min';
+      const own = (state.settings.restByEx || {})[ex.n] || 0, P = L.restPlan(ex, view().workouts, { base: state.settings.rest || 90 }), auto = P.sec;
+      const fmtS = sec => sec < 120 ? sec + ' s' : fmtMinS(sec);
       return `<textarea class="inp" data-exnote maxlength="200" placeholder="Seat height, grip, how it felt…">${esc(ex.note || '')}</textarea>
       <button class="btn btn-prominent block" style="margin-top:14px;--accent:${BLUE}" data-act="ex-note-save" data-x="${x}">Save note</button>
       <p class="sub" style="text-align:center;margin:12px 0 18px">Shown next time you do ${esc(ex.n)}.</p>
       <div class="eyebrow" style="margin-bottom:8px">Rest after each set</div>
       <div class="chips"><button class="chip ${own ? '' : 'on'}" data-act="ex-rest" data-x="${x}" data-v="0">Auto · ${fmtS(auto)}</button>${[60, 90, 120, 180, 240].map(v =>
         `<button class="chip ${own === v ? 'on' : ''}" data-act="ex-rest" data-x="${x}" data-v="${v}">${fmtS(v)}</button>`).join('')}</div>
-      <p class="sub" style="margin-top:10px;line-height:1.5">Auto gives heavy compound lifts at least 2½ minutes and isolation work at most 75 s. Remembered for this exercise.</p>`;
+      <p class="sub" style="margin-top:10px;line-height:1.5">${P.learned ? 'Auto = what you actually rest on ' + esc(ex.n) + ': the middle of your last ' + P.learned.n + ' rests' + (P.learned.from === 'ticks' ? ', timed between the sets you ticked' : P.learned.from === 'strong' ? ', from Strong\'s rest timer' : ', from your ticks and Strong\'s timer') + '.'
+        : 'Auto gives heavy compound lifts at least 2½ minutes and isolation work at most 75 s — until ARK has 3+ of your own rests to learn from.'} A chosen time is remembered for this exercise.</p>`;
     },
   });
 }
@@ -1078,12 +1043,12 @@ export const actions = {
   'set-done'(d) {
     unlockAudio();
     const W = state.workout, x = Number(d.x), ex = W.ex[x], i = Number(d.i), s = ex.sets[i];
-    if (s.done) { s.done = false; changed(); return; }
+    if (s.done) { s.done = false; delete s.at; changed(); return; }
     const ph = placeholder(ex, i);
     if (s.w === '' && ph.w !== '') s.w = ph.w;
     if (s.r === '' && ph.r !== '') s.r = String(ph.r);
     if (s.w === '' || s.r === '') { toast('Enter weight and reps'); return; }
-    s.done = true; haptic();
+    s.done = true; s.at = Date.now(); haptic();
     // No rest after a warm-up, mid-superset, while building a template or fixing an old session.
     let clock = 0;
     if (!s.warm && !W.edit && !W.template && ssEnd(W, x) === x) { const sec = restFor(ex); W.restEnd = Date.now() + sec * 1000; W.restTotal = sec; clock = sec; }

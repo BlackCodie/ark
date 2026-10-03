@@ -543,6 +543,11 @@ button,[role=button]{touch-action:manipulation;-webkit-user-select:none;user-sel
 .sx.ss{padding-left:10px;box-shadow:inset 3px 0 0 var(--ssc)}
 .rp-h,.rp{grid-template-columns:44px 1fr auto}
 .rp-h{font-weight:700;color:var(--t1);font-size:.8rem}
+/* Strength per kg */
+.rel-w,.rel-r{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:baseline;padding:5px 0;font-size:.88rem}
+.rel-w{grid-template-columns:1fr auto;color:var(--t2);border-bottom:.5px solid var(--sep);padding-bottom:7px;margin-bottom:2px}
+.rel-r .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rel-r small{font-size:.72rem;font-weight:600}
 /* Stalled lifts, areas left out, the iPhone-timer switch */
 .pl-r{display:block;padding:10px 0;cursor:pointer}
 .pl-r+.pl-r{border-top:.5px solid var(--sep)}

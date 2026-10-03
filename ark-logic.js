@@ -1809,6 +1809,7 @@ __exportStar(require("./lymph"), exports);
 __exportStar(require("./sanitize"), exports);
 __exportStar(require("./strong"), exports);
 __exportStar(require("./lifts"), exports);
+__exportStar(require("./logger"), exports);
 
   },
   "./lifts": function (exports, module, require) {
@@ -1821,6 +1822,7 @@ exports.areaTemplate = areaTemplate;
 exports.neglected = neglected;
 exports.withMeta = withMeta;
 exports.sessionShape = sessionShape;
+exports.relativeStrength = relativeStrength;
 /**
  * LIFTS — what your own training history says, lift by lift and area by area.
  *
@@ -2049,6 +2051,241 @@ function sessionShape(exercises) {
     });
     const ck = Object.keys(cats);
     return { type: ck.length === 1 ? ck[0] : 'full', muscles: Object.keys(muscles), labels: Object.keys(sets), sets };
+}
+function relativeStrength(sessions, weights, today, opts = {}) {
+    var _a;
+    const weeks = (_a = opts.weeks) !== null && _a !== void 0 ? _a : 12, from = (0, series_1.shiftDayKey)(today, -7 * weeks);
+    const wdays = Object.keys(weights || {}).filter(d => num(weights[d]) >= 30 && num(weights[d]) <= 300 && d <= today).sort();
+    const base = { known: false, weeks, weight: null, lifts: [], index: null, verdict: null };
+    const inWin = wdays.filter(d => d >= (0, series_1.shiftDayKey)(from, -14));
+    if (inWin.length < 2)
+        return { ...base, why: 'Needs two or more weigh-ins in the last ' + weeks + ' weeks.' };
+    const bwOn = (d) => {
+        let before = null;
+        for (const w of wdays) {
+            if (w <= d)
+                before = w;
+            else
+                break;
+        }
+        if (before && (0, dates_1.daysBetween)(before, d) <= 28)
+            return num(weights[before]);
+        const after = wdays.find(w => w > d);
+        return after && (0, dates_1.daysBetween)(d, after) <= 14 ? num(weights[after]) : before ? num(weights[before]) : null;
+    };
+    const early = (d) => d < (0, series_1.shiftDayKey)(from, 28), late = (d) => d > (0, series_1.shiftDayKey)(today, -28);
+    const avg = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+    const wEarly = inWin.filter(d => d >= from && early(d)).map(d => num(weights[d])), wLate = inWin.filter(late).map(d => num(weights[d]));
+    const w0 = wEarly.length ? avg(wEarly) : num(weights[inWin[0]]), w1 = wLate.length ? avg(wLate) : num(weights[inWin[inWin.length - 1]]);
+    const weight = { from: Math.round(w0 * 10) / 10, to: Math.round(w1 * 10) / 10, delta: Math.round((w1 - w0) * 10) / 10, pct: Math.round((w1 / w0 - 1) * 1000) / 10 };
+    const by = new Map();
+    sessions.forEach(s => {
+        if (s.date < from || s.date > today)
+            return;
+        (s.exercises || []).forEach(e => {
+            let best = 0;
+            (e.sets || []).forEach(st => { const w = num(st.w), r = num(st.r); if (w > 0 && r >= 1 && r <= 12)
+                best = Math.max(best, (0, strong_1.e1rm)(w, r)); });
+            if (!best)
+                return;
+            const k = key(e.n), L = by.get(k) || { n: e.n, pts: new Map() };
+            L.pts.set(s.date, Math.max(L.pts.get(s.date) || 0, best));
+            by.set(k, L);
+        });
+    });
+    const lifts = [];
+    [...by.values()].filter(L => L.pts.size >= 3).sort((a, b) => b.pts.size - a.pts.size).slice(0, 4).forEach(L => {
+        const series = [...L.pts.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, e]) => { const bw = bwOn(date); return bw ? { date, e1rm: Math.round(e * 10) / 10, bw, rel: Math.round(e / bw * 1000) / 1000 } : null; })
+            .filter(Boolean);
+        if (series.length < 3)
+            return;
+        const a = series.filter(p => early(p.date)), b = series.filter(p => late(p.date));
+        // A lift you stopped doing says nothing about now — it needs a session in the last 4 weeks.
+        if (!b.length)
+            return;
+        const pa = a.length ? a : [series[0]], pb = b.length ? b : [series[series.length - 1]];
+        const top = (ps, f) => Math.max(...ps.map(p => p[f]));
+        const e0 = top(pa, 'e1rm'), e1 = top(pb, 'e1rm'), r0 = top(pa, 'rel'), r1 = top(pb, 'rel');
+        lifts.push({ n: L.n, from: e0, to: e1, pct: Math.round((e1 / e0 - 1) * 1000) / 10, relFrom: r0, relTo: r1, relPct: Math.round((r1 / r0 - 1) * 1000) / 10, series });
+    });
+    if (!lifts.length)
+        return { ...base, weight, why: 'Needs a lift done 3+ times in the last ' + weeks + ' weeks, at least once in the last 4.' };
+    const med = (xs) => { const s = xs.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+    const sPct = med(lifts.map(l => l.pct)), index = Math.round(med(lifts.map(l => l.relPct)) * 10) / 10;
+    const kg = (x) => (x > 0 ? '+' : '') + x + ' kg';
+    let verdict;
+    if (weight.pct > 1) {
+        verdict = sPct >= weight.pct ? { key: 'gaining', title: 'Gaining weight, gaining strength faster', text: 'Weight ' + kg(weight.delta) + ', strength ' + (sPct > 0 ? '+' : '') + sPct + ' % — strength per kg is up ' + index + ' %. The gain is working.', color: '#30d158' }
+            : sPct > 0 ? { key: 'lagging', title: 'Strength rising slower than weight', text: 'Weight ' + kg(weight.delta) + ', strength +' + sPct + ' % — strength per kg ' + index + ' %. Normal early in a bulk; if it lasts, a smaller surplus.', color: '#ff9f0a' }
+                : { key: 'flat', title: 'Weight up, strength not', text: 'Weight ' + kg(weight.delta) + ' while strength is ' + sPct + ' %. The extra weight is not showing up as strength yet — check training volume and the size of the surplus.', color: '#ff9f0a' };
+    }
+    else if (weight.pct < -1) {
+        verdict = sPct >= -1 ? { key: 'holding', title: 'Cutting without losing strength', text: 'Weight ' + kg(weight.delta) + ', strength ' + (sPct >= 0 ? '+' : '') + sPct + ' % — strength per kg up ' + index + ' %.', color: '#30d158' }
+            : { key: 'losing', title: 'Strength falling with the weight', text: 'Weight ' + kg(weight.delta) + ', strength ' + sPct + ' %. Slow the cut and keep protein near 1.6–2.2 g per kg; keep the heavy sets in.', color: '#ff453a' };
+    }
+    else {
+        verdict = { key: 'steady', title: sPct > 1 ? 'Same weight, stronger' : sPct < -1 ? 'Same weight, a little weaker' : 'Weight and strength both steady', text: 'Weight ' + kg(weight.delta) + ', strength ' + (sPct > 0 ? '+' : '') + sPct + ' %.', color: sPct > 1 ? '#30d158' : sPct < -1 ? '#ff9f0a' : '#64d2ff' };
+    }
+    return { known: true, weeks, weight, lifts, index, verdict };
+}
+
+  },
+  "./logger": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.untickedFilled = untickedFilled;
+exports.buildWorkout = buildWorkout;
+exports.previousSets = previousSets;
+exports.targetFor = targetFor;
+exports.learnedRest = learnedRest;
+exports.restPlan = restPlan;
+/**
+ * ONE WORKOUT LOGGER — the rules both loggers share (phone mobile/js/train.js, PC swFinish/swRenderActive).
+ * Before this the PC and the phone each had their own copy of "which sets count", previous sets, targets,
+ * rest and records, and they drifted (two 1RM formulas, exact-name vs alias matching). Now:
+ *
+ *  - buildWorkout: the finished session from the live logger state — ticked sets only, warm-ups kept apart,
+ *    RPE / set type / tick time carried, Strong volume, records frozen onto the sets that set them;
+ *  - previousSets: the last time you did an exercise, under any of its names;
+ *  - targetFor: next set's target (double progression, barbell rounded to loadable plates);
+ *  - learnedRest / restPlan: rest from your own habits — Strong's rest timer from an import, and the gaps
+ *    between the sets you tick — before the generic default.
+ */
+const exercises_1 = require("./exercises");
+const strong_1 = require("./strong");
+const lifts_1 = require("./lifts");
+const gym_1 = require("./gym");
+const sync_1 = require("./sync");
+const filled = (s) => { var _a, _b; return String((_a = s.w) !== null && _a !== void 0 ? _a : '').trim() !== '' && String((_b = s.r) !== null && _b !== void 0 ? _b : '').trim() !== ''; };
+const num = (v) => { const n = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v); return isFinite(n) ? n : 0; };
+/** Sets with weight and reps typed but not ticked — Strong asks before finishing; so do both loggers. */
+function untickedFilled(exList) {
+    return exList.reduce((a, e) => a + (e.sets || []).filter(s => !s.done && filled(s)).length, 0);
+}
+/**
+ * The session a finished (or edited) workout becomes. A set counts when it is ticked and has weight and reps
+ * (or, with `includeFilled`, when it only has weight and reps). Records are measured against `prior`.
+ */
+function buildWorkout(exList, opts) {
+    const counts = (s) => filled(s) && (s.done || !!opts.includeFilled);
+    const out = [];
+    let total = 0;
+    (exList || []).forEach(e => {
+        const sets = (e.sets || []).filter(s => counts(s) && !s.warm).map(s => {
+            const o = { w: Math.max(0, num(s.w)), r: Math.max(0, Math.round(num(s.r))) };
+            const rpe = num(s.rpe);
+            if (s.rpe != null && s.rpe !== '' && rpe >= 1 && rpe <= 10)
+                o.rpe = Math.round(rpe * 2) / 2;
+            if (s.type === 'd' || s.type === 'f')
+                o.type = s.type;
+            if (opts.start && s.at && s.at >= opts.start)
+                o.t = Math.round((s.at - opts.start) / 1000);
+            else if (typeof s.t === 'number' && s.t >= 0)
+                o.t = s.t;
+            return o;
+        }).filter(s => s.r > 0);
+        if (!sets.length)
+            return;
+        const warm = [...(e.sets || []).filter(s => counts(s) && s.warm).map(s => ({ w: Math.max(0, num(s.w)), r: Math.max(0, Math.round(num(s.r))) })), ...(e.warm || [])];
+        const meta = (0, lifts_1.withMeta)({ n: e.n, e: e.e && e.e !== 'other' ? e.e : undefined });
+        const x = { n: e.n, c: e.c || meta.c, g: e.g || meta.g, m: (e.m && e.m.length ? e.m : meta.m).slice(), e: e.e || meta.e, sets };
+        if (warm.length)
+            x.warm = warm;
+        if (e.note)
+            x.note = e.note;
+        if (e.ss)
+            x.ss = e.ss;
+        out.push(x);
+        total += sets.length;
+    });
+    // A superset of one is not a superset.
+    const ssN = {};
+    out.forEach(e => { if (e.ss)
+        ssN[e.ss] = (ssN[e.ss] || 0) + 1; });
+    out.forEach(e => { if (e.ss && ssN[e.ss] < 2)
+        delete e.ss; });
+    const records = (0, strong_1.recordsFor)(opts.prior || [], { date: opts.date, exercises: out });
+    out.forEach((e, x) => e.sets.forEach((s, i) => { const m = records.marks[x][i]; if (m.length)
+        s.pr = m;
+    else
+        delete s.pr; }));
+    return { exercises: out, total, records,
+        fields: { ...(0, lifts_1.sessionShape)(out), exercises: out, volume: Math.round((0, strong_1.workoutVolume)({ date: opts.date, exercises: out })), unit: opts.unit || 'kg' } };
+}
+const sessKey = (s) => s.id || s.ts || '';
+/** The last time you did this exercise (under any of its names), skipping the session being edited. */
+function previousSets(sessions, name, skipKey) {
+    for (let i = sessions.length - 1; i >= 0; i--) {
+        const s = sessions[i];
+        if (skipKey && sessKey(s) === skipKey)
+            continue;
+        const e = (s.exercises || []).find(x => (0, exercises_1.sameExercise)(x.n, name));
+        if (e && e.sets && e.sets.length)
+            return { date: s.date, sets: e.sets.map(x => ({ w: num(x.w), r: num(x.r) })), note: e.note };
+    }
+    return null;
+}
+/**
+ * The next target: double progression from the last time (logic/sync.ts progressionTarget), dumbbells in 2 kg
+ * steps, barbells rounded to what your plates can load. Null on a first session — nothing to beat yet.
+ */
+function targetFor(prev, ex, opts = {}) {
+    const lb = opts.unit === 'lb';
+    const step = ex.e === 'dumbbell' ? (lb ? 5 : 2) : opts.step || (lb ? 5 : 2.5);
+    let t = (0, sync_1.progressionTarget)(prev, step, 12, opts.gapDays || 0);
+    if (t && t.w && ex.e === 'barbell') {
+        const w2 = (0, gym_1.loadable)(t.w, opts.bar || (lb ? 45 : 20), lb ? [45, 35, 25, 10, 5, 2.5] : [25, 20, 15, 10, 5, 2.5, 1.25]);
+        if (Math.abs(w2 - t.w) > 0.01)
+            t = { ...t, w: w2, reason: t.reason + ' (rounded to your plates)' };
+    }
+    return t;
+}
+/**
+ * Rest you actually take for an exercise. Two sources, newest first: Strong's rest timer (`rest` on an
+ * imported exercise) and the gap between sets you ticked (`t`, seconds from the start) minus ~3 s a rep for
+ * the set itself. Gaps outside 20 s – 10 min are not rests (a phone call, a forgotten tick). Needs 3+
+ * readings; the median of the latest 24, to the nearest 15 s.
+ */
+function learnedRest(sessions, name) {
+    const obs = [];
+    let strong = 0, ticks = 0;
+    for (let i = sessions.length - 1; i >= 0 && obs.length < 24; i--) {
+        (sessions[i].exercises || []).forEach(e => {
+            if (!(0, exercises_1.sameExercise)(e.n, name) || obs.length >= 24)
+                return;
+            if (num(e.rest) >= 20 && num(e.rest) <= 600) {
+                obs.push(num(e.rest));
+                strong++;
+            }
+            if (e.ss)
+                return;
+            const sets = e.sets || [];
+            for (let k = 1; k < sets.length && obs.length < 24; k++) {
+                const a = sets[k - 1].t, b = sets[k].t;
+                if (typeof a !== 'number' || typeof b !== 'number')
+                    continue;
+                const gap = b - a - num(sets[k].r) * 3;
+                if (gap >= 20 && gap <= 600) {
+                    obs.push(gap);
+                    ticks++;
+                }
+            }
+        });
+    }
+    if (obs.length < 3)
+        return null;
+    const s = obs.slice().sort((x, y) => x - y), mid = s.length >> 1;
+    const med = s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+    return { sec: Math.max(30, Math.round(med / 15) * 15), n: obs.length, from: strong && ticks ? 'both' : strong ? 'strong' : 'ticks' };
+}
+/** Rest for the next set: your own setting for the exercise, else what you actually rest, else the default by kind. */
+function restPlan(ex, sessions, opts = {}) {
+    const learned = learnedRest(sessions, ex.n);
+    if (opts.own && opts.own > 0)
+        return { sec: opts.own, why: 'yours', learned };
+    if (learned)
+        return { sec: learned.sec, why: 'learned', learned };
+    return { sec: (0, gym_1.restSeconds)(ex, opts.base || 90), why: 'auto', learned: null };
 }
 
   },
@@ -5137,7 +5374,12 @@ function parseStrongCsv(text, unit = 'kg') {
         }
         const order = g(C.order);
         if (/rest/i.test(order)) {
-            out.skipped.rest++;
+            // Strong's rest timer for this exercise — kept on it (`rest`, seconds) so ARK can learn your rests.
+            const rs = byKey.get(g(C.date) + '|' + g(C.name)), last = rs && rs.exercises[rs.exercises.length - 1], sec = n(g(C.sec));
+            if (last && last.n === exName && sec >= 10 && sec <= 900)
+                last.rest = Math.round(sec);
+            else
+                out.skipped.rest++;
             continue;
         }
         let w = n(g(C.w)), r = Math.round(n(g(C.r)));

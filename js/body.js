@@ -529,6 +529,7 @@ const SUBSUM = {
   'Weekly sets vs your range': v => plural(v.body.muscles.filter(m => m.vol && (m.vol.zone === 'under' || m.vol.zone === 'none')).length, 'muscle') + ' under range',
   'Fatigue radar': v => fatigueNow(v).title,
   'Stalled lifts': () => { const P = plateausNow(); return P.length ? P.length + ' stalled · ' + P.map(p => p.n.replace(/ \(.*\)$/, '')).slice(0, 2).join(', ') : 'none — every regular lift still rising'; },
+  'Strength per kg': v => { const R = relNow(v); return R.known ? R.verdict.title.toLowerCase() + (R.index != null ? ' · ' + (R.index > 0 ? '+' : '') + R.index + ' % per kg' : '') : 'needs weigh-ins and a regular lift'; },
   'Not trained lately': () => { const N = neglectNow(); return N.length ? N.map(a => a.name + (a.never ? ' (never)' : ' (' + a.weeks + ' wk)')).join(', ') : 'every area trained in 3 weeks'; },
   'Injuries': v => { const n = (v.injuries || []).filter(j => !j.cleared).length; return n ? n + ' active' : 'none'; },
   'Tape measurements': v => { const R = L.measureReport(v.measures || {}, v.weights || {}, { height: +(v.profile || {}).height || null, sex: (v.profile || {}).sex || null });
@@ -807,10 +808,32 @@ function secDevelop(v) {
         ${r.verdict !== 'balanced' ? `<p class="sub" style="margin:0 0 8px;line-height:1.4">${esc(r.note)}</p>` : ''}`;
     }).join('') + `<p class="sub" style="margin:6px 0 0;line-height:1.4">Green band = the usual coaching range. A nudge, not a diagnosis.</p>`
       : `<div class="empty" style="padding:6px">Shows once both lifts of a pair are logged — row &amp; bench, overhead &amp; bench, leg curl &amp; extension, squat &amp; deadlift.</div>`);
-  H += stalledBlock() + neglectBlock(v);
+  H += relBlock(v) + stalledBlock() + neglectBlock(v);
   H += dungeonCard(v);
   H += photoCard();
   return H;
+}
+
+/* ── strength per kg of body weight (logic/lifts.ts relativeStrength) ── */
+let relCache = null, relFor = null;
+function relNow(v) {
+  const k = v.workouts.length + ':' + Object.keys(v.weights || {}).length + ':' + (v.rev || 0);
+  if (relFor !== k) { relCache = L.relativeStrength(v.workouts || [], v.weights || {}, today()); relFor = k; }
+  return relCache;
+}
+function relBlock(v) {
+  const R = relNow(v);
+  let body;
+  if (!R.known) body = `<div class="empty" style="padding:6px">${esc(R.why)} Then ARK shows whether a bulk or cut is turning into strength — raw numbers hide it.</div>`;
+  else {
+    const Wt = R.weight, V = R.verdict;
+    body = `<div style="border-left:3px solid ${V.color};padding-left:10px;margin-bottom:10px"><b style="color:${V.color}">${esc(V.title)}</b><div class="sub" style="line-height:1.45;margin-top:2px">${esc(V.text)}</div></div>
+      <div class="rel-w"><span>Body weight</span><b class="num">${fmt1(Wt.from)} → ${fmt1(Wt.to)} kg</b></div>
+      ${R.lifts.map(l => `<div class="rel-r"><span class="n">${esc(l.n)}</span><span class="num sub">${Math.round(l.from)} → ${Math.round(l.to)}</span>
+        <b class="num" style="color:${l.relPct > 0.5 ? '#30d158' : l.relPct < -0.5 ? '#ff9f0a' : 'var(--t2)'}">${l.relTo.toFixed(2)}×<small> ${l.relPct > 0 ? '+' : ''}${l.relPct} %</small></b></div>`).join('')}
+      <p class="sub" style="line-height:1.45;margin:8px 0 0">Best est. 1RM (sets of 1–12 reps) ÷ your weight that day — first 4 of the last ${R.weeks} weeks against the last 4. 1.00× = lifting your body weight.</p>`;
+  }
+  return `<div class="ba-h"><h2 style="font-size:1.05rem">Strength per kg</h2><span class="k">bulk or cut — is it strength?</span></div>` + card(body);
 }
 
 /* ── lifts that stopped rising, areas left out (logic/lifts.ts) ── */
