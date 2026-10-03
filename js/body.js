@@ -571,19 +571,51 @@ export function patchBodyArch() {
   const v = view();
   if (!lastSecs || !document.getElementById('ba-scan') || !v.body.muscles.length) return false;
   const next = sections(v);
+  // Keep the page still. Open sections are content-visibility:auto, and a freshly built one has no remembered
+  // height — off screen it would count as the 900 px placeholder and throw the page up or down on every tap
+  // (+½ h sleep, a vitamin). So each rebuilt section keeps its old height, and the control you tapped (else the
+  // section at the top of the screen) is put back exactly where it was.
+  const anchor = keepAnchor();
   let scan = false;
   Object.keys(next).forEach(id => {
     if (next[id] === lastSecs[id]) return;
     const el = document.getElementById(id);
     if (!el) return;
+    const bd = el.querySelector(':scope > .ba-bd'), h = bd ? Math.round(bd.getBoundingClientRect().height) : 0;
     el.outerHTML = next[id];
+    const nb = h ? document.querySelector('#' + id + ' > .ba-bd') : null;
+    if (nb) nb.style.containIntrinsicSize = 'auto ' + h + 'px';
     if (id === 'ba-scan') scan = true;
   });
   lastSecs = next;
   const lbl = SECTIONS.every(x => baOpen()[x[0]]) ? 'Fold all' : 'Open all';
   document.querySelectorAll('.jump .all').forEach(b => { b.textContent = lbl; });
   if (scan) mountFigure(); else paint();
+  // Once now, and again after the next frame — the figure and rings settle a few pixels later.
+  restoreAnchor(anchor);
+  requestAnimationFrame(() => requestAnimationFrame(() => restoreAnchor(anchor)));
   return true;
+}
+/* What you last tapped in Body Arch, as a selector that finds its rebuilt copy. */
+let lastTap = null, lastTapAt = 0;
+document.addEventListener('pointerdown', e => {
+  const b = e.target && e.target.closest ? e.target.closest('[data-act]') : null;
+  if (!b || !b.closest('.ba-sec')) return;
+  lastTap = '[data-act="' + CSS.escape(b.dataset.act) + '"]' + ['f', 'k', 'v', 'd', 'slug', 'sec', 'key', 'a', 'n'].filter(k => b.dataset[k] != null)
+    .map(k => '[data-' + k + '="' + CSS.escape(b.dataset[k]) + '"]').join('');
+  lastTapAt = Date.now();
+}, { capture: true, passive: true });
+function keepAnchor() {
+  const sel = lastTap && Date.now() - lastTapAt < 4000 ? lastTap : null, el = sel ? document.querySelector('.ba-sec ' + sel) : null;
+  if (el) return { sel: '.ba-sec ' + sel, top: el.getBoundingClientRect().top };
+  const sec = [...document.querySelectorAll('.ba-sec')].find(s => s.getBoundingClientRect().bottom > 90);
+  return sec ? { sel: '#' + sec.id, top: sec.getBoundingClientRect().top } : null;
+}
+function restoreAnchor(a) {
+  if (!a) return;
+  const el = document.querySelector(a.sel); if (!el) return;
+  const d = el.getBoundingClientRect().top - a.top;
+  if (Math.abs(d) > 1) window.scrollBy(0, d);
 }
 
 /* keep the jump chips in step with where you are */
