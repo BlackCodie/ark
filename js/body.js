@@ -16,17 +16,16 @@ import {
   L, state, view, emit, emitUndoable, dropPending, changed, esc, icon, today, shiftDay, fmt1, fmtDay, ringSvg, sparkSvg, barsSvg,
   haptic, toast, openSheet, topSheet, closeSheet, scheduleSync, daysBetween,
 } from './core.js';
-import { GROUPS, trainNext, syncButton, bioPatch, MOODS } from './views.js';
+import { GROUPS, syncButton, bioPatch, MOODS } from './views.js';
 import { startForMuscles, tissueNow } from './train.js';
 import { secMind } from './mind.js';
 import { standing, fmtAmt } from './doses.js';
 import { hormoneRows } from './hormones.js';
 import { fatigueCard, storyBlock, fatigueNow } from './system.js';
-import { secLymph, lymphSummary, lymphLayer, paintLymph, lymphZone, lymphNow } from './lymph.js';
 
 const ui = { face: 'front', mode: 'status', tl: 0, sel: null, open: {} };
-const MODES = [['status', 'Status'], ['strength', 'Strength'], ['mobility', 'Mobility'], ['soreness', 'Soreness'], ['volume', 'Thermal'], ['range', 'Range'], ['lymph', 'Lymph']];
-const SECTIONS = [['ba-scan', 'Scanner'], ['ba-sys', 'Systems'], ['ba-rec', 'Recovery'], ['ba-dev', 'Develop'], ['ba-vit', 'Vitals'], ['ba-lymph', 'Lymph'], ['ba-mind', 'Mind'], ['ba-mic', 'Supplements'], ['ba-endo', 'Endocrine']];
+const MODES = [['status', 'Status'], ['strength', 'Strength'], ['mobility', 'Mobility'], ['soreness', 'Soreness'], ['volume', 'Thermal'], ['range', 'Range']];
+const SECTIONS = [['ba-scan', 'Scanner'], ['ba-sys', 'Systems'], ['ba-dev', 'Develop'], ['ba-mind', 'Mind'], ['ba-mic', 'Supplements'], ['ba-endo', 'Endocrine']];
 const STATE_LBL = {
   fresh: ['Fresh', '#30d158'], recovering: ['Recovering', '#ffb340'], ready: ['Ready', '#40c8e0'],
   detrained: ['Detrained', '#ff6b5a'], untouched: ['Untouched', 'rgba(235,240,245,.5)'],
@@ -53,7 +52,7 @@ function figure() {
     + groups.map(g => MN[g.slug]
       ? `<g class="mus" data-act="muscle" data-slug="${g.slug}" role="button" tabindex="0" aria-label="${MN[g.slug]}">${g.paths.map(p => `<path d="${p}"/>`).join('')}</g>`
       : `<g class="part">${g.paths.map(p => `<path d="${p}"/>`).join('')}</g>`).join('')
-    + lymphLayer(name) + `</g>`;
+    + `</g>`;
   const host = document.createElement('div');
   host.innerHTML = `<svg class="ba-fig" viewBox="0 0 724 1448" preserveAspectRatio="xMidYMid meet" role="group" aria-label="Body figure — each muscle opens its details">`
     + face('front', window.ARK_FRONT || [], window.ARK_OUTLINE_FRONT || '')
@@ -87,14 +86,12 @@ export function mountFigure() {
 function paint() {
   if (!figEl) return;
   const v = view(), by = bySlug(v), pins = v.body.pins || {};
-  figEl.classList.toggle('m-lymph', ui.mode === 'lymph');
-  if (ui.mode === 'lymph') paintLymph(figEl, v);
   const tlE = ui.tl ? (v.body.timeline || [])[ui.tl] : null;
   const now = Date.now() - ui.tl * 864e5;
   figEl.querySelectorAll('g.mus').forEach(g => {
     const s = g.dataset.slug, m = by[s] || {};
     const last = tlE ? ((tlE.muscles || {})[s] || {}).last : m.last;
-    const p = L.muscleFill(ui.mode, m.metric || {}, last || null, m.vol30 || 0, v.body.peak || 1, now, s === ui.sel, ui.mode === 'lymph' ? lymphZone(v, s) : volOf(v, s, m).zone);
+    const p = L.muscleFill(ui.mode, m.metric || {}, last || null, m.vol30 || 0, v.body.peak || 1, now, s === ui.sel, volOf(v, s, m).zone);
     g.style.fill = p ? p.fill : '';
     g.style.stroke = p ? p.stroke : '';
     g.classList.toggle('sel', s === ui.sel);
@@ -109,7 +106,6 @@ function paint() {
 function legend() {
   if (ui.mode === 'status') return `<span><i style="background:rgba(34,197,94,.6)"></i>Fresh ≤48 h</span><span><i style="background:rgba(245,158,11,.6)"></i>Recovering → 7 d</span><span><i style="background:rgba(112,140,178,.35)"></i>Idle</span><span><i style="background:rgba(239,68,68,.6)"></i>Sore (your verdict)</span>`;
   if (ui.mode === 'soreness') return SORE_LBL.map((l, i) => `<span><i style="background:${SORE_COLORS[i]}"></i>${l}</span>`).join('');
-  if (ui.mode === 'lymph') return `<span><i style="background:rgba(64,200,224,.15)"></i>barely moving</span><span><i style="background:rgba(64,200,224,.55)"></i>pumping well</span><span><i style="background:#40c8e0;border-radius:50%"></i>node groups</span>`;
   if (ui.mode === 'range') return ['under', 'low', 'optimal', 'high', 'over'].map(k => `<span><i style="background:${L.VOLUME_ZONE[k].color}"></i>${L.VOLUME_ZONE[k].label.replace(/ —.*/, '')}</span>`).join('');
   if (ui.mode === 'volume') return `<span>30-day tonnage · none</span><span class="ramp"></span><span>your hardest-hit</span>`;
   const c = ui.mode === 'strength' ? '34,197,94' : '34,211,238';
@@ -130,9 +126,6 @@ function scanStats(v) {
 function tlLabel() { return ui.tl === 0 ? 'Live' : ui.tl === 1 ? 'Yesterday' : ui.tl + ' days ago'; }
 
 function secScanner(v) {
-  const t = today();
-  const inj = injNow(v);
-  const tn = v.body.muscles.filter(m => m.priority > 0.05 && !(inj[m.slug] && inj[m.slug].sev >= 2)).slice(0, 3);
   let H = `<section class="scan frost">
     <div class="scan-top"><div class="seg sm">
       <button class="${ui.face === 'front' ? 'on' : ''}" data-act="ba-face" data-face="front">Anterior</button>
@@ -147,28 +140,6 @@ function secScanner(v) {
   </section>
   <div class="stat4" data-scan-stats>${scanStats(v)}</div>`;
 
-  H += `<div class="ba-h"><h2 style="font-size:1.05rem">Train next</h2><span class="k">readiness × volume deficit × imprint</span></div>`;
-  H += tn.length ? `<div class="tn">${tn.map(m => {
-    const V = volOf(v, m.slug, m);
-    const why = inj[m.slug] ? 'mild injury — train around it' : V.need > 0 ? V.need + ' set' + (V.need === 1 ? '' : 's') + ' to your range' : 'ready to load';
-    const sc = (STATE_LBL[m.state] || STATE_LBL.untouched)[1];
-    return `<button class="frost" data-act="train-slug" data-slug="${m.slug}"><b>${esc(m.name)}</b><span class="w">${why}</span>
-      <span class="m"><span style="color:${sc}">●</span> ${esc(m.state.toUpperCase())} · ${fmt1(m.weekSets)} / ${V.mavLo}–${V.mavHi} sets</span>
-      <span class="go">Start ${icon('chev', 14)}</span></button>`;
-  }).join('')}</div>` : card(`<div class="empty" style="padding:6px">Everything is inside its recovery window — rest is the correct move.</div>`);
-
-  /* DOW-7 */
-  const days = [6, 5, 4, 3, 2, 1, 0].map(i => shiftDay(t, -i));
-  const ws = v.workouts;
-  H += `<div class="ba-h"><h2 style="font-size:1.05rem">DOW-7</h2><span class="k">sessions by day</span></div>` + card(`<div class="dow">${days.map(k => {
-    const s = ws.filter(w => w.date === k), ty = s.length ? s[s.length - 1].type : null;
-    return `<div class="${k === t ? 't ' : ''}${ty ? 'on' : ''}" ${ty ? `style="--c:${SW_TYPE_COLORS[ty] || '#40c8e0'}"` : ''}>${fmtDay(k, { weekday: 'narrow' })}<small>${ty ? esc(ty) : '·'}</small></div>`;
-  }).join('')}</div>` + (() => {
-    const wkStart = shiftDay(t, -((new Date().getDay() + 6) % 7));
-    const cnt = {}; ws.filter(w => w.date >= wkStart).forEach(w => { cnt[w.type] = (cnt[w.type] || 0) + 1; });
-    const keys = Object.keys(cnt);
-    return keys.length ? `<div class="ppl">${keys.map(k => `<span class="tag" style="--c:${SW_TYPE_COLORS[k] || '#40c8e0'}">${cnt[k]}× ${esc(k)}</span>`).join('')}</div>` : '';
-  })(), 'tight');
   return H;
 }
 
@@ -211,14 +182,11 @@ function secRecovery(v) {
         <span>MOBILITY</span><span class="t"><i style="width:${s.mobPct}%;background:#40c8e0"></i></span><b>${s.mobPct}%</b>
         <span>VOL/WK</span><span class="t"><i style="width:${s.volPct}%;background:#ffb340"></i></span><b>${s.wk}/10</b></div></div>`;
   }).join('')}</div>`;
-  const tn = trainNext(v), regenBy = Object.fromEntries(S.map(s => [s.key, s]));
-  const stTop = tn.length ? (regenBy[tn[0].group] || {}).state : null;
+  // Strength imprint per group (no training pick — TRAIN NEXT was removed from Body Arch, 2026-10-04).
+  const byImp = S.slice().sort((a, b) => b.imprint - a.imprint);
   H += card(`<div class="radar-row"><div>${radarSvg(S)}</div><div class="np">
-    ${tn.length ? `<div class="hl">⚡ Train: ${tn.map(m => GROUPS[m.group][0]).join(' · ')}</div>
-      <div class="why">${stTop === 'atrophy' ? 'Adaptation is fading in these groups — retraining comes first.' : stTop === 'dormant' ? 'Recovered groups first, then the ones never trained.' : 'Recovered groups with the lightest weekly volume.'} Same ranking as TRAIN NEXT.</div>
-      ${tn.map(m => { const g = regenBy[m.group] || {}; const st = REGEN_LBL[g.state] || REGEN_LBL.dormant;
-        return `<div class="pick">${esc(GROUPS[m.group][0])}<span class="tag" style="--c:${st[1]}">${st[0].toUpperCase()}</span></div>`; }).join('')}`
-    : `<div class="hl">⟳ Active recovery day</div><div class="why">Every group is inside its recovery window — sleep, mobility, steps.</div>`}
+    <div class="hl">Strength imprint</div><div class="why">How strong each group is against your best — further out is stronger.</div>
+    ${byImp.map(s => `<div class="pick">${esc(s.name.charAt(0) + s.name.slice(1).toLowerCase())}<span class="tag" style="--c:${s.imprint >= 50 ? '#30d158' : s.imprint >= 20 ? '#ffb340' : 'rgba(235,240,245,.45)'}">${s.imprint}%</span></div>`).join('')}
   </div></div>`, 'tight').replace('card frost tight', 'card frost tight" style="margin-top:10px');
   return H;
 }
@@ -417,7 +385,7 @@ function secEndo(v) {
   H += `<div class="ehdr slim"><div><div class="v" style="color:${cc}">${Math.round(E.confidence * 100)}%</div><div class="k">Confidence</div></div>
     <div><div class="v">${E.days}d</div><div class="k">History</div></div><div><div class="v">${E.samples}</div><div class="k">Simulations</div></div></div>`;
   if (E.next && E.next.length) H += `<div class="eyebrow" style="margin:10px 2px 6px">Log these to sharpen the estimate</div><div class="chips" style="margin-bottom:10px">${E.next.map(n =>
-    `<button class="chip" ${n.can ? 'data-act="ba-jump" data-sec="ba-vit"' : 'disabled'} style="height:32px;font-size:.78rem">${esc(n.label)}</button>`).join('')}</div>`;
+    `<button class="chip" ${n.can ? 'data-act="ba-jump" data-sec="ba-sys"' : 'disabled'} style="height:32px;font-size:.78rem">${esc(n.label)}</button>`).join('')}</div>`;
   if ((E.derived || []).length) H += `<div class="eyebrow" style="margin:12px 2px 6px">Overall</div><div class="der2">${E.derived.map(D => {
     const col = D.invert ? (D.score >= 65 ? '#ff6b5a' : D.score >= 45 ? '#ffb340' : '#30d158') : (D.score >= 65 ? '#30d158' : D.score >= 45 ? '#ffb340' : '#ff6b5a');
     return `<div class="der" style="--dc:${D.c}"><div class="n">${D.ic} ${esc(D.name)}</div><div class="v ${D.ordinal ? 'ord' : ''}" style="color:${col}">${D.ordinal ? esc(D.label) : D.score}</div>
@@ -483,11 +451,8 @@ export function renderBodyArch() {
 
 const SEC_DEFS = [
   ['ba-scan', 'Scanner', 'biomechanical matrix', secScanner],
-  ['ba-sys', 'Body Systems', 'report card · body age', secSystems],
-  ['ba-rec', 'Bio-Regen Matrix', 'muscle telemetry · 72 h cycle', secRecovery],
+  ['ba-sys', 'Body Systems', 'report card · body age · vitals · muscle recovery', secSystemsAll],
   ['ba-dev', 'Body Development', 'volume · injuries · balance', secDevelop],
-  ['ba-vit', 'Biometric Status', 'readiness · vitals · today', secVitals],
-  ['ba-lymph', 'Lymphatic System', 'pump · fluid · nodes', secLymph],
   ['ba-mind', 'Mental State', 'neural link', secMind],
   ['ba-mic', 'Supplements', 'what you took · what is in you', secMicros],
   ['ba-endo', 'Endocrine Estimate', '', secEndo],
@@ -501,35 +466,30 @@ const baSub = () => state.settings.baSub || (state.settings.baSub = {});
 const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
 const SUMMARY = {
   'ba-scan': v => { const c = v.body.counts || {}; const tn = v.body.muscles.filter(m => m.priority > 0.05).slice(0, 2).map(m => m.name);
-    return (c.ready ?? 0) + ' ready · ' + ((c.recovering || 0) + (c.fresh || 0)) + ' recovering' + (tn.length ? ' · next: ' + tn.join(', ') : ''); },
-  'ba-sys': v => { const R = systemsNow(v); const g = R.rows.filter(r => r.grade === 'good').length, w = R.rows.filter(r => r.grade === 'watch' || r.grade === 'poor').length;
-    return g + ' good · ' + w + ' to watch' + (R.age.known ? ' · body age ' + R.age.bodyAge : ''); },
-  'ba-rec': v => (v.body.balance == null ? 'balance —' : 'balance ' + v.body.balance + ' %') + ' · coverage ' + (v.body.coverage ?? '—') + ' %',
+    return (c.ready ?? 0) + ' ready · ' + ((c.recovering || 0) + (c.fresh || 0)) + ' recovering'; },
+  'ba-sys': v => { const R = systemsNow(v), r = (v.readiness || {})[today()]; const g = R.rows.filter(r => r.grade === 'good').length, w = R.rows.filter(r => r.grade === 'watch' || r.grade === 'poor').length;
+    return 'readiness ' + (r ?? '—') + ' · ' + g + ' good · ' + w + ' to watch' + (R.age.known ? ' · body age ' + R.age.bodyAge : ''); },
   'ba-dev': v => { const under = v.body.muscles.filter(m => m.vol && (m.vol.zone === 'under' || m.vol.zone === 'none')).length;
     const inj = Object.keys(L.activeInjuries(v.injuries || [], today())).length, F = fatigueNow(v);
     return plural(under, 'muscle') + ' under range · fatigue: ' + F.title.toLowerCase() + (inj ? ' · ' + plural(inj, 'injury').replace('injurys', 'injuries') : ''); },
   'ba-prof': v => { const w = latestWeight(v), p = v.profile || {}; return [w ? fmt1(w) + ' kg' : null, p.height ? p.height + ' cm' : null, p.bodyfat ? p.bodyfat + ' % fat' : null].filter(Boolean).join(' · ') || 'set up your profile'; },
-  'ba-vit': v => { const t = today(), b = v.bio[t] || {}, r = (v.readiness || {})[t];
-    return 'readiness ' + (r ?? '—') + ' · sleep ' + (b.sleep ? fmt1(b.sleep) + ' h' : '—') + ' · protein ' + (b.prot ? Math.round(b.prot) + ' g' : '—'); },
   'ba-mind': v => { const b = v.bio[today()] || {}; return b.energy != null || b.mood != null ? 'energy ' + (b.energy ?? '—') + '/10 · stress ' + (b.stress ?? '—') + '/10' : 'not checked in today'; },
   'ba-mic': v => { const D = v.bioDefs; if (!D || !D.micros) return '—'; const amt = (v.bio[today()] || {}).micros || {}, g = D.micros.filter(m => !m.limit);
     return g.filter(m => (amt[m.k] || 0) >= m.goal).length + ' of ' + g.length + ' at target today'; },
-  'ba-lymph': v => lymphSummary(v),
   'ba-endo': v => { const E = v.endo; if (!E) return 'not estimated yet'; const a = (E.axes || []).find(x => x.k === 'testosterone');
     return Math.round(E.confidence * 100) + ' % confidence' + (a ? ' · testosterone ' + a.score : ''); },
 };
 /* Inside every section the blocks fold the same way, each with its own one-liner (the Scanner stays open). */
-const SUB_OPEN = new Set(['ba-vit:Log today']);
-const PUFF = ['none', 'mild', 'noticeable', 'marked'];
+const SUB_OPEN = new Set(['ba-sys:Log today']);
 const SUBSUM = {
   'Survivor vitals': v => { const b = v.bio[today()] || {}; return [b.sleep ? 'sleep ' + fmt1(b.sleep) + ' h' : null, b.prot ? 'protein ' + Math.round(b.prot) + ' g' : null, b.water ? 'water ' + fmt1(b.water) + ' L' : null].filter(Boolean).join(' · ') || 'nothing logged yet today'; },
   'Log today': v => { const b = v.bio[today()] || {}; const n = VIT.filter(x => b[x.f] != null).length; return n + ' of ' + VIT.length + ' logged today'; },
   'Last 7 days': v => { const r = [0, 1, 2, 3, 4, 5, 6].map(i => (v.readiness || {})[shiftDay(today(), -i)]).filter(x => x != null); return r.length ? 'readiness avg ' + Math.round(r.reduce((a, b) => a + b, 0) / r.length) : 'readiness —'; },
   'Composition': () => 'age · BMI · lean and fat mass · FFMI',
   'Energy & daily targets': () => 'BMR · TDEE · protein and water targets',
-  'Morning puffiness': v => { const p = (v.bio[today()] || {}).puff; return p == null ? 'not rated today' : 'today: ' + PUFF[p]; },
-  'Why': () => 'what moves your lymph today',
-  'Do today': () => 'small things that help',
+  'Biometric Status': v => { const t = today(), b = v.bio[t] || {}, r = (v.readiness || {})[t];
+    return 'readiness ' + (r ?? '—') + ' · sleep ' + (b.sleep ? fmt1(b.sleep) + ' h' : '—') + ' · protein ' + (b.prot ? Math.round(b.prot) + ' g' : '—'); },
+  'Bio-Regen Matrix': v => { const c = v.body.counts || {}; return (c.ready ?? 0) + ' ready · ' + ((c.recovering || 0) + (c.fresh || 0)) + ' recovering · balance ' + (v.body.balance == null ? '—' : v.body.balance + ' %'); },
   'Weekly sets vs your range': v => plural(v.body.muscles.filter(m => m.vol && (m.vol.zone === 'under' || m.vol.zone === 'none')).length, 'muscle') + ' under range',
   'Fatigue radar': v => fatigueNow(v).title,
   'Strength per kg': v => { const R = relNow(v); return R.known ? R.verdict.title.toLowerCase() + (R.index != null ? ' · ' + (R.index > 0 ? '+' : '') + R.index + ' % per kg' : '') : 'needs weigh-ins and a regular lift'; },
@@ -856,10 +816,16 @@ function systemsNow(v) {
   if (sysFor === k) return sysCache;
   const t = today(), p = v.profile || {}, w = latestWeight(v) || (+p.weight || null), sp = L.specimen(Object.assign({}, p, w ? { weight: w } : {}));
   const inp = { today: t, bio: v.bio || {}, age: sp.age, sex: p.sex || null, height: +p.height || null, weight: w, bodyfat: p.bodyfat != null && p.bodyfat !== '' ? +p.bodyfat : null, vo2max: +p.vo2max || null };
-  sysCache = { rows: L.systemsReport({ ...inp, endo: v.endo || null, lymph: lymphNow(v), injuries: Object.keys(L.activeInjuries(v.injuries || [], t)).length, coverage: v.body.coverage ?? null }), age: L.bodyAge(inp) };
+  sysCache = { rows: L.systemsReport({ ...inp, endo: v.endo || null, injuries: Object.keys(L.activeInjuries(v.injuries || [], t)).length, coverage: v.body.coverage ?? null }), age: L.bodyAge(inp) };
   sysFor = k; return sysCache;
 }
 const GRADE = { good: ['#30d158', 'Good'], watch: ['#ffd60a', 'Watch'], poor: ['#ff453a', 'Needs work'] };
+/* Body Systems holds the report card, body age, Biometric Status and the Bio-Regen Matrix — one section (2026-10-04). */
+function secSystemsAll(v) {
+  return secSystems(v)
+    + `<div class="ba-h"><h2 style="font-size:1.05rem">Biometric Status</h2><span class="k">readiness · vitals · today</span></div>` + secVitals(v)
+    + `<div class="ba-h"><h2 style="font-size:1.05rem">Bio-Regen Matrix</h2><span class="k">muscle telemetry · 72 h cycle</span></div>` + secRecovery(v);
+}
 function secSystems(v) {
   const R = systemsNow(v), A = R.age;
   let H = card(R.rows.map(r => { const g = r.grade ? GRADE[r.grade] : ['var(--t4)', 'Not measured'];

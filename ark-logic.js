@@ -7366,16 +7366,25 @@ function systemsReport(inp) {
         const A = avgScore(P);
         rows.push({ key: 'mind', name: 'Mind & nerves', icon: '🧠', grade: grade(A.score), score: A.score, line: P.map(p => p.label).join(' · ') || 'no check-ins this week', weakest: A.weakest, action: A.action });
     }
-    // lymph & fluid
+    // recovery & growth: can the muscle you train actually be rebuilt? Recovery capacity and anabolic balance
+    // are ARK's endocrine estimates (engine/derived.ts); protein is your logged intake against 1.6 g per kg a day,
+    // where the gain in muscle from extra protein levels off (Morton 2018, BJSM meta-analysis).
     {
-        const L = inp.lymph;
-        if (L && L.known) {
-            const s = Math.round(clamp(L.pump * 0.6 + (100 - L.load) * 0.4, 0, 100));
-            rows.push({ key: 'lymph', name: 'Lymph & fluid', icon: '💧', grade: grade(s), score: s, line: 'pump ' + Math.round(L.pump) + ' · fluid load ' + Math.round(L.load) + ' · ' + L.balance.title.toLowerCase(),
-                weakest: s < 70 ? (L.pump < 60 ? 'the pump (movement)' : 'fluid load') : null, action: s < 70 ? (L.pump < 60 ? 'Walk 10 min after meals — muscles are the lymph pump' : 'Less salt in the evening and water through the day') : null });
+        const P = [];
+        const dv = (k) => (((inp.endo && inp.endo.derived) || []).find(d => d.k === k) || null);
+        const rc = dv('recoveryCapacity'), ab = dv('anabolicBalance');
+        if (rc)
+            P.push({ s: clamp(rc.score, 0, 100), label: 'recovery capacity ' + Math.round(rc.score), act: 'Recovery capacity is low — sleep and an easier session come first' });
+        if (ab)
+            P.push({ s: clamp(ab.score, 0, 100), label: 'anabolic balance ' + Math.round(ab.score), act: 'Building signals trail stress — sleep, protein and fewer stressors tilt it back' });
+        const pr = recent(inp.bio, T, 'prot', 7, 0);
+        if (pr.length >= 3 && inp.weight) {
+            const gkg = mean(pr) / inp.weight;
+            P.push({ s: clamp(gkg / 1.6 * 100, 0, 100), label: 'protein ' + Math.round(mean(pr)) + ' g · ' + r1(gkg) + ' g/kg', act: 'Protein under 1.6 g per kg — one more portion a day (eggs, Greek yogurt, a shake)' });
         }
-        else
-            rows.push({ key: 'lymph', name: 'Lymph & fluid', icon: '💧', grade: null, score: null, line: 'needs steps or movement data', weakest: null, action: null });
+        const A = avgScore(P);
+        const why = !P.length ? (pr.length >= 3 ? 'needs your weight for protein per kg' : 'needs protein logged on 3+ days, or the endocrine estimate') : '';
+        rows.push({ key: 'growth', name: 'Recovery & growth', icon: '💪', grade: grade(A.score), score: A.score, line: P.map(p => p.label).join(' · ') || why, weakest: A.weakest, action: A.action });
     }
     // body composition
     {
