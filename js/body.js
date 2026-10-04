@@ -26,7 +26,7 @@ import { fatigueCard, storyBlock, fatigueNow } from './system.js';
 
 const ui = { face: 'front', mode: 'status', tl: 0, sel: null, open: {} };
 const MODES = [['status', 'Status'], ['strength', 'Strength'], ['mobility', 'Mobility'], ['soreness', 'Soreness'], ['volume', 'Thermal'], ['range', 'Range']];
-const SECTIONS = [['ba-scan', 'Scanner'], ['ba-sys', 'Systems'], ['ba-dev', 'Develop'], ['ba-mind', 'Mind'], ['ba-mic', 'Supplements'], ['ba-endo', 'Endocrine']];
+const SECTIONS = [['ba-scan', 'Scanner'], ['ba-sys', 'Biometric'], ['ba-dev', 'Develop'], ['ba-mind', 'Mind'], ['ba-mic', 'Supplements'], ['ba-endo', 'Endocrine']];
 const STATE_LBL = {
   fresh: ['Fresh', '#30d158'], recovering: ['Recovering', '#ffb340'], ready: ['Ready', '#40c8e0'],
   detrained: ['Detrained', '#ff6b5a'], untouched: ['Untouched', 'rgba(235,240,245,.5)'],
@@ -442,7 +442,7 @@ export function renderBodyArch() {
   let H = `<header class="hdr"><div><div class="hdr-eyebrow">${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
     <h1 class="hdr-title">Body Arch</h1></div><div class="hdr-acts">${syncButton()}</div></header>`;
   H += `<nav class="jump" aria-label="Body Arch sections"><div class="jump-in glass">${SECTIONS.map((s, i) =>
-    `<button class="${i === 0 ? 'on' : ''}" data-act="ba-jump" data-sec="${s[0]}">${s[1]}</button>`).join('')}<button class="all" data-act="ba-all">${SECTIONS.every(x => baOpen()[x[0]]) ? 'Fold all' : 'Open all'}</button></div></nav>`;
+    `<button class="${i === 0 ? 'on' : ''}" data-act="ba-jump" data-sec="${s[0]}">${s[1]}</button>`).join('')}<button class="all" data-act="ba-all">${allOpen() ? 'Fold all' : 'Open all'}</button></div></nav>`;
   if (!v.body.muscles.length) {
     return H + card(`<div class="empty">Body Arch fills in after the first sync with ARK on your PC.</div>`);
   }
@@ -452,7 +452,7 @@ export function renderBodyArch() {
 
 const SEC_DEFS = [
   ['ba-scan', 'Scanner', 'biomechanical matrix', secScanner],
-  ['ba-sys', 'Body Systems', 'report card · body age · vitals · muscle recovery', secSystemsAll],
+  ['ba-sys', 'Biometric Status', 'readiness · vitals · body systems · muscle recovery', secSystemsAll],
   ['ba-dev', 'Body Development', 'volume · injuries · balance', secDevelop],
   ['ba-mind', 'Mental State', 'neural link', secMind],
   ['ba-mic', 'Supplements', 'what you took · what is in you', secMicros],
@@ -463,6 +463,8 @@ const SEC_DEFS = [
    chips open and jump, and "All" opens everything — the old full page. A closed section is not even
    rendered, which also makes the tab cheaper. Open/closed is remembered per section. */
 const baOpen = () => state.settings.baOpen || (state.settings.baOpen = { 'ba-scan': true });
+const FIXED = new Set(['ba-sys']);
+const allOpen = () => SECTIONS.every(x => FIXED.has(x[0]) || baOpen()[x[0]]);
 const baSub = () => state.settings.baSub || (state.settings.baSub = {});
 const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
 const SUMMARY = {
@@ -513,11 +515,14 @@ function subs(sec, v, html) {
 function sections(v) {
   const out = {}, open = baOpen();
   SEC_DEFS.forEach(([id, title, k, fn]) => {
-    const on = !!open[id];
+    // Biometric Status (with Body Systems and the Bio-Regen Matrix) never folds and has no folds inside — Bruno, 2026-10-04.
+    const fixed = FIXED.has(id), on = fixed || !!open[id];
     let sum = ''; try { sum = SUMMARY[id] ? SUMMARY[id](v) : k; } catch (e) { sum = k; }
-    out[id] = `<section class="ba-sec${on ? ' open' : ''}" id="${id}"><button class="ba-hd" data-act="ba-toggle" data-sec="${id}" aria-expanded="${on}">
-      <span class="t"><h2>${title}</h2><span class="s">${esc(on ? k : sum)}</span></span>${icon('chev', 18)}</button>
-      ${on ? `<div class="ba-bd">${id === 'ba-scan' ? fn(v) : subs(id, v, fn(v))}</div>` : ''}</section>`;
+    const hd = fixed ? `<div class="ba-hd fixed"><span class="t"><h2>${title}</h2><span class="s">${esc(k)}</span></span></div>`
+      : `<button class="ba-hd" data-act="ba-toggle" data-sec="${id}" aria-expanded="${on}">
+      <span class="t"><h2>${title}</h2><span class="s">${esc(on ? k : sum)}</span></span>${icon('chev', 18)}</button>`;
+    out[id] = `<section class="ba-sec${on ? ' open' : ''}" id="${id}">${hd}
+      ${on ? `<div class="ba-bd">${id === 'ba-scan' || fixed ? fn(v) : subs(id, v, fn(v))}</div>` : ''}</section>`;
   });
   return out;
 }
@@ -549,7 +554,7 @@ export function patchBodyArch() {
     if (id === 'ba-scan') scan = true;
   });
   lastSecs = next;
-  const lbl = SECTIONS.every(x => baOpen()[x[0]]) ? 'Fold all' : 'Open all';
+  const lbl = allOpen() ? 'Fold all' : 'Open all';
   document.querySelectorAll('.jump .all').forEach(b => { b.textContent = lbl; });
   if (scan) mountFigure(); else paint();
   holdAnchor(anchor);
@@ -821,10 +826,10 @@ function systemsNow(v) {
   sysFor = k; return sysCache;
 }
 const GRADE = { good: ['#30d158', 'Good'], watch: ['#ffd60a', 'Watch'], poor: ['#ff453a', 'Needs work'] };
-/* Body Systems holds the report card, body age, Biometric Status and the Bio-Regen Matrix — one section (2026-10-04). */
+/* One section, no folds inside: Biometric Status first, then Body Systems (report card, body age), then the Bio-Regen Matrix (2026-10-04). */
 function secSystemsAll(v) {
-  return secSystems(v)
-    + `<div class="ba-h"><h2 style="font-size:1.05rem">Biometric Status</h2><span class="k">readiness · vitals · today</span></div>` + secVitals(v)
+  return secVitals(v)
+    + `<div class="ba-h"><h2 style="font-size:1.05rem">Body Systems</h2><span class="k">report card · body age</span></div>` + secSystems(v)
     + `<div class="ba-h"><h2 style="font-size:1.05rem">Bio-Regen Matrix</h2><span class="k">muscle telemetry · 72 h cycle</span></div>` + secRecovery(v);
 }
 function secSystems(v) {
@@ -987,7 +992,7 @@ export const actions = {
   'ba-toggle'(d) { const o = baOpen(); o[d.sec] = !o[d.sec]; haptic(); changed({ now: true }); },
   'ba-sub'(d) { const o = baSub(); o[d.key] = !(d.key in o ? o[d.key] : SUB_OPEN.has(d.key)); haptic(); changed({ now: true }); },
   'ba-all'() {
-    const o = baOpen(), all = SECTIONS.every(x => o[x[0]]);
+    const o = baOpen(), all = allOpen();
     SECTIONS.forEach(x => { o[x[0]] = !all; }); if (all) o['ba-scan'] = true;
     haptic(); changed({ now: true });
   },
