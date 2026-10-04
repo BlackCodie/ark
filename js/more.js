@@ -32,8 +32,8 @@ export function staleNote(min = 15) {
 
 /* ══════════════ create: habit ══════════════ */
 const HABIT_ICONS = ['⭐', '💪', '🏃', '🧘', '📖', '🧠', '💧', '🥗', '😴', '🚶', '🎯', '💻', '✍️', '🎸', '🧹', '🌅', '🥶', '☀️'];
-let hIcon = '⭐', hPillar = 'body', hEff = 'none', hMin = 0, hColor = null;
-const H_KEEP = ['data-h-name', 'data-h-unit', 'data-h-amin', 'data-h-amax', 'data-h-astep'];
+let hIcon = '⭐', hPillar = 'body', hEff = 'none', hMin = 0, hColor = null, hBoard = '';
+const H_KEEP = ['data-h-name', 'data-h-unit', 'data-h-amin', 'data-h-amax', 'data-h-astep', 'data-h-board', 'data-h-remind'];
 /** What ticking the habit feeds: minutes of light, cold, calm… (logic/routines.ts). */
 function effectPicker() {
   const ch = L.EFFECT_CHOICES;
@@ -81,6 +81,7 @@ export function habitEditSheet(id) {
   const h0 = view().habits.find(x => x.id === id); if (!h0) return;
   editId = id; hIcon = h0.icon || '⭐'; hPillar = h0.pillar || 'custom'; loadEffect(L.habitEffect(h0));
   hColor = h0.color || L.HABIT_COLORS[Math.max(0, view().habits.findIndex(x => x.id === id)) % L.HABIT_COLORS.length];
+  hBoard = h0.board || '';
   const icons = HABIT_ICONS.includes(hIcon) ? HABIT_ICONS : [hIcon, ...HABIT_ICONS.slice(0, 17)];
   openSheet({
     id: 'habit-edit', title: 'Edit habit',
@@ -104,14 +105,19 @@ export function habitEditSheet(id) {
           <label><span>From</span><input class="inp" data-h-amin inputmode="decimal" placeholder="0.5" value="${h.amin != null ? esc(String(h.amin)) : ''}"></label>
           <label><span>To</span><input class="inp" data-h-amax inputmode="decimal" placeholder="5" value="${h.amax != null ? esc(String(h.amax)) : ''}"></label>
           <label><span>Step</span><input class="inp" data-h-astep inputmode="decimal" placeholder="0.5" value="${h.astep != null ? esc(String(h.astep)) : ''}"></label></div>
+        <div class="eyebrow" style="margin:16px 0 8px">Board</div>
+        <div class="chips">${['', ...L.boardsOf(v.habits)].map(b => `<button class="chip ${b === hBoard ? 'on' : ''}" data-act="h-board" data-b="${esc(b)}">${esc(b || 'None')}</button>`).join('')}</div>
+        <label class="field" style="margin-top:10px"><span>Or a new board</span><input class="inp" data-h-board maxlength="24" placeholder="e.g. Morning, Evening, Health" autocomplete="off"></label>
+        <div class="eyebrow" style="margin:6px 0 8px">Reminder</div>
+        <label class="field"><span>Your PC sends it to this phone at that time — not if the habit is already done. Empty = no reminder.</span><input class="inp" type="time" data-h-remind value="${esc(h.remind || '')}"></label>
         <div class="eyebrow" style="margin:16px 0 8px">Pillar</div>
         <div class="chips">${pillars().map(p => `<button class="chip ${p.k === hPillar ? 'on' : ''}" style="--accent:${pillarColor(p.k)}" data-act="h-pillar" data-k="${esc(p.k)}">${esc(PILLAR[p.k] ? PILLAR[p.k][0] : String(p.name).split(' — ')[0])}</button>`).join('')}</div>
         ${effectPicker()}
         <button class="btn btn-prominent block" style="margin-top:20px;--accent:#30d158" data-act="h-edit-save">Save</button>
         <div class="row" style="gap:10px;margin-top:10px">
-          <button class="btn btn-glass" style="flex:1" data-act="habit-hide" data-id="${esc(h.id)}">Hide</button>
+          <button class="btn btn-glass" style="flex:1" data-act="habit-hide" data-id="${esc(h.id)}">Archive</button>
           ${isCustomHabit(h) ? `<button class="btn btn-danger" style="flex:1" data-act="h-del" data-id="${esc(h.id)}">${icon('trash', 16)} Delete</button>` : ''}</div>
-        <p class="sub" style="line-height:1.5;margin-top:12px">Hiding stops a habit counting toward your day without touching its history — show it again from the bottom of Habits. ${isCustomHabit(h) ? 'Deleting keeps every day you ticked, too.' : 'Built-in habits can be hidden, not deleted.'}</p>`;
+        <p class="sub" style="line-height:1.5;margin-top:12px">Archiving stops a habit counting toward your day without touching its history — restore it from ⋯ on Boards. ${isCustomHabit(h) ? 'Deleting keeps every day you ticked, too.' : 'Built-in habits can be archived, not deleted.'}</p>`;
     },
   });
 }
@@ -200,8 +206,11 @@ export function healthSheet() {
       const h = view().health, v = view(), t = today(), b = v.bio[t] || {};
       const got = ['sleep', 'rhr', 'hrv', 'steps', 'active', 'daylight', 'vo2', 'bed', 'wake'].filter(k => b[k] != null);
       const url = healthUrl(), http = /^http:/.test(url);
-      const status = h ? `<section class="card frost tight hl-status ok"><span class="ic-dot" style="--c:#30d158">${icon('tick', 16, 2.6)}</span>
-          <div><b>Connected · last upload ${esc(ago(Date.parse(h.ts)))}</b><div class="sub">${h.days && h.days > 1 ? h.days + ' days · ' : ''}${Object.keys(h.fields || {}).length} values for ${esc(fmtDay(h.day, { weekday: 'short', day: 'numeric', month: 'short' }))}${got.length ? ' · today: ' + got.length + ' fields' : ''}</div></div></section>`
+      // On autopilot the morning upload lands by itself; say so when today's has not come.
+      const todayIn = h && h.ts && L.dayKey(new Date(h.ts)) === t;
+      const status = h ? `<section class="card frost tight hl-status${todayIn ? ' ok' : ''}"><span class="ic-dot" style="--c:${todayIn ? '#30d158' : '#ff9f0a'}">${icon(todayIn ? 'tick' : 'clock', 16, 2.6)}</span>
+          <div><b>${todayIn ? 'Connected' : 'Nothing yet today'} · last upload ${esc(ago(Date.parse(h.ts)))}</b><div class="sub">${h.days && h.days > 1 ? h.days + ' days · ' : ''}${Object.keys(h.fields || {}).length} values for ${esc(fmtDay(h.day, { weekday: 'short', day: 'numeric', month: 'short' }))}${got.length ? ' · today: ' + got.length + ' fields' : ''}</div>
+          ${todayIn ? '' : `<div class="sub" style="margin-top:4px;line-height:1.45">If the morning run keeps missing: Shortcuts › Automation › your ARK automation — it must say <b>Run Immediately</b>, with <b>Notify When Run</b> off.</div>`}</div></section>`
         : `<section class="card frost tight hl-status"><span class="ic-dot" style="--c:#ff9f0a">${icon('heart', 16)}</span><div><b>Not connected yet</b><div class="sub">Nothing has arrived from Apple Health.</div></div></section>`;
       const link = `<label class="field"><span>Your ARK health link</span><div class="copy-row"><input class="inp" readonly value="${esc(healthKey ? url : 'loading…')}"><button class="circle btn-glass" data-act="copy" data-what="health" aria-label="Copy the link">${icon('copy', 17)}</button></div></label>
         <p class="sub" style="line-height:1.5;margin:-6px 0 12px">The key in it can only add health data — nothing else. ${http ? 'It works while the phone is on your home Wi-Fi; uploads made elsewhere are retried when you are home.' : ''}</p>`;
@@ -226,12 +235,13 @@ export function healthSheet() {
       const anywhere = `<p class="sub" style="line-height:1.55;margin:0 0 10px">Free, built once in the Shortcuts app. Every morning it reads last night's sleep, HRV, resting heart rate and weight, plus yesterday's steps, and hands them to ARK — which syncs them through GitHub. <b>Works anywhere, PC on or off.</b></p>
         <ol class="steps">
           <li><span>Once: scan your PC's QR with the iPhone <b>Camera</b> so ARK in <b>Safari</b> is connected too (the Shortcut opens Safari for a moment).</span></li>
-          <li><span>Shortcuts → <b>Automation</b> → <b>+</b> → <b>Time of Day</b> 07:30 · Daily → <b>Run Immediately</b> → New Blank Automation.</span></li>
+          <li><span>Shortcuts → <b>Automation</b> → <b>+</b> → <b>Time of Day</b> 07:30 · Daily → <b>Run Immediately</b>, and turn <b>Notify When Run</b> off → New Blank Automation. That is what makes it hands-free: no banner to tap.</span></li>
           <li><span><b>Find Health Samples</b>: Sleep Analysis · Start Date <i>is in the last 12 hours</i> · Value <i>is Asleep</i> (Core, Deep and REM count) → <b>Get Details of Health Samples</b>: Duration → <b>Calculate Statistics</b>: Sum.</span></li>
           <li><span><b>Find Health Samples</b>: Heart Rate Variability · sort by Start Date, Latest First · Limit 1. The same for <i>Resting Heart Rate</i> and <i>Weight</i>.</span></li>
           <li><span><b>Find Health Samples</b>: Steps · Start Date <i>is yesterday</i> → <b>Calculate Statistics</b>: Sum.</span></li>
           <li><span><b>Dictionary</b> with keys <code>sleep</code>, <code>hrv</code>, <code>restingHR</code>, <code>weight</code> set to those results, and a key <code>yesterday</code> holding a Dictionary with <code>steps</code>.</span></li>
           <li><span><b>URL Encode</b> the Dictionary → <b>Text</b>: <code>https://blackcodie.github.io/ark/#health=</code> followed by the URL Encoded Text → <b>Open URLs</b>.</span></li>
+          <li><span>Tap ▶ once yourself: iOS asks for Health access the first time only. From then on it runs every morning and this screen shows today's upload.</span></li>
         </ol>
         <div class="copy-row" style="margin:4px 0 10px"><input class="inp" readonly value="https://blackcodie.github.io/ark/#health="><button class="circle btn-glass" data-act="copy-health-prefix" aria-label="Copy">${icon('copy', 17)}</button></div>
         <p class="sub" style="line-height:1.5">Units can be hours, minutes or seconds — ARK works it out. Any value the Shortcut cannot find is simply left out; nothing is guessed. Also read if you add them: <code>deepSleepMinutes</code>, <code>remSleepMinutes</code>, <code>bedtime</code>, <code>wakeTime</code>, <code>vo2max</code>, and in <code>yesterday</code>: <code>activeEnergy</code>, <code>exerciseMinutes</code>, <code>daylightMinutes</code>.</p>`;
@@ -420,6 +430,7 @@ export const actions = {
   'habit-new'() { habitNewSheet(); },
   'h-icon'(d) { keepDraft(H_KEEP, () => { hIcon = d.i; }); },
   'h-color'(d) { keepDraft(H_KEEP, () => { hColor = d.c; }); },
+  'h-board'(d) { keepDraft(H_KEEP, () => { hBoard = d.b || ''; }); const nb = document.querySelector('[data-h-board]'); if (nb) nb.value = ''; },
   'h-pillar'(d) { keepDraft(['data-h-name'], () => { hPillar = d.k; }); },
   'h-eff'(d) {
     keepDraft(['data-h-name'], () => {
@@ -464,6 +475,11 @@ export const actions = {
       if (L0 !== h.amin || H0 !== h.amax) { patch.amin = L0; patch.amax = H0; }
     }
     if (st != null && st > 0 && st !== h.astep) patch.astep = st;
+    // board ('' = none) and reminder ('' = off) — logic/habitlog.ts cleanHabitMeta checks both on the PC too
+    const board = val('[data-h-board]').replace(/\s+/g, ' ').slice(0, 24) || hBoard;
+    if (board !== (h.board || '')) patch.board = board;
+    const rm = val('[data-h-remind]');
+    if (rm !== (h.remind || '')) patch.remind = rm;
     closeSheet(topSheet());
     if (Object.keys(patch).length > 1) { emit('habit.edit', patch); haptic(); toast('Saved · ' + hIcon + ' ' + name); }
   },
@@ -471,7 +487,7 @@ export const actions = {
     const h = view().habits.find(x => x.id === d.id); if (!h) return;
     if (topSheet() && topSheet().id === 'habit-edit') closeSheet(topSheet());
     haptic(); emit('habit.hide', { id: h.id, hidden: true });
-    toast(h.name + ' hidden', 'Undo', () => emit('habit.hide', { id: h.id, hidden: false }));
+    toast(h.name + ' archived', 'Undo', () => emit('habit.hide', { id: h.id, hidden: false }));
   },
   'habit-unhide'(d) { haptic(); emit('habit.hide', { id: d.id, hidden: false }); },
   'h-del'(d) {

@@ -98,6 +98,14 @@ export function emit(type, data, { hold = 0 } = {}) {
   scheduleSync(hold ? hold + 300 : 1200);
   return ev.id;
 }
+/** Several changes at once (a reorder, an import): one redraw, one sync. `list` is [[type, data], …]. */
+export function emitMany(list) {
+  if (!list.length) return;
+  const ts = new Date().toISOString();
+  list.forEach(([type, data]) => state.pending.push({ id: uid(), ts, type, data }));
+  changed({ now: true });
+  scheduleSync(1200);
+}
 /** Take back a queued change that has not left the phone. False if it already has. */
 export function dropPending(id) {
   const i = state.pending.findIndex(e => e.id === id && !e.seq);

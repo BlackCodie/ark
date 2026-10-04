@@ -6,7 +6,7 @@
    (logic/habitlog.ts, events habit.check / habit.uncheck); days ticked before
    check-ins existed count, with no time and no amount — nothing is invented.
    ══════════════════════════════════════════════════════════════════════ */
-import { L, state, view, emit, changed, esc, icon, today, shiftDay, fmtDay, uid, toast, haptic, openSheet, closeSheet, topSheet, daysBetween } from './core.js';
+import { L, state, view, emit, emitMany, changed, esc, icon, today, shiftDay, fmtDay, uid, toast, haptic, openSheet, closeSheet, topSheet, daysBetween } from './core.js';
 import { habitEditSheet, habitNewSheet } from './more.js';
 
 const WD = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
@@ -40,21 +40,30 @@ function statsOf(h) {
 }
 
 /* ══════════════ the board ══════════════ */
-let pop = '';
+let pop = '', reorder = false;
+/** The board being looked at ('' = all habits). Boards are a name on each habit (logic/habitlog.ts boardsOf). */
+const curBoard = () => { const b = state.settings.board || ''; return b && L.boardsOf(view().habits).includes(b) ? b : ''; };
 export function renderBoards() {
-  const v = view(), t = today();
+  const v = view(), t = today(), board = curBoard(), boards = L.boardsOf(v.habits);
+  const list = L.orderHabits(v.habits).filter(h => !board || h.board === board);
   let H = `<header class="bd-top"><button class="circle glass" data-act="hb-menu" aria-label="More">${icon('dots', 20)}</button>
-    <h1>Boards</h1><button class="circle glass" data-act="habit-new" aria-label="New habit">${icon('plus', 20, 2.2)}</button></header>`;
+    <h1>Boards</h1>${reorder ? `<button class="bd-done" data-act="hb-reorder">Done</button>` : `<button class="circle glass" data-act="habit-new" aria-label="New habit">${icon('plus', 20, 2.2)}</button>`}</header>`;
+  if (boards.length) H += `<div class="chips scroll1 bd-chips">${['', ...boards].map(b => `<button class="chip${b === board ? ' on' : ''}" data-act="hb-board" data-b="${esc(b)}">${esc(b || 'All')}</button>`).join('')}</div>`;
   if (!v.habits.length) return H + `<div class="card frost empty">No habits yet. Tap + to add one — it goes to ARK on your PC too.</div>`;
-  H += `<div class="bd-list">` + v.habits.map((h, i) => {
-    const c = colorOf(h, i), on = doneOn(v, h.id, t);
+  if (reorder) H += `<p class="sub bd-reo-h">Move habits up or down${boards.length ? ' — one order, shared by every board' : ''}. Tap Done when finished.</p>`;
+  H += `<div class="bd-list">` + list.map((h, k) => {
+    const c = colorOf(h, v.habits.indexOf(h)), on = doneOn(v, h.id, t);
     const last = checksOf(v, h.id).filter(x => x.day === t && x.at).map(x => x.at).sort().pop();
     const bars = [6, 5, 4, 3, 2, 1, 0].map(k => { const d = shiftDay(t, -k), dn = doneOn(v, h.id, d); return `<i class="${dn ? 'on' : ''}${k === 0 ? ' t' : ''}"></i>`; }).join('');
-    return `<div class="bd-row${on ? ' done' : ''}${pop === h.id ? ' pop' : ''}" style="--hc:${c}" data-act="hb-open" data-id="${esc(h.id)}" role="button" tabindex="0" aria-label="${esc(h.name)}">
+    const end = reorder
+      ? `<span class="bd-mv"><button data-act="hb-move" data-id="${esc(h.id)}" data-d="-1" aria-label="Move ${esc(h.name)} up"${k === 0 ? ' disabled' : ''}><span style="display:inline-flex;transform:rotate(180deg)">${icon('down', 18, 2.4)}</span></button>
+          <button data-act="hb-move" data-id="${esc(h.id)}" data-d="1" aria-label="Move ${esc(h.name)} down"${k === list.length - 1 ? ' disabled' : ''}>${icon('down', 18, 2.4)}</button></span>`
+      : `<button class="bd-chk${on ? ' on' : ''}" data-act="hb-tick" data-id="${esc(h.id)}" aria-pressed="${on}" aria-label="${esc(h.name)} today">${on ? icon('tick', 22, 2.8) : '<i></i>'}</button>`;
+    return `<div class="bd-row${on ? ' done' : ''}${pop === h.id ? ' pop' : ''}${reorder ? ' reo' : ''}" style="--hc:${c}"${reorder ? '' : ` data-act="hb-open" data-id="${esc(h.id)}" role="button" tabindex="0"`} aria-label="${esc(h.name)}">
       <span class="bd-ic">${esc(h.icon || '•')}</span>
-      <span class="bd-tx"><b>${esc(h.name)}</b>${last ? `<small>${hhmm(last)}</small>` : ''}</span>
+      <span class="bd-tx"><b>${esc(h.name)}</b>${last ? `<small>${hhmm(last)}</small>` : h.remind && !on ? `<small>${icon('bell', 11)} ${esc(h.remind)}</small>` : ''}</span>
       <span class="bd-bars" aria-hidden="true">${bars}</span>
-      <button class="bd-chk${on ? ' on' : ''}" data-act="hb-tick" data-id="${esc(h.id)}" aria-pressed="${on}" aria-label="${esc(h.name)} today">${on ? icon('tick', 22, 2.8) : '<i></i>'}</button>
+      ${end}
     </div>`;
   }).join('') + `</div>`;
   pop = '';
@@ -134,6 +143,8 @@ function pageHtml() {
 }
 /* the amount slider: the number follows your finger; letting go saves it to that day's check-in */
 export function onHabitInput(el, commit) {
+  if (el.matches('[data-hb-file]')) { if (commit) onImportFile(el); return true; }
+  if (el.matches('[data-hb-map]')) { hi.map[el.dataset.hbMap] = el.value; const s = topSheet(); if (commit && s && s.id === 'hb-import') s.refresh(); return true; }
   if (!el.matches('[data-hb-amt]')) return false;
   const lbl = document.querySelector('[data-hb-amtv]'); if (lbl) lbl.textContent = num(Number(el.value));
   if (!commit) return true;
@@ -265,13 +276,87 @@ function menuSheet() {
     render: () => {
       const hid = view().habitsHidden || [];
       return `<section class="list frost"><button class="li" data-act="habit-new"><span class="ic" style="--c:#30d158">${icon('plus', 18)}</span><span class="tx"><div class="tt">New habit</div></span></button>
+        <button class="li" data-act="hb-reorder"><span class="ic" style="--c:#ff9f0a">${icon('down', 18)}</span><span class="tx"><div class="tt">Reorder habits</div></span></button>
+        <button class="li" data-act="hb-import"><span class="ic" style="--c:#bf5af2">${icon('copy', 18)}</span><span class="tx"><div class="tt">Import history from another app</div><div class="st">its export file · check-ins with times and amounts</div></span></button>
         <button class="li" data-act="sync-sheet"><span class="ic" style="--c:#0a84ff">${icon('sync', 18)}</span><span class="tx"><div class="tt">Sync with your PC</div></span></button></section>
-        ${hid.length ? `<div class="grp-h">Hidden (${hid.length})</div><section class="list frost">${hid.map(h => `<div class="li"><span class="ic">${esc(h.icon || '•')}</span>
+        ${hid.length ? `<div class="grp-h">Archived (${hid.length})</div><section class="list frost">${hid.map(h => `<div class="li"><span class="ic">${esc(h.icon || '•')}</span>
           <span class="tx"><div class="tt">${esc(h.name)}</div><div class="st">Not counted · history kept</div></span>
-          <button class="btn sm btn-glass" data-act="habit-unhide" data-id="${esc(h.id)}">Show</button></div>`).join('')}</section>` : ''}
-        <p class="sub" style="line-height:1.5;margin-top:12px">Tap a habit for its page. The circle ticks today; tap again to undo.</p>`;
+          <button class="btn sm btn-glass" data-act="habit-unhide" data-id="${esc(h.id)}">Restore</button></div>`).join('')}</section>` : ''}
+        <p class="sub" style="line-height:1.5;margin-top:12px">Tap a habit for its page. The circle ticks today; tap again to undo. A habit's Edit screen puts it on a board (Morning, Evening…) and sets its reminder.</p>`;
     },
   });
+}
+
+/* ══════════════ import from another habit app (logic/habitimport.ts) ══════════════
+   Read here, each habit in the file matched to an ARK habit (or made new, or skipped), sent to the PC in
+   chunks. Check-in ids come from the row, so importing the same file twice changes nothing. */
+let hi = { R: null, map: {}, name: '' };
+function importSheet() {
+  hi = { R: null, map: {}, name: '' };
+  openSheet({
+    id: 'hb-import', title: 'Import history',
+    render: () => {
+      const pick = (lbl, cls) => `<label class="btn ${cls} block" style="--accent:#30d158">${lbl}<input type="file" accept=".csv,.json,.txt,text/csv,application/json,text/plain" data-hb-file hidden></label>`;
+      if (!hi.R) return `<p class="sub" style="line-height:1.5;margin:0 0 12px">In your habit app, export or back up your data (usually <b>Settings › Export</b> — CSV or JSON) and <b>Save to Files</b>. Pick that file here. Each check-in comes in on its day, with its time and amount when the file has them.</p>
+        ${pick(icon('plus', 17) + ' Choose the export', 'btn-prominent')}
+        <p class="sub" style="line-height:1.5;margin:12px 0 0">Importing the same file twice changes nothing. Days you already logged in ARK keep ARK's check-ins.</p>`;
+      const R = hi.R;
+      if (R.error) return `<div class="target hint sore">${icon('bolt', 16)}<div><b>Could not read ${esc(hi.name)}</b><span>${esc(R.error)}</span></div></div>
+        <div style="margin-top:12px">${pick('Choose another file', 'btn-glass')}</div>`;
+      const v = view(), opts = L.orderHabits(v.habits);
+      const first = R.habits.reduce((a, h) => (!a || h.first < a ? h.first : a), null);
+      const go = R.habits.filter(h => (hi.map[h.key] || '+') !== '-').reduce((a, h) => a + h.count, 0);
+      return `<div class="stat3" style="margin-bottom:12px"><div class="frost"><div class="v num">${R.habits.length}</div><div class="k">Habits in file</div></div>
+          <div class="frost"><div class="v num">${R.checks.length}</div><div class="k">Check-ins</div></div>
+          <div class="frost"><div class="v num" style="font-size:1rem">${first ? fmtDay(first, { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</div><div class="k">Since</div></div></div>
+        <div class="grp-h">Where each one goes</div>
+        <section class="list frost">${R.habits.map(h => `<div class="li hb-map"><span class="tx"><div class="tt">${esc(h.name)}</div>
+            <div class="st">${h.count} check-in${h.count === 1 ? '' : 's'} · ${fmtDay(h.first, { day: 'numeric', month: 'short', year: '2-digit' })} → ${fmtDay(h.last, { day: 'numeric', month: 'short', year: '2-digit' })}${h.amounts ? ' · amounts' : ''}</div></span>
+          <select class="inp" data-hb-map="${esc(h.key)}" aria-label="Where ${esc(h.name)} goes">
+            <option value="+"${(hi.map[h.key] || '+') === '+' ? ' selected' : ''}>New habit</option>
+            ${opts.map(o => `<option value="${esc(o.id)}"${hi.map[h.key] === o.id ? ' selected' : ''}>${esc((o.icon || '') + ' ' + o.name)}</option>`).join('')}
+            <option value="-"${hi.map[h.key] === '-' ? ' selected' : ''}>Skip</option></select></div>`).join('')}</section>
+        ${R.skipped ? `<p class="sub" style="line-height:1.5;margin:10px 0 0">${R.skipped} row${R.skipped === 1 ? '' : 's'} without a readable date or habit left out.</p>` : ''}
+        <button class="btn btn-prominent block" style="--accent:#30d158;margin-top:14px" data-act="hb-import-go" ${go ? '' : 'disabled'}>${go ? 'Import ' + go + ' check-in' + (go === 1 ? '' : 's') : 'Nothing to import'}</button>
+        <p class="sub" style="line-height:1.5;margin:10px 0 0">A habit with amounts shows them once it has a unit — set it in the habit's Edit screen.</p>`;
+    },
+  });
+}
+async function onImportFile(el) {
+  const f = el.files && el.files[0]; if (!f) return;
+  hi.name = f.name;
+  try { hi.R = L.parseHabitExport(await f.text()); }
+  catch (e) { hi.R = { habits: [], checks: [], skipped: 0, error: 'The file could not be read (' + (e && e.message || e) + ').' }; }
+  hi.map = {};
+  if (!hi.R.error) { const hs = view().habits; hi.R.habits.forEach(h => { const m = L.matchHabit(h.name, hs); hi.map[h.key] = m || '+'; }); }
+  const t = topSheet(); if (t && t.id === 'hb-import') t.refresh();
+}
+function importGo() {
+  const R = hi.R; if (!R || R.error) return;
+  const v = view(), t = today(), ev = [], idOf = {};
+  let made = 0;
+  R.habits.forEach((h, i) => {
+    const m = hi.map[h.key] || '+';
+    if (m === '-') return;
+    if (m !== '+') { idOf[h.key] = m; return; }
+    // An ARK habit of that name already is that habit — a second import must not make it twice.
+    const same = v.habits.find(x => x.name.toLowerCase() === h.name.toLowerCase());
+    if (same) { idOf[h.key] = same.id; return; }
+    const id = 'hc-' + Date.now().toString(36) + i;
+    ev.push(['habit.add', { habit: { id, name: h.name.slice(0, 60), icon: '⭐', pillar: 'body' } }]);
+    idOf[h.key] = id; made++;
+  });
+  const rows = R.checks.filter(c => idOf[c.key] && c.day <= t).map(c => {
+    const r = { id: L.importCheckId(idOf[c.key], c.day, c.at), habit: idOf[c.key], day: c.day, at: c.at };
+    if (c.amount != null) r.amount = c.amount;
+    if (c.note) r.note = c.note;
+    return r;
+  });
+  if (!rows.length) { toast('Nothing to import'); return; }
+  for (let i = 0; i < rows.length; i += 300) ev.push(['habit.import', { checks: rows.slice(i, i + 300) }]);
+  emitMany(ev);
+  closeSheet(topSheet()); const s = topSheet(); if (s && s.id === 'hb-menu') closeSheet(s);
+  haptic(); toast(rows.length + ' check-in' + (rows.length === 1 ? '' : 's') + (made ? ' · ' + made + ' new habit' + (made === 1 ? '' : 's') : '') + ' — on the PC at the next sync');
 }
 
 export const actions = {
@@ -315,5 +400,19 @@ export const actions = {
     emit('habit.uncheck', { id: d.cid }); closeSheet(topSheet()); haptic();
   },
   'hb-menu'() { menuSheet(); },
+  'hb-board'(d) { state.settings.board = d.b || ''; haptic(); changed({ now: true }); },
+  'hb-reorder'() { reorder = !reorder; const s = topSheet(); if (s && s.id === 'hb-menu') closeSheet(s); haptic(); changed(); },
+  'hb-move'(d) {
+    // One order for every board: swap with the neighbour seen on this board, then number them all.
+    const v = view(), board = curBoard(), all = L.orderHabits(v.habits), vis = all.filter(h => !board || h.board === board);
+    const i = vis.findIndex(h => h.id === d.id), j = i + Number(d.d);
+    if (i < 0 || j < 0 || j >= vis.length) return;
+    const a = all.indexOf(vis[i]), b = all.indexOf(vis[j]);
+    [all[a], all[b]] = [all[b], all[a]];
+    emitMany(all.map((h, p) => h.pos === p ? null : ['habit.edit', { id: h.id, pos: p }]).filter(Boolean));
+    haptic();
+  },
+  'hb-import'() { importSheet(); },
+  'hb-import-go'() { importGo(); },
 };
 export { habitEditSheet, habitNewSheet };

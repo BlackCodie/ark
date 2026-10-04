@@ -8,6 +8,37 @@
 (function (global) {
   'use strict';
   var factories = {
+  "./backup": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.backupName = exports.BACKUP_BRANCH = void 0;
+exports.backupDay = backupDay;
+exports.backupsToPrune = backupsToPrune;
+exports.backupDue = backupDue;
+/**
+ * CLOUD BACKUP — the PC's whole ARK data, encrypted with the sync key before it leaves the PC (relay.ts
+ * relayEncrypt), kept on branch `backups` of the private sync repository. One file per day (a second
+ * backup the same day replaces it); the newest `keep` stay, older ones are removed.
+ */
+exports.BACKUP_BRANCH = 'backups';
+const backupName = (day) => 'ark-' + day + '.json';
+exports.backupName = backupName;
+/** The day a backup file is from, or null when the file is not a backup. */
+function backupDay(path) {
+    const m = /^ark-(\d{4}-\d{2}-\d{2})\.json$/.exec(String(path || ''));
+    return m ? m[1] : null;
+}
+/** Backups beyond the newest `keep` (to delete). */
+function backupsToPrune(paths, keep = 8) {
+    return paths.filter(p => backupDay(p)).sort().reverse().slice(Math.max(1, keep));
+}
+/** Is a scheduled backup due? (never made, or `everyDays` since the last one) */
+function backupDue(lastIso, nowMs, everyDays = 7) {
+    const t = lastIso ? Date.parse(lastIso) : NaN;
+    return !isFinite(t) || nowMs - t >= everyDays * 864e5 - 36e5; // an hour's slack so a weekly run does not drift later each week
+}
+
+  },
   "./bloodwork": function (exports, module, require) {
 "use strict";
 /**
@@ -1509,12 +1540,286 @@ function parseHealthHash(raw) {
 }
 
   },
+  "./habitimport": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.readWhen = readWhen;
+exports.parseHabitExport = parseHabitExport;
+exports.matchHabit = matchHabit;
+exports.importCheckId = importCheckId;
+const pad = (n) => String(n).padStart(2, '0');
+/** A date in any common export form → { day, at } (local time), or null. */
+function readWhen(v) {
+    if (v == null || v === '')
+        return null;
+    if (typeof v === 'number' && isFinite(v)) {
+        const ms = v > 1e12 ? v : v > 1e9 ? v * 1000 : NaN; // epoch ms or s
+        if (!isFinite(ms))
+            return null;
+        const d = new Date(ms);
+        return { day: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()), at: d.toISOString() };
+    }
+    const s = String(v).trim();
+    if (/^\d{10,13}$/.test(s))
+        return readWhen(Number(s));
+    let m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/.exec(s);
+    if (m) {
+        if (!m[4])
+            return { day: m[1] + '-' + m[2] + '-' + m[3], at: null };
+        if (m[7]) {
+            const d = new Date(s);
+            if (!isFinite(d.getTime()))
+                return null;
+            return { day: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()), at: d.toISOString() };
+        }
+        const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
+        return { day: m[1] + '-' + m[2] + '-' + m[3], at: d.toISOString() };
+    }
+    m = /^(\d{1,2})[./](\d{1,2})[./](\d{4})(?:[ ,T]+(\d{1,2}):(\d{2}))?$/.exec(s); // 06.03.2026 / 6/3/2026 — day first (Europe)
+    if (m) {
+        const D = +m[1], M = +m[2];
+        if (M > 12 || D > 31)
+            return null;
+        const day = m[3] + '-' + pad(M) + '-' + pad(D);
+        return { day, at: m[4] ? new Date(+m[3], M - 1, D, +m[4], +m[5]).toISOString() : null };
+    }
+    return null;
+}
+const DONE = /^(1|2|3|x|✓|✔|yes|y|true|done|completed?|yes_manual|yes_auto)$/i;
+const num = (v) => { const n = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v); return isFinite(n) ? n : null; };
+const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+function csvRows(text) {
+    const head = text.split(/\r?\n/, 1)[0] || '';
+    const delim = [';', ',', '\t'].sort((a, b) => head.split(b).length - head.split(a).length)[0];
+    const rows = [];
+    let row = [], cell = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (q) {
+            if (ch === '"') {
+                if (text[i + 1] === '"') {
+                    cell += '"';
+                    i++;
+                }
+                else
+                    q = false;
+            }
+            else
+                cell += ch;
+        }
+        else if (ch === '"')
+            q = true;
+        else if (ch === delim) {
+            row.push(cell);
+            cell = '';
+        }
+        else if (ch === '\n' || ch === '\r') {
+            if (ch === '\r' && text[i + 1] === '\n')
+                i++;
+            row.push(cell);
+            cell = '';
+            if (row.some(c => c.trim()))
+                rows.push(row);
+            row = [];
+        }
+        else
+            cell += ch;
+    }
+    row.push(cell);
+    if (row.some(c => c.trim()))
+        rows.push(row);
+    return rows;
+}
+function finish(checks, names, skipped, format) {
+    // one check-in per habit, day and time (duplicates in the file collapse)
+    const seen = new Set(), out = [];
+    checks.forEach(c => { const k = c.key + '|' + c.day + '|' + (c.at || ''); if (!seen.has(k)) {
+        seen.add(k);
+        out.push(c);
+    } });
+    const habits = [...names.entries()].map(([key, name]) => {
+        const cs = out.filter(c => c.key === key).sort((a, b) => a.day.localeCompare(b.day));
+        return { key, name, count: cs.length, first: cs[0] ? cs[0].day : null, last: cs.length ? cs[cs.length - 1].day : null, amounts: cs.some(c => c.amount != null) };
+    }).filter(h => h.count > 0).sort((a, b) => b.count - a.count);
+    return { habits, checks: out.filter(c => habits.some(h => h.key === c.key)), skipped, format };
+}
+function fromJson(j) {
+    const arrays = [];
+    const walk = (o, path, depth) => {
+        if (!o || depth > 3)
+            return;
+        if (Array.isArray(o)) {
+            if (o.length && typeof o[0] === 'object')
+                arrays.push([path, o]);
+            return;
+        }
+        if (typeof o === 'object')
+            Object.keys(o).forEach(k => walk(o[k], k, depth + 1));
+    };
+    walk(j, 'root', 0);
+    const isHabitList = (a) => a.every(x => x && (x.name || x.title) && (x.id != null || x.uuid != null || x.name));
+    const habitsArr = arrays.find(([p, a]) => /habit|task|board|goal/i.test(p) && isHabitList(a)) || arrays.find(([, a]) => isHabitList(a) && !a.some(x => { var _a, _b; return readWhen((_b = (_a = x.date) !== null && _a !== void 0 ? _a : x.timestamp) !== null && _b !== void 0 ? _b : x.completedAt); }));
+    const names = new Map(), checks = [];
+    let skipped = 0;
+    if (habitsArr) {
+        const idOf = (h) => { var _a, _b; return String((_b = (_a = h.id) !== null && _a !== void 0 ? _a : h.uuid) !== null && _b !== void 0 ? _b : h.name); };
+        habitsArr[1].forEach(h => names.set(idOf(h), String(h.name || h.title).trim()));
+        const ref = (e) => { var _a, _b, _c, _d, _e; return (_e = (_d = (_c = (_b = (_a = e.habitId) !== null && _a !== void 0 ? _a : e.habit_id) !== null && _b !== void 0 ? _b : e.habitUuid) !== null && _c !== void 0 ? _c : e.habit) !== null && _d !== void 0 ? _d : e.taskId) !== null && _e !== void 0 ? _e : e.parentId; };
+        const entries = arrays.filter(([, a]) => a !== habitsArr[1] && a.some(e => ref(e) != null));
+        entries.forEach(([, a]) => a.forEach(e => {
+            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
+            const w = readWhen((_e = (_d = (_c = (_b = (_a = e.date) !== null && _a !== void 0 ? _a : e.timestamp) !== null && _b !== void 0 ? _b : e.completedAt) !== null && _c !== void 0 ? _c : e.time) !== null && _d !== void 0 ? _d : e.createdAt) !== null && _e !== void 0 ? _e : e.day), key = String(ref(e));
+            if (!w || !names.has(key)) {
+                skipped++;
+                return;
+            }
+            const amt = num((_k = (_j = (_h = (_g = (_f = e.amount) !== null && _f !== void 0 ? _f : e.amountOfCompletions) !== null && _g !== void 0 ? _g : e.value) !== null && _h !== void 0 ? _h : e.quantity) !== null && _j !== void 0 ? _j : e.count) !== null && _k !== void 0 ? _k : e.duration);
+            checks.push({ key, day: w.day, at: w.at, amount: amt, note: typeof e.note === 'string' && e.note.trim() ? e.note.trim() : null });
+        }));
+        // habits that carry their own dates
+        habitsArr[1].forEach(h => {
+            var _a, _b, _c, _d;
+            const own = (_d = (_c = (_b = (_a = h.completions) !== null && _a !== void 0 ? _a : h.entries) !== null && _b !== void 0 ? _b : h.checkins) !== null && _c !== void 0 ? _c : h.dates) !== null && _d !== void 0 ? _d : h.history;
+            if (!Array.isArray(own))
+                return;
+            own.forEach((e) => {
+                var _a, _b, _c;
+                const w = readWhen(typeof e === 'object' && e ? ((_b = (_a = e.date) !== null && _a !== void 0 ? _a : e.timestamp) !== null && _b !== void 0 ? _b : e.time) : e);
+                if (!w) {
+                    skipped++;
+                    return;
+                }
+                checks.push({ key: idOf(h), day: w.day, at: w.at, amount: typeof e === 'object' && e ? num((_c = e.amount) !== null && _c !== void 0 ? _c : e.value) : null, note: typeof e === 'object' && e && e.note ? String(e.note) : null });
+            });
+        });
+        return finish(checks, names, skipped, 'json');
+    }
+    // a flat list of entries that name their habit
+    const flat = arrays.find(([, a]) => a.some(e => { var _a, _b; return (e.habit || e.name || e.title) && readWhen((_b = (_a = e.date) !== null && _a !== void 0 ? _a : e.timestamp) !== null && _b !== void 0 ? _b : e.time); }));
+    if (!flat)
+        return null;
+    flat[1].forEach(e => {
+        var _a, _b, _c, _d, _e;
+        const nm = String(e.habit || e.name || e.title || '').trim(), w = readWhen((_b = (_a = e.date) !== null && _a !== void 0 ? _a : e.timestamp) !== null && _b !== void 0 ? _b : e.time);
+        if (!nm || !w) {
+            skipped++;
+            return;
+        }
+        const key = norm(nm);
+        names.set(key, nm);
+        checks.push({ key, day: w.day, at: w.at, amount: num((_e = (_d = (_c = e.amount) !== null && _c !== void 0 ? _c : e.value) !== null && _d !== void 0 ? _d : e.count) !== null && _e !== void 0 ? _e : e.duration), note: e.note ? String(e.note) : null });
+    });
+    return finish(checks, names, skipped, 'json');
+}
+function fromCsv(text) {
+    const rows = csvRows(text);
+    if (rows.length < 2)
+        return null;
+    const H = rows[0].map(h => h.trim().toLowerCase());
+    const col = (re) => H.findIndex(h => re.test(h));
+    const cDate = col(/^(date|day|datetime|timestamp|completed|completed at|check ?in|time ?stamp)$/), cHabit = col(/^(habit|habit name|name|task|title|activity|goal)$/);
+    const cAmt = col(/^(amount|value|quantity|count|duration|minutes|progress)$/), cTime = col(/^(time|hour)$/), cNote = col(/^(note|notes|comment|journal)$/);
+    const names = new Map(), checks = [];
+    let skipped = 0;
+    if (cDate >= 0 && cHabit >= 0) {
+        rows.slice(1).forEach(r => {
+            const nm = (r[cHabit] || '').trim();
+            let w = readWhen((r[cDate] || '').trim());
+            if (w && !w.at && cTime >= 0 && /^\d{1,2}:\d{2}/.test(r[cTime] || '')) {
+                const [hh, mm] = r[cTime].split(':').map(Number);
+                w = { day: w.day, at: new Date(+w.day.slice(0, 4), +w.day.slice(5, 7) - 1, +w.day.slice(8, 10), hh, mm).toISOString() };
+            }
+            if (!nm || !w) {
+                skipped++;
+                return;
+            }
+            const a = cAmt >= 0 ? num(r[cAmt]) : null;
+            if (a === 0)
+                return; // a zero row is "not done"
+            const key = norm(nm);
+            names.set(key, nm);
+            checks.push({ key, day: w.day, at: w.at, amount: a, note: cNote >= 0 && (r[cNote] || '').trim() ? r[cNote].trim() : null });
+        });
+        return finish(checks, names, skipped, 'csv');
+    }
+    if (cDate === 0 || readWhen((rows[1][0] || '').trim())) {
+        // wide: Date, then one column per habit
+        const habitCols = H.map((h, i) => i).filter(i => i !== 0 && rows[0][i].trim());
+        habitCols.forEach(i => names.set(norm(rows[0][i]), rows[0][i].trim()));
+        rows.slice(1).forEach(r => {
+            const w = readWhen((r[0] || '').trim());
+            if (!w) {
+                skipped++;
+                return;
+            }
+            habitCols.forEach(i => {
+                const raw = (r[i] || '').trim();
+                if (!raw)
+                    return;
+                const n = num(raw);
+                if (DONE.test(raw) || (n !== null && n > 0))
+                    checks.push({ key: norm(rows[0][i]), day: w.day, at: w.at, amount: n !== null && !/^[123]$/.test(raw) ? n : null, note: null });
+            });
+        });
+        return finish(checks, names, skipped, 'csv-wide');
+    }
+    return null;
+}
+/** Read any habit export. `error` says why when it is not one. */
+function parseHabitExport(text) {
+    const t = String(text || '').replace(/^﻿/, '').trim();
+    if (!t)
+        return { habits: [], checks: [], skipped: 0, format: '', error: 'The file is empty.' };
+    let r = null;
+    if (/^[\[{]/.test(t)) {
+        try {
+            r = fromJson(JSON.parse(t));
+        }
+        catch (e) {
+            r = null;
+        }
+    }
+    else
+        r = fromCsv(t);
+    if (!r || !r.habits.length)
+        return { habits: [], checks: [], skipped: r ? r.skipped : 0, format: r ? r.format : '', error: 'No habits with dates found in this file. Send it to me if it is from a habit app ARK should read.' };
+    return r;
+}
+/** The ARK habit an imported name most likely is (same words, or one contains the other), or null. */
+function matchHabit(name, habits) {
+    const n = norm(name).replace(/\b(the|a|an|my)\b/g, '').trim();
+    let best = null;
+    habits.forEach(h => {
+        const m = norm(h.name);
+        const s = m === n ? 3 : (m.includes(n) || n.includes(m)) && Math.min(m.length, n.length) >= 4 ? 2
+            : n.split(' ').filter(w => w.length >= 4 && m.split(' ').includes(w)).length ? 1 : 0;
+        if (s && (!best || s > best.s))
+            best = { id: h.id, s };
+    });
+    return best ? best.id : null;
+}
+/** A stable check-in id for an imported row — re-importing the same file changes nothing. */
+function importCheckId(habit, day, at) {
+    const s = habit + '|' + day + '|' + (at || '');
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+    }
+    return 'imp' + (h >>> 0).toString(36) + day.replace(/-/g, '');
+}
+
+  },
   "./habitlog": function (exports, module, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.HABIT_COLORS = void 0;
 exports.cleanCheck = cleanCheck;
 exports.cleanHabitMeta = cleanHabitMeta;
+exports.orderHabits = orderHabits;
+exports.boardsOf = boardsOf;
+exports.remindersDue = remindersDue;
+exports.importChecks = importChecks;
 exports.upsertCheck = upsertCheck;
 exports.removeCheck = removeCheck;
 exports.clearDay = clearDay;
@@ -1548,7 +1853,10 @@ function cleanCheck(c) {
         out.src = c.src.slice(0, 12);
     return out;
 }
-/** Colour, unit and the amount slider's range, validated. Unknown fields are dropped. */
+/**
+ * Colour, unit, the amount slider's range, the reminder time ('' = off), the board ('' = none) and the
+ * position on the board, validated. Unknown fields are dropped.
+ */
 function cleanHabitMeta(d) {
     const m = {};
     if (typeof d.color === 'string' && /^#[0-9a-f]{6}$/i.test(d.color))
@@ -1562,7 +1870,68 @@ function cleanHabitMeta(d) {
     }
     if (st > 0 && st <= 10000)
         m.astep = st;
+    if (d.remind !== undefined)
+        m.remind = typeof d.remind === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(d.remind) ? d.remind : '';
+    if (typeof d.board === 'string')
+        m.board = d.board.trim().replace(/\s+/g, ' ').slice(0, 24);
+    const p = num(d.pos);
+    if (d.pos != null && d.pos !== '' && p >= 0 && p <= 10000)
+        m.pos = Math.round(p);
     return m;
+}
+/** Habits in board order: by `pos` where set (a reorder sets it on all), the rest after, as they were. */
+function orderHabits(habits) {
+    return habits.map((h, i) => ({ h, k: typeof h.pos === 'number' ? h.pos : 10000 + i })).sort((a, b) => a.k - b.k).map(x => x.h);
+}
+/** The boards in use, in board order. */
+function boardsOf(habits) {
+    const out = [];
+    orderHabits(habits).forEach(h => { if (h.board && !out.includes(h.board))
+        out.push(h.board); });
+    return out;
+}
+/** Habits whose reminder is due now and that are not done today (the PC pushes these). */
+function remindersDue(habits, doneToday, nowHHMM, windowMin = 120) {
+    const mins = (s) => +s.slice(0, 2) * 60 + +s.slice(3, 5);
+    const now = mins(nowHHMM);
+    return habits.filter(h => h.remind && /^\d{2}:\d{2}$/.test(h.remind) && !doneToday[h.id] && now >= mins(h.remind) && now - mins(h.remind) < windowMin);
+}
+/**
+ * History from another habit app (logic/habitimport.ts) into the check-ins and the day log. Ids come from
+ * the row, so importing twice adds nothing; a day that already has check-ins made in ARK keeps ARK's.
+ * Returns how many check-ins were added.
+ */
+function importChecks(all, habitLog, habitIds, rows) {
+    const ids = new Set(habitIds), touched = new Set();
+    const own = new Map(), byId = new Map();
+    const prep = (h) => {
+        if (own.has(h))
+            return;
+        const list = all[h] || (all[h] = []);
+        own.set(h, new Set(list.filter(x => x.src !== 'import').map(x => x.day)));
+        byId.set(h, new Map(list.map((x, i) => [x.id, i])));
+    };
+    let added = 0;
+    (Array.isArray(rows) ? rows : []).forEach(x => {
+        const c = cleanCheck(x && { ...x, src: 'import' });
+        if (!c || !ids.has(c.habit))
+            return;
+        prep(c.habit);
+        if (own.get(c.habit).has(c.day))
+            return;
+        const list = all[c.habit], at = byId.get(c.habit);
+        if (at.has(c.id))
+            list[at.get(c.id)] = c;
+        else {
+            at.set(c.id, list.length);
+            list.push(c);
+            added++;
+        }
+        (habitLog[c.day] || (habitLog[c.day] = {}))[c.habit] = true;
+        touched.add(c.habit);
+    });
+    touched.forEach(h => all[h].sort((a, b) => (a.day + (a.at || '')).localeCompare(b.day + (b.at || ''))));
+    return added;
 }
 /** Insert or replace a check-in (by id). Returns the new list for that habit. */
 function upsertCheck(all, c) {
@@ -2020,6 +2389,8 @@ __exportStar(require("./logger"), exports);
 __exportStar(require("./habitlog"), exports);
 __exportStar(require("./systems"), exports);
 __exportStar(require("./weather"), exports);
+__exportStar(require("./habitimport"), exports);
+__exportStar(require("./backup"), exports);
 
   },
   "./lifts": function (exports, module, require) {
@@ -6140,6 +6511,11 @@ function applyEvent(s, e) {
             (s.habitLog[c.day] || (s.habitLog[c.day] = {}))[c.habit] = true;
             return;
         }
+        case 'habit.import': {
+            // History read from another habit app on the phone (logic/habitimport.ts), in chunks.
+            (0, habitlog_1.importChecks)(s.habitChecks || (s.habitChecks = {}), s.habitLog, s.habits.map(h => h.id), d.checks);
+            return;
+        }
         case 'habit.uncheck': {
             if (!s.habitChecks || typeof d.id !== 'string')
                 return;
@@ -6803,6 +7179,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.vo2Median = vo2Median;
 exports.bodyAge = bodyAge;
 exports.systemsReport = systemsReport;
+exports.sundayBodyLine = sundayBodyLine;
 /**
  * THE BODY AT A GLANCE — a report card per body system, and a body age.
  *
@@ -7024,6 +7401,23 @@ function systemsReport(inp) {
             rows.push({ key: 'msk', name: 'Muscles & joints', icon: '🦴', grade: null, score: null, line: 'not enough logged yet', weakest: null, action: null });
     }
     return rows;
+}
+function sundayBodyLine(rows, age, habits) {
+    const parts = [];
+    const n = (g) => rows.filter(r => r.grade === g).length;
+    if (rows.some(r => r.grade)) {
+        const g = [n('good') && n('good') + ' good', n('watch') && n('watch') + ' to watch', n('poor') && n('poor') + (n('poor') === 1 ? ' needs work' : ' need work')].filter(Boolean);
+        parts.push('Body: ' + g.join(', '));
+    }
+    if (age && age.known && age.bodyAge != null)
+        parts.push('body age ' + age.bodyAge + ' (you are ' + age.age + ')');
+    const best = habits.filter(h => h.streak >= 3).sort((a, b) => b.streak - a.streak)[0];
+    if (best)
+        parts.push('best streak ' + best.name + ' ' + best.streak + ' days');
+    const slip = habits.filter(h => h.prev - h.week >= 3).sort((a, b) => (b.prev - b.week) - (a.prev - a.week)).slice(0, 2);
+    if (slip.length)
+        parts.push('slipped: ' + slip.map(h => h.name + ' ' + h.week + '/7').join(', '));
+    return parts.join(' · ');
 }
 
   },

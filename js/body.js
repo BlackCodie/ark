@@ -871,7 +871,7 @@ function secSystems(v) {
     <div class="bage-m">${A.markers.map(m => `<div><span>${esc(m.label)}<small>${esc(m.value)} · ${esc(m.ref)}</small></span><b class="num" style="color:${m.years > 0.3 ? '#ff9f0a' : m.years < -0.3 ? '#30d158' : 'var(--t2)'}">${m.years > 0 ? '+' : ''}${m.years} yr</b></div>`).join('')}</div>
     ${A.missing.length ? `<p class="sub" style="line-height:1.45;margin:8px 0 0">Not included yet: ${esc(A.missing.join(' · '))}.</p>` : ''}
     <p class="sub" style="line-height:1.45;margin:6px 0 0">Each marker's published risk turned into years (mortality doubles about every 8 years). Markers overlap, so it is a range — steer by it, don't diagnose with it.</p>`
-    : `<div class="empty" style="padding:6px">${esc(A.why)}</div>${A.markers.length ? `<div class="bage-m">${A.markers.map(m => `<div><span>${esc(m.label)}<small>${esc(m.value)}</small></span><b class="num">${m.years > 0 ? '+' : ''}${m.years} yr</b></div>`).join('')}</div>` : ''}`);
+    : `<div class="empty" style="padding:6px">${esc(A.why)}</div>${A.age == null ? `<button class="btn btn-glass block" style="margin:4px 0 8px" data-act="body-profile">Set your birthday</button>` : ''}${A.markers.length ? `<div class="bage-m">${A.markers.map(m => `<div><span>${esc(m.label)}<small>${esc(m.value)}</small></span><b class="num">${m.years > 0 ? '+' : ''}${m.years} yr</b></div>`).join('')}</div>` : ''}`);
   return H;
 }
 
