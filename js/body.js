@@ -26,7 +26,7 @@ import { fatigueCard, storyBlock, fatigueNow } from './system.js';
 
 const ui = { face: 'front', mode: 'status', tl: 0, sel: null, open: {} };
 const MODES = [['status', 'Status'], ['strength', 'Strength'], ['mobility', 'Mobility'], ['soreness', 'Soreness'], ['volume', 'Thermal'], ['range', 'Range']];
-const SECTIONS = [['ba-scan', 'Scanner'], ['ba-sys', 'Biometric'], ['ba-dev', 'Develop'], ['ba-mind', 'Mind'], ['ba-mic', 'Supplements'], ['ba-endo', 'Endocrine']];
+const SECTIONS = [['ba-scan', 'Scanner'], ['ba-vit', 'Biometric'], ['ba-sys', 'Systems'], ['ba-dev', 'Develop'], ['ba-mind', 'Mind'], ['ba-mic', 'Supplements'], ['ba-endo', 'Endocrine']];
 const STATE_LBL = {
   fresh: ['Fresh', '#30d158'], recovering: ['Recovering', '#ffb340'], ready: ['Ready', '#40c8e0'],
   detrained: ['Detrained', '#ff6b5a'], untouched: ['Untouched', 'rgba(235,240,245,.5)'],
@@ -338,8 +338,7 @@ function vitalsInputs(v, t) {
 }
 function secVitals(v) {
   const t = today();
-  let H = readinessCard(v, t);
-  H += `<div class="ba-h"><h2 style="font-size:1.05rem">Survivor vitals</h2><span class="k">vs yesterday</span></div>` + hud(v, t);
+  let H = `<div class="ba-h"><h2 style="font-size:1.05rem">Survivor vitals</h2><span class="k">vs yesterday</span></div>` + hud(v, t);
   H += `<div class="ba-h"><h2 style="font-size:1.05rem">Log today</h2><span class="k">${fmtDay(t, { weekday: 'long' })}</span></div>` + card(vitalsInputs(v, t), 'tight');
   return H;
 }
@@ -386,7 +385,7 @@ function secEndo(v) {
   H += `<div class="ehdr slim"><div><div class="v" style="color:${cc}">${Math.round(E.confidence * 100)}%</div><div class="k">Confidence</div></div>
     <div><div class="v">${E.days}d</div><div class="k">History</div></div><div><div class="v">${E.samples}</div><div class="k">Simulations</div></div></div>`;
   if (E.next && E.next.length) H += `<div class="eyebrow" style="margin:10px 2px 6px">Log these to sharpen the estimate</div><div class="chips" style="margin-bottom:10px">${E.next.map(n =>
-    `<button class="chip" ${n.can ? 'data-act="ba-jump" data-sec="ba-sys"' : 'disabled'} style="height:32px;font-size:.78rem">${esc(n.label)}</button>`).join('')}</div>`;
+    `<button class="chip" ${n.can ? 'data-act="ba-jump" data-sec="ba-vit"' : 'disabled'} style="height:32px;font-size:.78rem">${esc(n.label)}</button>`).join('')}</div>`;
   if ((E.derived || []).length) H += `<div class="eyebrow" style="margin:12px 2px 6px">Overall</div><div class="der2">${E.derived.map(D => {
     const col = D.invert ? (D.score >= 65 ? '#ff6b5a' : D.score >= 45 ? '#ffb340' : '#30d158') : (D.score >= 65 ? '#30d158' : D.score >= 45 ? '#ffb340' : '#ff6b5a');
     return `<div class="der" style="--dc:${D.c}"><div class="n">${D.ic} ${esc(D.name)}</div><div class="v ${D.ordinal ? 'ord' : ''}" style="color:${col}">${D.ordinal ? esc(D.label) : D.score}</div>
@@ -452,7 +451,8 @@ export function renderBodyArch() {
 
 const SEC_DEFS = [
   ['ba-scan', 'Scanner', 'biomechanical matrix', secScanner],
-  ['ba-sys', 'Biometric Status', 'readiness · vitals · body systems · muscle recovery', secSystemsAll],
+  ['ba-vit', 'Biometric Status', 'vitals · log today', secVitals],
+  ['ba-sys', 'Body Systems', 'readiness · report card · body age · muscle recovery', secSystemsAll],
   ['ba-dev', 'Body Development', 'volume · injuries · balance', secDevelop],
   ['ba-mind', 'Mental State', 'neural link', secMind],
   ['ba-mic', 'Supplements', 'what you took · what is in you', secMicros],
@@ -463,13 +463,17 @@ const SEC_DEFS = [
    chips open and jump, and "All" opens everything — the old full page. A closed section is not even
    rendered, which also makes the tab cheaper. Open/closed is remembered per section. */
 const baOpen = () => state.settings.baOpen || (state.settings.baOpen = { 'ba-scan': true });
-const FIXED = new Set(['ba-sys']);
-const allOpen = () => SECTIONS.every(x => FIXED.has(x[0]) || baOpen()[x[0]]);
+/* Biometric Status and Body Systems show everything at once when open — no folds inside (Bruno, 2026-10-04). */
+const FLAT = new Set(['ba-vit', 'ba-sys']), OPEN_FIRST = new Set(['ba-scan', 'ba-vit']);
+const isOpen = id => { const o = baOpen(); return id in o ? !!o[id] : OPEN_FIRST.has(id); };
+const allOpen = () => SECTIONS.every(x => isOpen(x[0]));
 const baSub = () => state.settings.baSub || (state.settings.baSub = {});
 const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
 const SUMMARY = {
   'ba-scan': v => { const c = v.body.counts || {}; const tn = v.body.muscles.filter(m => m.priority > 0.05).slice(0, 2).map(m => m.name);
     return (c.ready ?? 0) + ' ready · ' + ((c.recovering || 0) + (c.fresh || 0)) + ' recovering'; },
+  'ba-vit': v => { const b = v.bio[today()] || {};
+    return 'sleep ' + (b.sleep ? fmt1(b.sleep) + ' h' : '—') + ' · protein ' + (b.prot ? Math.round(b.prot) + ' g' : '—') + ' · water ' + (b.water ? fmt1(b.water) + ' L' : '—'); },
   'ba-sys': v => { const R = systemsNow(v), r = (v.readiness || {})[today()]; const g = R.rows.filter(r => r.grade === 'good').length, w = R.rows.filter(r => r.grade === 'watch' || r.grade === 'poor').length;
     return 'readiness ' + (r ?? '—') + ' · ' + g + ' good · ' + w + ' to watch' + (R.age.known ? ' · body age ' + R.age.bodyAge : ''); },
   'ba-dev': v => { const under = v.body.muscles.filter(m => m.vol && (m.vol.zone === 'under' || m.vol.zone === 'none')).length;
@@ -515,14 +519,12 @@ function subs(sec, v, html) {
 function sections(v) {
   const out = {}, open = baOpen();
   SEC_DEFS.forEach(([id, title, k, fn]) => {
-    // Biometric Status (with Body Systems and the Bio-Regen Matrix) never folds and has no folds inside — Bruno, 2026-10-04.
-    const fixed = FIXED.has(id), on = fixed || !!open[id];
+    const flat = FLAT.has(id), on = isOpen(id);
     let sum = ''; try { sum = SUMMARY[id] ? SUMMARY[id](v) : k; } catch (e) { sum = k; }
-    const hd = fixed ? `<div class="ba-hd fixed"><span class="t"><h2>${title}</h2><span class="s">${esc(k)}</span></span></div>`
-      : `<button class="ba-hd" data-act="ba-toggle" data-sec="${id}" aria-expanded="${on}">
+    const hd = `<button class="ba-hd" data-act="ba-toggle" data-sec="${id}" aria-expanded="${on}">
       <span class="t"><h2>${title}</h2><span class="s">${esc(on ? k : sum)}</span></span>${icon('chev', 18)}</button>`;
     out[id] = `<section class="ba-sec${on ? ' open' : ''}" id="${id}">${hd}
-      ${on ? `<div class="ba-bd">${id === 'ba-scan' || fixed ? fn(v) : subs(id, v, fn(v))}</div>` : ''}</section>`;
+      ${on ? `<div class="ba-bd">${id === 'ba-scan' || flat ? fn(v) : subs(id, v, fn(v))}</div>` : ''}</section>`;
   });
   return out;
 }
@@ -826,10 +828,10 @@ function systemsNow(v) {
   sysFor = k; return sysCache;
 }
 const GRADE = { good: ['#30d158', 'Good'], watch: ['#ffd60a', 'Watch'], poor: ['#ff453a', 'Needs work'] };
-/* One section, no folds inside: Biometric Status first, then Body Systems (report card, body age), then the Bio-Regen Matrix (2026-10-04). */
+/* Body Systems, all of it at once: readiness, the report card, body age and the Bio-Regen Matrix (2026-10-04). */
 function secSystemsAll(v) {
-  return secVitals(v)
-    + `<div class="ba-h"><h2 style="font-size:1.05rem">Body Systems</h2><span class="k">report card · body age</span></div>` + secSystems(v)
+  return readinessCard(v, today())
+    + `<div class="ba-h"><h2 style="font-size:1.05rem">Report card</h2><span class="k">a grade per system</span></div>` + secSystems(v)
     + `<div class="ba-h"><h2 style="font-size:1.05rem">Bio-Regen Matrix</h2><span class="k">muscle telemetry · 72 h cycle</span></div>` + secRecovery(v);
 }
 function secSystems(v) {
@@ -989,7 +991,7 @@ export const actions = {
     if (!confirm('Delete this lab result? ARK on your PC keeps a copy you can restore.')) return;
     emitUndoable('bloodwork.del', { id: d.id }, 'Result deleted');
   },
-  'ba-toggle'(d) { const o = baOpen(); o[d.sec] = !o[d.sec]; haptic(); changed({ now: true }); },
+  'ba-toggle'(d) { const o = baOpen(); o[d.sec] = !isOpen(d.sec); haptic(); changed({ now: true }); },
   'ba-sub'(d) { const o = baSub(); o[d.key] = !(d.key in o ? o[d.key] : SUB_OPEN.has(d.key)); haptic(); changed({ now: true }); },
   'ba-all'() {
     const o = baOpen(), all = allOpen();
@@ -998,7 +1000,7 @@ export const actions = {
   },
   'ba-jump'(d) {
     const o = baOpen();
-    if (!o[d.sec]) { o[d.sec] = true; changed({ now: true }); setTimeout(() => actions['ba-jump'](d), 60); return; }
+    if (!isOpen(d.sec)) { o[d.sec] = true; changed({ now: true }); setTimeout(() => actions['ba-jump'](d), 60); return; }
     const el = document.getElementById(d.sec);
     if (!el) { state.tab = 'body'; changed(); return; }
     el.scrollIntoView({ behavior: 'smooth', block: 'start' });
