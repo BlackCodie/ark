@@ -166,3 +166,29 @@ html[data-theme="light"] .hb-pill,html[data-theme="light"] .hb-plus{background:r
 .ly-trend span{display:flex;flex-direction:column;align-items:center;gap:3px;flex:1}
 .ly-trend i{width:12px;border-radius:3px;background:#40c8e0}
 .ly-trend b{font-size:.62rem;color:var(--t3);font-weight:600}
+
+/* ══════════════ Recovery & growth (js/rebuild.js) ══════════════ */
+.sys .sys-r.tap{cursor:pointer}.sys .sys-r.tap:active{opacity:.75}
+.rb-open{color:var(--accent,#30d158);display:flex;align-items:center;gap:4px}
+.rb-hero{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:center}
+.rb-n{font-size:3rem;font-weight:800;line-height:1}.rb-n small{font-size:1.1rem;margin-left:2px;opacity:.8}
+.rb-what{font-size:.8rem;color:var(--t2);line-height:1.45;margin-top:6px}
+.rb-chain{line-height:1.5;margin:0 2px 10px}
+.rb-f{display:grid;grid-template-columns:28px minmax(0,1fr);gap:10px;padding:10px 0}
+.rb-f+.rb-f{border-top:.5px solid var(--sep)}
+.rb-f.off{opacity:.6}
+.rb-ic{font-size:1.1rem;line-height:1.5;text-align:center}
+.rb-fn{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.rb-fn b{font-size:.95rem}.rb-fn span{font-size:.85rem;font-weight:700;color:#30d158}.rb-fn span.neg{color:#ff9f0a}
+.rb-bar{height:6px;border-radius:3px;background:var(--fill-2,rgba(255,255,255,.08));margin:7px 0 4px;overflow:hidden}
+.rb-bar i{display:block;height:100%;border-radius:3px;background:#ff9f0a}
+.rb-bar.w i{background:#40c8e0}
+.rb-note{font-size:.8rem;color:var(--t2);line-height:1.4;margin-top:3px}
+.rb-src{font-size:.7rem;color:var(--t4,var(--t3));margin-top:3px}
+.rb-path{box-shadow:inset 3px 0 0 #bf5af2}
+.rb-pathh{font-size:.68rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#bf5af2;padding-top:4px}
+.rb-w{padding:9px 0}.rb-w+.rb-w{border-top:.5px solid var(--sep)}
+.rb-wt{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.rb-srcs div{padding:6px 0;font-size:.78rem;line-height:1.4}.rb-srcs div+div{border-top:.5px solid var(--sep)}
+.rb-srcs i{color:var(--t3);font-style:normal}.rb-srcs span{display:block;color:var(--t2)}
+.rb-f.off .rb-fn span{color:var(--t3)}

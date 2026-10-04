@@ -21,6 +21,7 @@ import { startForMuscles, tissueNow } from './train.js';
 import { secMind } from './mind.js';
 import { standing, fmtAmt } from './doses.js';
 import { hormoneRows } from './hormones.js';
+import { rebuildNow } from './rebuild.js';
 import { fatigueCard, storyBlock, fatigueNow } from './system.js';
 
 const ui = { face: 'front', mode: 'status', tl: 0, sel: null, open: {} };
@@ -816,7 +817,7 @@ function systemsNow(v) {
   if (sysFor === k) return sysCache;
   const t = today(), p = v.profile || {}, w = latestWeight(v) || (+p.weight || null), sp = L.specimen(Object.assign({}, p, w ? { weight: w } : {}));
   const inp = { today: t, bio: v.bio || {}, age: sp.age, sex: p.sex || null, height: +p.height || null, weight: w, bodyfat: p.bodyfat != null && p.bodyfat !== '' ? +p.bodyfat : null, vo2max: +p.vo2max || null };
-  sysCache = { rows: L.systemsReport({ ...inp, endo: v.endo || null, injuries: Object.keys(L.activeInjuries(v.injuries || [], t)).length, coverage: v.body.coverage ?? null }), age: L.bodyAge(inp) };
+  sysCache = { rows: L.systemsReport({ ...inp, endo: v.endo || null, rebuild: rebuildNow(v), injuries: Object.keys(L.activeInjuries(v.injuries || [], t)).length, coverage: v.body.coverage ?? null }), age: L.bodyAge(inp) };
   sysFor = k; return sysCache;
 }
 const GRADE = { good: ['#30d158', 'Good'], watch: ['#ffd60a', 'Watch'], poor: ['#ff453a', 'Needs work'] };
@@ -829,8 +830,8 @@ function secSystemsAll(v) {
 function secSystems(v) {
   const R = systemsNow(v), A = R.age;
   let H = card(R.rows.map(r => { const g = r.grade ? GRADE[r.grade] : ['var(--t4)', 'Not measured'];
-    return `<div class="sys-r"><span class="sys-ic">${r.icon}</span><div class="sys-t"><div class="sys-n"><b>${esc(r.name)}</b><span class="sys-g" style="--g:${g[0]}">${g[1]}</span></div>
-      <div class="sub">${esc(r.line)}</div>${r.action ? `<div class="sys-a">→ ${esc(r.action)}</div>` : ''}</div>${r.score != null ? `<b class="num sys-s" style="color:${g[0]}">${r.score}</b>` : ''}</div>`; }).join(''), 'tight sys');
+    return `<div class="sys-r${r.key === 'growth' ? ' tap' : ''}"${r.key === 'growth' ? ' data-act="rebuild-sheet" role="button" tabindex="0" aria-label="Recovery and growth — open the model"' : ''}><span class="sys-ic">${r.icon}</span><div class="sys-t"><div class="sys-n"><b>${esc(r.name)}</b><span class="sys-g" style="--g:${g[0]}">${g[1]}</span></div>
+      <div class="sub">${esc(r.line)}</div>${r.action ? `<div class="sys-a">→ ${esc(r.action)}</div>` : ''}${r.key === 'growth' ? `<div class="sys-a rb-open">How muscle recovery, hormones and protein connect ${icon('chev', 12)}</div>` : ''}</div>${r.score != null ? `<b class="num sys-s" style="color:${g[0]}">${r.score}</b>` : ''}</div>`; }).join(''), 'tight sys');
   H += `<div class="ba-h"><h2 style="font-size:1.05rem">Body age</h2><span class="k">from your markers · a range, not a verdict</span></div>`;
   H += card(A.known ? `<div class="bage"><div><div class="bage-n num" style="color:${A.bodyAge <= A.age ? '#30d158' : A.bodyAge - A.age <= 3 ? '#ffd60a' : '#ff9f0a'}">${A.bodyAge}</div><div class="sub">likely ${A.low}–${A.high} · you are ${A.age}</div></div>
       ${A.lever ? `<div class="bage-l"><b>Biggest lever</b><span>${esc(A.lever.text)}</span></div>` : ''}</div>

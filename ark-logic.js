@@ -2391,6 +2391,7 @@ __exportStar(require("./systems"), exports);
 __exportStar(require("./weather"), exports);
 __exportStar(require("./habitimport"), exports);
 __exportStar(require("./backup"), exports);
+__exportStar(require("./rebuild"), exports);
 
   },
   "./lifts": function (exports, module, require) {
@@ -4746,6 +4747,282 @@ function readiness(d0, goals0, tagDefs = [], base0 = null) {
         return null;
     const pct = Math.max(0, Math.min(100, (score / max) * 100 + tagDelta(d, tagDefs)));
     return Math.round(pct);
+}
+
+  },
+  "./rebuild": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.proteinFactor = proteinFactor;
+exports.sleepPenalty = sleepPenalty;
+exports.energyPenalty = energyPenalty;
+exports.mpsElevation = mpsElevation;
+exports.spearman = spearman;
+exports.rebuildModel = rebuildModel;
+/**
+ * RECOVERY & GROWTH — how muscle recovery, hormones and protein work together, from published effect sizes.
+ *
+ * Training opens a window in which muscle protein synthesis (MPS) is raised: about +109 % at 24 h, back near
+ * baseline by 36 h in young men (MacDougall 1995); in untrained people still +34 % at 48 h (Phillips 1997).
+ * What gets built in that window depends on three things this model multiplies together:
+ *
+ *  1. PROTEIN (the main dial). Lean-mass gains rise with daily protein up to ~1.62 g/kg and plateau there
+ *     (Morton 2018, BJSM meta-analysis of 49 RCTs; 95 % CI 1.03–2.20). Raising intake from ~1.4 to ~1.8 g/kg
+ *     added 27 % to the lean mass gained (0.30 kg on 1.1 kg). Training still builds muscle at lower intakes,
+ *     so the factor runs from 0.5 at ≤0.8 g/kg (the RDA) to 1.0 at 1.62 g/kg. Timing and per-meal size matter
+ *     little once the daily total is met (Schoenfeld 2013; Trommelen 2023 found no ceiling per meal); doses of
+ *     ~0.25 g/kg (Moore 2015; 0.4 g/kg over ~60 y) are shown as a habit, not scored.
+ *  2. SLEEP & HORMONES (one pathway). One night without sleep: MPS −18 %, testosterone −24 %, cortisol +21 %
+ *     (Lamon 2021). Five nights of 4 h: myofibrillar synthesis −19 % (Saner 2020). A week of 5 h: daytime
+ *     testosterone −10–15 % (Leproult 2011). Within the normal range, hormone levels and their rises after
+ *     training do not predict muscle gain (Morton 2016; West & Phillips 2012) — they matter at the extremes
+ *     (Bhasin 2001). Sleep acts largely through these hormones, so the larger of the two penalties counts,
+ *     never both. ARK's hormone estimate (not blood) only costs anything when it sits outside its band.
+ *  3. ENERGY. Five days at a ~33 % deficit lowered resting MPS 27 % (Areta 2014); training and protein brought
+ *     it back, and 1.6–2.4 g/kg protected the anabolic response during a 40 % deficit (Pasiakos 2013) — so
+ *     protein offsets most of this penalty. Read from the weight trend, never from food logs (under-logging
+ *     would look like a deficit).
+ *
+ * The result is an index, 100 = everything at the level where the research sees no further gain. It is an
+ * estimate with a range; each part says what it rests on, and missing data widen the range rather than being
+ * guessed. Muscle-damage and soreness are deliberately not scored: protein does not measurably speed the
+ * recovery of muscle function (Pasiakos 2014). The last part checks your own lifts: does strength at the next
+ * session move with protein and sleep in between? It reports a correlation only with enough pairs.
+ */
+const series_1 = require("./series");
+const strong_1 = require("./strong");
+const lifts_1 = require("./lifts");
+const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+const r1 = (x) => Math.round(x * 10) / 10;
+const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+const num = (v) => { const n = typeof v === 'string' ? parseFloat(v.replace(',', '.')) : Number(v); return isFinite(n) ? n : NaN; };
+/** Protein factor: 0.5 at ≤0.8 g/kg, rising in a straight line to 1.0 at 1.62 g/kg (Morton 2018). */
+function proteinFactor(gkg) { return clamp(0.5 + 0.5 * (gkg - 0.8) / 0.82, 0.5, 1); }
+/** Sleep penalty: chronic −19 % at 4 h a night (Saner 2020) from 7 h; acute −18 % for a night without sleep (Lamon 2021). */
+function sleepPenalty(avg, last) {
+    const chronic = avg == null ? 0 : clamp((7 - avg) / 3 * 0.19, 0, 0.25);
+    const acute = last == null ? 0 : clamp((7 - last) / 7 * 0.18, 0, 0.18);
+    return Math.max(chronic, acute);
+}
+/** Energy penalty: −27 % MPS at a ~33 % deficit (Areta 2014), mostly offset by protein (Areta 2014; Pasiakos 2013). */
+function energyPenalty(deficitFrac, gkg) {
+    const base = Math.min(0.3, clamp(deficitFrac, 0, 0.5) * 0.82);
+    return base * (1 - 0.7 * (gkg == null ? 0 : Math.min(1, gkg / 1.6)));
+}
+/** MPS still to come after a session: full to 24 h, then falling — to ~0 by 36 h trained (MacDougall 1995), 48 h untrained (Phillips 1997). */
+function mpsElevation(h, windowH) {
+    if (h < 0 || h >= windowH)
+        return 0;
+    if (h <= 24)
+        return 1;
+    return clamp(1 - (h - 24) / (windowH - 24), 0, 1);
+}
+function slopePerDay(points) {
+    if (points.length < 2)
+        return null;
+    const mx = mean(points.map(p => p[0])), my = mean(points.map(p => p[1]));
+    const sxx = points.reduce((a, p) => a + (p[0] - mx) ** 2, 0);
+    return sxx ? points.reduce((a, p) => a + (p[0] - mx) * (p[1] - my), 0) / sxx : null;
+}
+function rank(xs) {
+    const o = xs.map((x, i) => [x, i]).sort((a, b) => a[0] - b[0]), r = new Array(xs.length);
+    for (let i = 0; i < o.length;) {
+        let j = i;
+        while (j + 1 < o.length && o[j + 1][0] === o[i][0])
+            j++;
+        for (let k = i; k <= j; k++)
+            r[o[k][1]] = (i + j) / 2 + 1;
+        i = j + 1;
+    }
+    return r;
+}
+/** Spearman's rank correlation, or null with fewer than 3 pairs or no spread. */
+function spearman(x, y) {
+    if (x.length < 3 || x.length !== y.length)
+        return null;
+    const a = rank(x), b = rank(y), ma = mean(a), mb = mean(b);
+    const cov = a.reduce((s, v, i) => s + (v - ma) * (b[i] - mb), 0), va = a.reduce((s, v) => s + (v - ma) ** 2, 0), vb = b.reduce((s, v) => s + (v - mb) ** 2, 0);
+    return va && vb ? cov / Math.sqrt(va * vb) : null;
+}
+const sessEnd = (s) => {
+    const t = Date.parse(s.ts || '');
+    if (isFinite(t))
+        return { t, timed: true };
+    const [y, m, d] = String(s.date || '').split('-').map(Number);
+    return { t: new Date(y || 1970, (m || 1) - 1, d || 1, 12).getTime(), timed: false };
+};
+const groupOf = (ex) => ex.g || (() => { try {
+    return (0, lifts_1.withMeta)(ex).g;
+}
+catch (e) {
+    return '';
+} })();
+/** Does strength at the next session move with protein and sleep in between? Pairs = one session and the last one before it that had the same lift. */
+function personalLink(inp, w) {
+    const NEED = 8;
+    const ss = (inp.sessions || []).filter(s => /^\d{4}-\d{2}-\d{2}$/.test(s.date) && (s.exercises || []).length).slice().sort((a, b) => (a.date + (a.ts || '')).localeCompare(b.date + (b.ts || '')));
+    const best = (ex) => Math.max(0, ...(ex.sets || []).map((x) => (0, strong_1.e1rm)(num(x.w), num(x.r))));
+    const last = {};
+    const P = [], S = [], dP = [], dS = [];
+    for (const s of ss) {
+        const ch = [];
+        let from = null;
+        for (const ex of s.exercises || []) {
+            const k = String(ex.n || '').toLowerCase(), orm = best(ex);
+            if (!(orm > 0))
+                continue;
+            const prev = last[k];
+            if (prev && prev.date < s.date) {
+                const gap = Math.round((Date.parse(s.date) - Date.parse(prev.date)) / 864e5);
+                if (gap >= 2 && gap <= 14) {
+                    ch.push((orm / prev.orm - 1) * 100);
+                    if (!from || prev.date > from)
+                        from = prev.date;
+                }
+            }
+            last[k] = { date: s.date, orm };
+        }
+        if (!ch.length || !from)
+            continue;
+        const change = mean(ch);
+        // the recovery interval: protein on the days from the earlier session up to the day before; sleep on the nights after it
+        const days = [];
+        for (let d = from; d < s.date; d = (0, series_1.shiftDayKey)(d, 1))
+            days.push(d);
+        const pr = days.map(d => num((inp.bio[d] || {}).prot)).filter(x => x > 0);
+        const sl = days.map(d => num((inp.bio[(0, series_1.shiftDayKey)(d, 1)] || {}).sleep)).filter(x => x > 2);
+        if (w && pr.length >= Math.ceil(days.length / 2)) {
+            P.push(mean(pr) / w);
+            dP.push(change);
+        }
+        if (sl.length >= Math.ceil(days.length / 2)) {
+            S.push(mean(sl));
+            dS.push(change);
+        }
+    }
+    const n = Math.max(P.length, S.length);
+    const rp = P.length >= NEED ? spearman(P, dP) : null, rs = S.length >= NEED ? spearman(S, dS) : null;
+    const word = (r) => (Math.abs(r) < 0.1 ? 'no' : Math.abs(r) < 0.3 ? 'a weak' : Math.abs(r) < 0.5 ? 'a moderate' : 'a strong') + (r < 0 ? ' inverse' : '');
+    let text;
+    if (rp == null && rs == null)
+        text = 'Needs ' + NEED + ' sessions that repeat a lift within 2 weeks, with protein or sleep logged in between — ' + n + ' so far.';
+    else
+        text = [rp != null ? word(rp) + ' link between protein and your next-session strength (ρ ' + r1(rp) + ', ' + P.length + ' pairs)' : null,
+            rs != null ? word(rs) + ' link with sleep (ρ ' + r1(rs) + ', ' + S.length + ' pairs)' : null].filter(Boolean).join('; ')
+            + '. Small samples make chance links likely — read it as a hint, not proof.';
+    return { n, need: NEED, protein: rp, sleep: rs, text: text.charAt(0).toUpperCase() + text.slice(1) };
+}
+function rebuildModel(inp) {
+    const T = inp.today, bio = inp.bio || {}, w = inp.weight && inp.weight > 30 ? inp.weight : null;
+    const factors = [];
+    // 1 · protein — the last 7 complete days (today is still being eaten)
+    const pr = [];
+    for (let i = 1; i <= 7; i++) {
+        const v = num((bio[(0, series_1.shiftDayKey)(T, -i)] || {}).prot);
+        if (v > 0)
+            pr.push(v);
+    }
+    const gkg = w && pr.length >= 3 ? mean(pr) / w : null;
+    const fP = gkg == null ? null : proteinFactor(gkg);
+    factors.push({ key: 'protein', name: 'Protein', known: fP != null,
+        value: gkg == null ? (pr.length < 3 ? 'logged on ' + pr.length + ' of the last 7 days' : 'needs your weight') : Math.round(mean(pr)) + ' g a day · ' + r1(gkg) + ' g/kg',
+        effect: fP == null ? 0 : fP - 1,
+        note: gkg == null ? 'Log protein on 3 or more days (and your weight) to include it.' : gkg >= 1.62 ? 'At or past 1.6 g/kg — more adds no muscle in the research.' : 'Below 1.6 g/kg, where gains are still rising. If some meals are not logged, this reads low.',
+        source: 'Morton 2018, Br J Sports Med' });
+    // 2 · sleep & hormones — one pathway
+    const sl = [];
+    for (let i = 0; i < 7; i++) {
+        const v = num((bio[(0, series_1.shiftDayKey)(T, -i)] || {}).sleep);
+        if (v > 2)
+            sl.push(v);
+    }
+    const sAvg = sl.length >= 3 ? mean(sl) : null, sLast = num((bio[T] || {}).sleep) > 2 ? num((bio[T] || {}).sleep) : null;
+    const sPen = sAvg == null && sLast == null ? null : sleepPenalty(sAvg, sLast);
+    factors.push({ key: 'sleep', name: 'Sleep', known: sPen != null,
+        value: sPen == null ? 'no nights logged' : (sAvg != null ? r1(sAvg) + ' h a night' : '') + (sLast != null ? (sAvg != null ? ' · ' : '') + 'last night ' + r1(sLast) + ' h' : ''),
+        effect: -(sPen || 0), note: sPen == null ? 'Sleep from Apple Health or logged by hand.' : sPen > 0.005 ? 'Under 7 h, muscle builds less from the same training.' : '7 h or more — no brake from sleep.',
+        source: 'Saner 2020, J Physiol · Lamon 2021, Physiol Rep' });
+    const ax = ((inp.endo && inp.endo.axes) || []);
+    const tA = ax.find(a => a.k === 'testosterone'), cA = ax.find(a => a.k === 'cortisol');
+    let hPen = null, hTxt = 'not estimated yet';
+    if (tA || cA) {
+        const tLow = tA && tA.lo != null && tA.score < tA.lo ? Math.min(0.1, (tA.lo - tA.score) / Math.max(1, tA.lo) * 0.25) : 0;
+        const cHigh = cA && cA.hi != null && cA.score > cA.hi ? Math.min(0.05, (cA.score - cA.hi) / Math.max(1, 100 - cA.hi) * 0.15) : 0;
+        hPen = Math.min(0.12, tLow + cHigh);
+        hTxt = [tA ? 'testosterone ' + Math.round(tA.score) + (tLow ? ' (below band)' : '') : null, cA ? 'cortisol ' + Math.round(cA.score) + (cHigh ? ' (above band)' : '') : null].filter(Boolean).join(' · ');
+    }
+    factors.push({ key: 'hormones', name: 'Hormones', known: hPen != null, value: hTxt + (hPen != null ? ' · ARK estimate' : ''),
+        effect: -(hPen || 0), note: hPen == null ? 'Needs the endocrine estimate from your PC.' : hPen > 0.005 ? 'Outside its band — the estimate follows sleep and energy, so those move it.' : 'Inside the normal band, where hormone levels do not predict muscle gain.',
+        source: 'Morton 2016, J Appl Physiol · Bhasin 2001, Am J Physiol · Leproult 2011, JAMA' });
+    // 3 · energy — from the weight trend (≥4 weigh-ins over ≥10 of the last 21 days)
+    const W = inp.weights || {};
+    const pts = Object.keys(W).filter(d => d <= T && d > (0, series_1.shiftDayKey)(T, -21) && W[d] > 30).sort().map(d => [Date.parse(d) / 864e5, W[d]]);
+    let ePen = null, eTxt = 'needs 4 weigh-ins over 2 weeks', loss = null;
+    if (pts.length >= 4 && pts[pts.length - 1][0] - pts[0][0] >= 10) {
+        const sl7 = slopePerDay(pts) * 7, wNow = pts[pts.length - 1][1];
+        loss = -sl7;
+        const tdee = inp.tdee && inp.tdee > 1000 ? inp.tdee : wNow * 33;
+        const deficit = loss > wNow * 0.0025 ? loss / 7 * 7700 / tdee : 0; // below 0.25 %/week is within weighing noise
+        ePen = energyPenalty(deficit, gkg);
+        eTxt = (loss > 0 ? 'losing ' : 'gaining ') + r1(Math.abs(loss)) + ' kg a week' + (deficit > 0 ? ' · ~' + Math.round(deficit * 100) + ' % under maintenance' : '');
+    }
+    factors.push({ key: 'energy', name: 'Energy', known: ePen != null, value: eTxt, effect: -(ePen || 0),
+        note: ePen == null ? 'Read from your weight trend, not from food logs.' : ePen > 0.005 ? 'A deficit slows rebuilding; enough protein protects most of it.' : 'Not in a deficit that slows rebuilding.',
+        source: 'Areta 2014, Am J Physiol · Pasiakos 2013, FASEB J' });
+    // the open windows (sessions in the last 48 h)
+    const trained = (inp.logged || 0) >= 50, windowH = trained ? 36 : 48;
+    const meals = (d) => (Array.isArray((bio[d] || {}).meals) ? bio[d].meals : []);
+    const windows = [];
+    for (const s of inp.sessions || []) {
+        const e = sessEnd(s), h = (inp.now - e.t) / 36e5;
+        if (h < 0 || h >= windowH || !(s.exercises || []).length)
+            continue;
+        const groups = [...new Set((s.exercises || []).map(groupOf).filter(Boolean))];
+        let protein = null;
+        if (e.timed && w) {
+            let eaten = 0, timed = 0;
+            for (let d = s.date; d <= T; d = (0, series_1.shiftDayKey)(d, 1))
+                meals(d).forEach(m => { const t = Date.parse(m.at || ''); if (isFinite(t)) {
+                    timed++;
+                    if (t >= e.t && t <= inp.now)
+                        eaten += num(m.prot) || 0;
+                } });
+            if (timed)
+                protein = { eaten: Math.round(eaten), need: Math.round(1.6 * w * Math.min(h, windowH) / 24) };
+        }
+        windows.push({ day: s.date, groups, hoursAgo: Math.round(h), leftH: Math.max(0, Math.round(windowH - h)), timed: e.timed, elevation: r1(mpsElevation(h, windowH)), protein });
+    }
+    windows.sort((a, b) => a.hoursAgo - b.hoursAgo);
+    // per-meal doses (shown as a habit, not scored)
+    const perKg = (inp.age || 0) >= 60 ? 0.4 : 0.25, dose = w ? Math.round(w * perKg) : 0;
+    let perMeal = null;
+    if (dose) {
+        const counts = [];
+        for (let i = 1; i <= 7; i++) {
+            const ms = meals((0, series_1.shiftDayKey)(T, -i));
+            if (ms.length)
+                counts.push(ms.filter(m => (num(m.prot) || 0) >= dose).length);
+        }
+        perMeal = { dose, perKg, perDay: counts.length >= 3 ? r1(mean(counts)) : null };
+    }
+    const personal = personalLink(inp, w);
+    if (fP == null) {
+        return { known: false, why: w ? 'Log protein on 3 or more of the last 7 days — it is the main dial.' : 'Needs your weight and protein logged on 3 or more days.',
+            index: null, low: null, high: null, grade: null, factors, limiting: null, windows, windowH, trained, perMeal, personal };
+    }
+    const env = Math.max(sPen || 0, hPen || 0);
+    const index = Math.round(100 * fP * (1 - env) * (1 - (ePen || 0)));
+    const unknown = [sPen, hPen, ePen].filter(x => x == null).length;
+    const low = Math.max(0, index - 6 - 6 * unknown), high = Math.min(100, index + 4 + 4 * unknown);
+    const grade = index >= 85 ? 'good' : index >= 65 ? 'watch' : 'poor';
+    const losses = [
+        { key: 'protein', v: 1 - fP, text: 'Protein is the biggest brake: ' + r1(gkg) + ' g/kg against 1.6 — about ' + Math.max(5, Math.round((1.62 - gkg) * w)) + ' g more a day, in portions of ~' + dose + ' g.' },
+        { key: env === (hPen || 0) && (hPen || 0) > (sPen || 0) ? 'hormones' : 'sleep', v: env,
+            text: (hPen || 0) > (sPen || 0) ? 'The hormone estimate is the biggest brake — it follows sleep and energy, so those are the levers.' : 'Sleep is the biggest brake: ' + (sAvg != null ? r1(sAvg) : r1(sLast)) + ' h — under 7 h the same training builds less.' },
+        { key: 'energy', v: ePen || 0, text: 'The deficit is the biggest brake (' + eTxt + ') — keep protein at 1.6 g/kg or more to protect the muscle.' },
+    ].sort((a, b) => b.v - a.v);
+    const limiting = losses[0].v >= 0.03 ? { key: losses[0].key, text: losses[0].text } : null;
+    return { known: true, why: null, index, low, high, grade, factors, limiting, windows, windowH, trained, perMeal, personal };
 }
 
   },
@@ -7366,25 +7643,17 @@ function systemsReport(inp) {
         const A = avgScore(P);
         rows.push({ key: 'mind', name: 'Mind & nerves', icon: '🧠', grade: grade(A.score), score: A.score, line: P.map(p => p.label).join(' · ') || 'no check-ins this week', weakest: A.weakest, action: A.action });
     }
-    // recovery & growth: can the muscle you train actually be rebuilt? Recovery capacity and anabolic balance
-    // are ARK's endocrine estimates (engine/derived.ts); protein is your logged intake against 1.6 g per kg a day,
-    // where the gain in muscle from extra protein levels off (Morton 2018, BJSM meta-analysis).
+    // recovery & growth: muscle recovery, hormones and protein together (logic/rebuild.ts — the model and its sources)
     {
-        const P = [];
-        const dv = (k) => (((inp.endo && inp.endo.derived) || []).find(d => d.k === k) || null);
-        const rc = dv('recoveryCapacity'), ab = dv('anabolicBalance');
-        if (rc)
-            P.push({ s: clamp(rc.score, 0, 100), label: 'recovery capacity ' + Math.round(rc.score), act: 'Recovery capacity is low — sleep and an easier session come first' });
-        if (ab)
-            P.push({ s: clamp(ab.score, 0, 100), label: 'anabolic balance ' + Math.round(ab.score), act: 'Building signals trail stress — sleep, protein and fewer stressors tilt it back' });
-        const pr = recent(inp.bio, T, 'prot', 7, 0);
-        if (pr.length >= 3 && inp.weight) {
-            const gkg = mean(pr) / inp.weight;
-            P.push({ s: clamp(gkg / 1.6 * 100, 0, 100), label: 'protein ' + Math.round(mean(pr)) + ' g · ' + r1(gkg) + ' g/kg', act: 'Protein under 1.6 g per kg — one more portion a day (eggs, Greek yogurt, a shake)' });
+        const R = inp.rebuild;
+        if (R && R.known) {
+            const f = (k) => R.factors.find(x => x.key === k);
+            rows.push({ key: 'growth', name: 'Recovery & growth', icon: '💪', grade: R.grade, score: R.index,
+                line: 'rebuild ' + R.index + ' % (' + R.low + '–' + R.high + ') · ' + [f('protein'), f('sleep')].filter(x => x && x.known).map(x => x.value.split(' · ').pop()).join(' · '),
+                weakest: R.limiting ? R.limiting.key : null, action: R.limiting ? R.limiting.text : null });
         }
-        const A = avgScore(P);
-        const why = !P.length ? (pr.length >= 3 ? 'needs your weight for protein per kg' : 'needs protein logged on 3+ days, or the endocrine estimate') : '';
-        rows.push({ key: 'growth', name: 'Recovery & growth', icon: '💪', grade: grade(A.score), score: A.score, line: P.map(p => p.label).join(' · ') || why, weakest: A.weakest, action: A.action });
+        else
+            rows.push({ key: 'growth', name: 'Recovery & growth', icon: '💪', grade: null, score: null, line: R ? (R.why || 'not enough data') : 'not measured yet', weakest: null, action: null });
     }
     // body composition
     {
