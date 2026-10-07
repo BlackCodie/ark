@@ -192,9 +192,6 @@ export function secMind(v) {
       <div class="moods">${levels.map((m, i) => `<button class="${d.mood === i ? 'on' : ''}" style="--c:${m.c}" data-act="bio-set" data-f="mood" data-v="${i}" aria-label="${esc(m.n)}">${m.e}</button>`).join('')}</div>
       <div class="row" style="margin:14px 0 8px"><span class="eyebrow" style="flex:1">Energy</span><span class="sub num">${d.energy ? d.energy + ' / 10' : ''}</span></div>${scale('energy', '#ffd60a', d.energy)}
       <div class="row" style="margin:14px 0 8px"><span class="eyebrow" style="flex:1">Stress</span><span class="sub num">${d.stress ? d.stress + ' / 10' : ''}</span></div>${scale('stress', '#bf5af2', d.stress)}
-      ${(D.mind || []).length ? `<div class="eyebrow" style="margin:14px 0 8px">What's shaping it</div>
-      <div class="fx">${D.mind.map(m => { const on = (d.mindTags || []).includes(m.id);
-        return `<button class="${on ? 'on buff' : ''}" data-act="mind-tag" data-tag="${m.id}" data-on="${on ? 0 : 1}">${m.e} ${esc(m.n)}</button>`; }).join('')}</div>` : ''}
       <div class="nlog">${days.map((k, i) => { const m = moods[i], c = m != null && levels[m] ? levels[m].c : '';
         return `<span><i style="height:${m != null ? 12 + m * 7 : 4}px;${c ? 'background:' + c : ''}"></i>${fmtDay(k, { weekday: 'narrow' })}</span>`; }).join('')}</div>
     </section>`;
