@@ -131,13 +131,14 @@ export function doseSheet(k, preset) {
       const todayAmt = ((v.bio[t] || {}).micros || {})[k] || 0;
       const saf = L.microSafety(k, todayAmt);
       const mine = doses().filter(x => x.k === k && dayOf(Date.parse(x.at)) === t).sort((a, b) => b.at.localeCompare(a.at));
+      const dosed = doses().some(x => x.k === k && Date.now() - Date.parse(x.at) < 72 * 3600e3);
       const pend = new Set(state.pending.filter(e => !e.seq && e.type === 'dose.add').map(e => e.data.dose.id));
       let H0 = '';
       if (S) {
         H0 += `<section class="card frost pk-now"><div class="eyebrow">Estimated now</div><div class="pk-big">${esc(S.line)}</div>
           ${S.sub ? `<div class="sub">${esc(S.sub)}</div>` : ''}
           ${S.P.curve.some(p => p.v > 0) && sp.where !== 'gut' ? `<div style="margin-top:10px">${curveSvg(S.P)}</div>
-            <div class="row num sub" style="gap:14px;margin-top:4px;font-size:.78rem">${S.P.peakAt ? `<span>Peak ~${hm(S.P.peakAt)}</span>` : ''}${S.P.clearAt ? `<span>Clears ~${hm(S.P.clearAt)}</span>` : ''}${S.P.pending > 0.01 ? `<span>${fmtAmt(S.P.pending, sp.mass)} still absorbing</span>` : ''}</div>` : ''}
+            <div class="row num sub" style="gap:14px;margin-top:4px;font-size:.78rem">${dosed && S.P.peakAt ? `<span>Peak ~${hm(S.P.peakAt)}</span>` : ''}${dosed && S.P.clearAt ? `<span>Clears ~${hm(S.P.clearAt)}</span>` : ''}${S.P.pending > 0.01 ? `<span>${fmtAmt(S.P.pending, sp.mass)} still absorbing</span>` : ''}</div>` : ''}
           ${S.store ? `<div class="pk-store"><span>${esc(S.store.label)}</span><b style="${S.store.color ? 'color:' + S.store.color : ''}">${S.store.text ? esc(S.store.text) : esc(String(S.store.v)) + '<small> ' + esc(S.store.unit) + '</small>'}</b></div><div class="sub" style="line-height:1.45">${esc(S.store.note)}</div>` : ''}
           <p class="sub" style="margin:10px 0 0;line-height:1.45">Estimate from your dose times and population-average kinetics — people differ by ±30–50 %. Not a lab value${sp.baseline !== null ? '; the baseline is a typical adult amount' : ''}.</p></section>`;
       }

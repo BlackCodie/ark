@@ -82,7 +82,8 @@ export function fatigueCard(v) {
   const F = fatigueNow(v);
   return `<div class="ba-h"><h2 style="font-size:1.05rem">Fatigue radar</h2><span class="k">${F.firing} of ${F.measured} signals firing</span></div>`
     + card(`<div style="border-left:3px solid ${F.color};padding-left:10px;margin-bottom:8px"><b style="color:${F.color}">${esc(F.title)}</b><div class="sub" style="line-height:1.45;margin-top:2px">${esc(F.text)}</div></div>
-      ${F.signals.map(s => `<div class="sig"><i style="background:${s.on === null ? 'var(--fill-2)' : s.on ? '#ff9f0a' : '#30d158'}"></i><b>${esc(s.label)}</b><span>${esc(s.on === null ? 'not measured — ' + s.detail : s.detail)}</span></div>`).join('')}`);
+      ${F.signals.filter(s => s.on !== null).map(s => `<div class="sig"><i style="background:${s.on ? '#ff9f0a' : '#30d158'}"></i><b>${esc(s.label)}</b><span>${esc(s.detail)}</span></div>`).join('')}
+      ${F.signals.some(s => s.on === null) ? `<p class="sub" style="line-height:1.45;margin:8px 0 0">Not measured yet: ${esc(F.signals.filter(s => s.on === null).map(s => s.label).join(' · '))} — they join in as the data arrives.</p>` : ''}`);
 }
 export function dungeonCard(v) {
   const D = L.dungeons(v.workouts || [], Number(bodyweight(v)) || null, (v.profile || {}).sex || null);

@@ -323,7 +323,7 @@ input[type=time].ds-in{width:110px}
 .ms-t b{font-size:1.3rem;color:var(--c)}
 .ms-t .bar{width:100%;height:4px;border-radius:2px;background:var(--fill-2);overflow:hidden}
 .ms-t .bar i{display:block;height:100%;background:var(--c);border-radius:2px}
-.ms-t .why{font-size:.64rem;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.ms-t .why{font-size:.64rem;color:var(--t3);line-height:1.3;max-width:100%;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .ms-t:active{transform:scale(.97)}
 .mind-tips{display:flex;flex-direction:column;gap:6px;margin-top:8px;font-size:.82rem;color:var(--t2)}
 .mind-tips .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;vertical-align:1px}
@@ -532,26 +532,15 @@ html[data-theme="light"] .br-cc{fill:rgba(40,44,90,.05);stroke:rgba(40,44,90,.18
 .ba-sec.open .ba-hd svg{transform:rotate(90deg)}
 .ba-bd{padding-top:4px}
 .jump .all{color:#40c8e0;font-weight:700}
-.sub-blk{border-radius:16px;background:var(--fill-1, rgba(255,255,255,.035));margin-bottom:8px}
-.sub-h{display:flex;align-items:center;gap:6px;padding-right:10px}
-.sub-t{flex:1;min-width:0;display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto;column-gap:8px;text-align:left;padding:11px 14px}
-.sub-t b{font-size:.92rem}.sub-t span{grid-column:1;font-size:.72rem;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sub-t svg{grid-column:2;grid-row:1/3;align-self:center;color:var(--t3);transition:transform .25s}
-.sub-blk.open .sub-t svg{transform:rotate(90deg)}
-.sub-b{padding:0 2px 8px}
 
-/* ── lymphatic system ── */
-.ba-fig .lymph-layer{display:none;pointer-events:none}
-.ba-fig.m-lymph .lymph-layer{display:inline}
-.ba-fig .lv{fill:none;stroke:#40c8e0;stroke-width:5;stroke-linecap:round;stroke-dasharray:1 12}
-.ba-fig .ln{fill:#7fe3f2;stroke:#0b2a33;stroke-width:2}
-.ba-fig .ln-glow{fill:rgba(64,200,224,.22)}
-.ly-hero{display:grid;grid-template-columns:1fr 1fr;gap:10px}.ly-hero .v{font-size:2rem;font-weight:700;line-height:1.05}.ly-hero .k{font-size:.74rem;color:var(--t3);font-weight:600}
-.ly-bal{margin:12px 0 10px;border-left:3px solid;padding:2px 0 2px 10px;display:flex;flex-direction:column;gap:2px;font-size:.84rem}.ly-bal span{color:var(--t2);font-size:.78rem;line-height:1.4}
-.ly-regs{display:flex;flex-direction:column;gap:6px}
-.ly-reg{display:grid;grid-template-columns:118px 1fr 28px;gap:10px;align-items:center;font-size:.8rem}.ly-reg span:first-child{color:var(--t2)}
-.ly-t{height:6px;border-radius:3px;background:var(--fill-2);overflow:hidden}.ly-t i{display:block;height:100%;background:#40c8e0;border-radius:3px}
-.ly-reg b{text-align:right;font-size:.8rem}
-.ly-d .st{font-size:.7rem}.ly-ev{font-size:.62rem;font-weight:800;letter-spacing:.04em;color:var(--c);background:color-mix(in srgb,var(--c) 15%,transparent);border-radius:6px;padding:2px 6px;margin-right:8px;flex:none}
-.ly-tips{margin:0;padding-left:18px;font-size:.84rem;line-height:1.55}.ly-tips li{margin:2px 0}.ly-red li{color:#ffb4a8}
-.ly-cont{color:#ffb340 !important}
+
+/* Supplements you have not taken lately: slim rows (2026-10-09) */
+.mic2.slim{padding:6px 0}
+.mic2.slim .mic2-main{grid-template-columns:30px 1fr}
+.mic2-dot{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,var(--mc) 14%,transparent);font-size:.9rem}
+.mic2.slim .nm{font-size:.86rem;font-weight:550}
+.mic2.slim .mic2-add{height:30px;min-width:46px;font-size:.74rem}
+.mic2-sep{font-size:.68rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--t3);padding:12px 0 4px;border-top:.5px solid var(--sep)}
+.mic2-sep+.mic2{border-top:0}
+/* Weekly sets: muscles with nothing this week sit below, dimmed */
+.dv-r.idle{opacity:.5}

@@ -16,7 +16,7 @@ export function rebuildNow(v = view()) {
   const sp = L.specimen(Object.assign({}, p, w ? { weight: w } : {}));
   const career = v.career || { logged: (v.workouts || []).length, prior: 0 };
   cache = L.rebuildModel({ now: Date.now(), today: today(), bio: v.bio || {}, weights: v.weights || {}, weight: w, tdee: sp.tdee || null, age: sp.age,
-    sessions: v.workouts || [], logged: (career.logged || 0) + (career.prior || 0), endo: v.endo || null });
+    protGoal: ((v.bioDefs || {}).goals || {}).prot || null, sessions: v.workouts || [], logged: (career.logged || 0) + (career.prior || 0), endo: v.endo || null });
   cacheKey = k; return cache;
 }
 

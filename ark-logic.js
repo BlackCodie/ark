@@ -5016,7 +5016,7 @@ function rebuildModel(inp) {
     const low = Math.max(0, index - 6 - 6 * unknown), high = Math.min(100, index + 4 + 4 * unknown);
     const grade = index >= 85 ? 'good' : index >= 65 ? 'watch' : 'poor';
     const losses = [
-        { key: 'protein', v: 1 - fP, text: 'Protein is the biggest brake: ' + r1(gkg) + ' g/kg against 1.6 — about ' + Math.max(5, Math.round((1.62 - gkg) * w)) + ' g more a day, in portions of ~' + dose + ' g.' },
+        { key: 'protein', v: 1 - fP, text: 'Protein is the biggest brake: ' + r1(gkg) + ' g/kg against 1.6 — about ' + Math.max(5, Math.round((1.62 - gkg) * w)) + ' g more a day, in portions of ~' + dose + ' g.' + (inp.protGoal && inp.protGoal >= 1.62 * w ? ' Your daily goal of ' + Math.round(inp.protGoal) + ' g (' + r1(inp.protGoal / w) + ' g/kg) already covers it.' : '') },
         { key: env === (hPen || 0) && (hPen || 0) > (sPen || 0) ? 'hormones' : 'sleep', v: env,
             text: (hPen || 0) > (sPen || 0) ? 'The hormone estimate is the biggest brake — it follows sleep and energy, so those are the levers.' : 'Sleep is the biggest brake: ' + (sAvg != null ? r1(sAvg) : r1(sLast)) + ' h — under 7 h the same training builds less.' },
         { key: 'energy', v: ePen || 0, text: 'The deficit is the biggest brake (' + eTxt + ') — keep protein at 1.6 g/kg or more to protect the muscle.' },
@@ -7563,6 +7563,9 @@ function bodyAge(inp) {
     const est = inp.age + sum;
     return { known: true, age: inp.age, bodyAge: Math.round(est), low: Math.round(est - spread), high: Math.round(est + spread), markers: M, missing, lever };
 }
+/** " · 1 of 4 markers" when a grade rests on part of what it could — the score is surer with more. */
+const of = (n, all) => (n > 0 && n < all ? ' · ' + n + ' of ' + all + ' markers' : '');
+const MOOD_WORDS = ['destroyed', 'drained', 'stable', 'sharp', 'locked in', 'ascended'];
 const grade = (s) => (s == null ? null : s >= 70 ? 'good' : s >= 45 ? 'watch' : 'poor');
 const avgScore = (parts) => {
     if (!parts.length)
@@ -7597,7 +7600,7 @@ function systemsReport(inp) {
             bits.push(Math.round(st / 100) / 10 + 'k steps');
         }
         const A = avgScore(P);
-        rows.push({ key: 'heart', name: 'Heart & fitness', icon: '❤️', grade: grade(A.score), score: A.score, line: bits.join(' · ') || 'not measured — Apple Health brings RHR, HRV, VO₂max, steps', weakest: A.weakest, action: A.action });
+        rows.push({ key: 'heart', name: 'Heart & fitness', icon: '❤️', grade: grade(A.score), score: A.score, line: (bits.length ? bits.join(' · ') + of(P.length, 4) : '') || 'not measured — Apple Health brings RHR, HRV, VO₂max, steps', weakest: A.weakest, action: A.action });
     }
     // sleep
     {
@@ -7614,7 +7617,7 @@ function systemsReport(inp) {
         if (dp != null && s7)
             P.push({ s: clamp(dp / s7 * 100 * 5, 0, 100), label: r1(dp) + ' h deep', act: 'Deep sleep is low — no alcohol or late heavy meals before bed' });
         const A = avgScore(P);
-        rows.push({ key: 'sleep', name: 'Sleep', icon: '🌙', grade: grade(A.score), score: A.score, line: P.map(p => p.label).join(' · ') || 'no nights logged this week', weakest: A.weakest, action: A.action });
+        rows.push({ key: 'sleep', name: 'Sleep', icon: '🌙', grade: grade(A.score), score: A.score, line: (P.length ? P.map(p => p.label).join(' · ') + of(P.length, 3) : '') || 'no nights logged this week', weakest: A.weakest, action: A.action });
     }
     // hormones (ARK's estimate)
     {
@@ -7638,10 +7641,13 @@ function systemsReport(inp) {
             P.push({ s: clamp((11 - st) * 10, 0, 100), label: 'stress ' + r1(st) + '/10', act: 'Stress is high this week — daylight, a walk and a real break each day' });
         if (en != null)
             P.push({ s: clamp(en * 10, 0, 100), label: 'energy ' + r1(en) + '/10', act: 'Energy is low — sleep first, then morning light' });
+        // Mood is the check-in's 0–5 scale (Destroyed, Drained, Stable, Sharp, Locked in, Ascended): Stable is a normal
+        // day, so it sits mid-scale and only below it counts as low.
         if (md != null)
-            P.push({ s: clamp(md * 20, 0, 100), label: 'mood ' + r1(md) + '/5', act: 'Mood has been low — time outside and with people helps most' });
+            P.push({ s: Math.round(md >= 2 ? clamp(55 + (md - 2) * 15, 0, 100) : md * 27.5), label: 'mood ' + MOOD_WORDS[clamp(Math.round(md), 0, 5)],
+                act: 'Mood has been low — time outside and with people helps most' });
         const A = avgScore(P);
-        rows.push({ key: 'mind', name: 'Mind & nerves', icon: '🧠', grade: grade(A.score), score: A.score, line: P.map(p => p.label).join(' · ') || 'no check-ins this week', weakest: A.weakest, action: A.action });
+        rows.push({ key: 'mind', name: 'Mind & nerves', icon: '🧠', grade: grade(A.score), score: A.score, line: (P.length ? P.map(p => p.label).join(' · ') + of(P.length, 3) : '') || 'no check-ins this week', weakest: A.weakest, action: A.action });
     }
     // recovery & growth: muscle recovery, hormones and protein together (logic/rebuild.ts — the model and its sources)
     {
@@ -7943,11 +7949,17 @@ function tissue(inp0, days = 240) {
             const now = L.e1 * retention(age);
             const rel = now / bw, ratio = rel / std;
             const lv = levelOf(ratio);
-            cands.push({ score: lv.score, level: lv.level, rel, ratio, w: share, faded: 1 - retention(age),
-                basis: ex.n + ' · est. 1RM ' + Math.round(now) + ' kg' + (L.bw ? ' incl. body' : '') + ' = ' + (Math.round(rel * 100) / 100) + '× body weight' });
+            const machine = ex.e === 'machine' || ex.e === 'cable';
+            cands.push({ score: lv.score, level: lv.level, rel, ratio, w: share, faded: 1 - retention(age), machine,
+                basis: ex.n + ' · est. 1RM ' + Math.round(now) + ' kg' + (L.bw ? ' incl. body' : '') + ' = ' + (Math.round(rel * 100) / 100) + '× body weight' + (machine ? ' (machine — rough, machines differ)' : '') });
         });
         if (!cands.length)
             return null;
+        // Free weights first: a machine's number depends on its leverage and brand, so a 150 kg chest press or a
+        // pin-loaded fly is not comparable with the barbell standards. Machines count only when nothing else does.
+        const free = cands.filter(c => !c.machine);
+        if (free.length)
+            cands.splice(0, cands.length, ...free);
         cands.sort((x, y) => y.score - x.score);
         const top = cands.slice(0, 2);
         const score = top.length === 2 ? top[0].score * 0.7 + top[1].score * 0.3 : top[0].score;

@@ -8,7 +8,7 @@
 .bd-row:active{transform:scale(.985)}
 .bd-ic{font-size:1.15rem;opacity:.9;text-align:center}
 .bd-tx{display:flex;flex-direction:column;min-width:0}
-.bd-tx b{font-size:1rem;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bd-tx b{font-size:1rem;font-weight:650;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
 .bd-tx small{font-size:.72rem;color:var(--t3);margin-top:2px;font-family:var(--round)}
 .bd-bars{display:flex;gap:4px;align-items:center}
 .bd-bars i{width:9px;height:32px;border-radius:4px;background:rgba(255,255,255,.08)}
@@ -161,11 +161,6 @@ html[data-theme="light"] .hb-pill,html[data-theme="light"] .hb-plus{background:r
 .bage-m>div{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-top:.5px solid var(--sep);font-size:.88rem}
 .bage-m small{display:block;font-size:.72rem;color:var(--t3)}
 .strip7.in-card{margin-top:12px}
-.ly-trend{margin-top:12px}
-.ly-trend>div{display:flex;justify-content:space-between;align-items:flex-end;height:58px;margin-top:6px}
-.ly-trend span{display:flex;flex-direction:column;align-items:center;gap:3px;flex:1}
-.ly-trend i{width:12px;border-radius:3px;background:#40c8e0}
-.ly-trend b{font-size:.62rem;color:var(--t3);font-weight:600}
 
 /* ══════════════ Recovery & growth (js/rebuild.js) ══════════════ */
 .sys .sys-r.tap{cursor:pointer}.sys .sys-r.tap:active{opacity:.75}

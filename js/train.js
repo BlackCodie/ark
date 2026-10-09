@@ -52,8 +52,9 @@ function prs(ws) {
   const pr = {};
   ws.forEach(s => (s.exercises || []).forEach(e => (e.sets || []).forEach(st => {
     const w = +st.w || 0, r = +st.r || 0; if (w <= 0 || r <= 0) return;
-    const o = L.e1rm(w, r);
-    if (!pr[e.n] || o > pr[e.n].orm) pr[e.n] = { w, r, orm: o, date: s.date };
+    // One record per exercise, however its name was typed ("chest press" is Chest Press (Machine)).
+    const o = L.e1rm(w, r), n = L.canonicalName(e.n) || e.n;
+    if (!pr[n] || o > pr[n].orm) pr[n] = { w, r, orm: o, date: s.date };
   })));
   return pr;
 }

@@ -2,9 +2,9 @@
    ARK Mobile — Body Arch, entire.
 
    The same sections as on the PC, in the same order, fitted to a phone:
-   Scanner (the figure, overlays, timeline, TRAIN NEXT, DOW-7) · Recovery
-   (Bio-Regen Matrix) · Profile (Specimen + Physique) · Vitals · Mind ·
-   Micros · Endocrine. Each section folds to a one-line summary (Scanner open); the
+   Scanner (the figure, overlays, timeline) · Biometric Status · Body Systems
+   (readiness, report card, body age, Bio-Regen Matrix) · Development · Mind ·
+   Supplements · Endocrine. Each section folds to a one-line summary (Scanner open); the
    chips open and jump, "Open all" shows the whole page.
 
    Everything you can log on the PC's Body Arch you can log here. Physique and
@@ -180,7 +180,7 @@ function secRecovery(v) {
       <div class="rb"><i style="width:${s.fillPct}%;background:${s.fillCol}"></i></div>
       <div class="rm"><span>Recovery ${esc(s.pctTxt)}</span><span>${esc(String(s.lastTxt).replace('last: ', ''))}</span></div>
       <div class="mini"><span>IMPRINT</span><span class="t"><i style="width:${s.imprint}%;background:#30d158"></i></span><b>${s.imprint}%</b>
-        <span>MOBILITY</span><span class="t"><i style="width:${s.mobPct}%;background:#40c8e0"></i></span><b>${s.mobPct}%</b>
+        <span>MOBILITY</span><span class="t"><i style="width:${s.mobPct}%;background:#40c8e0"></i></span><b>${s.mobPct ? s.mobPct + '%' : '—'}</b>
         <span>VOL/WK</span><span class="t"><i style="width:${s.volPct}%;background:#ffb340"></i></span><b>${s.wk}/10</b></div></div>`;
   }).join('')}</div>`;
   // Strength imprint per group (no training pick — TRAIN NEXT was removed from Body Arch, 2026-10-04).
@@ -287,14 +287,19 @@ const VIT = [
 ];
 function readinessCard(v, t) {
   const r = v.readiness[t];
-  const col = r == null ? 'rgba(235,240,245,.3)' : r >= 80 ? '#30d158' : r >= 60 ? '#ffd60a' : r >= 40 ? '#ff9f0a' : '#ff453a';
-  const lbl = r == null ? 'Log data to score' : r >= 90 ? 'Elite condition' : r >= 80 ? 'Peak ready' : r >= 70 ? 'Good to train' : r >= 55 ? 'Train smart' : r >= 40 ? 'Go light' : 'Recover';
+  // Not scored yet today (nothing logged): show the last score, dimmed and dated, rather than an empty ring.
+  let back = null; if (r == null) for (let i = 1; i <= 3 && back == null; i++) { const x = v.readiness[shiftDay(t, -i)]; if (x != null) back = { v: x, i }; }
+  const rv = r != null ? r : back ? back.v : null;
+  const col = rv == null ? 'rgba(235,240,245,.3)' : rv >= 80 ? '#30d158' : rv >= 60 ? '#ffd60a' : rv >= 40 ? '#ff9f0a' : '#ff453a';
+  const lbl = rv == null ? 'Log data to score' : rv >= 90 ? 'Elite condition' : rv >= 80 ? 'Peak ready' : rv >= 70 ? 'Good to train' : rv >= 55 ? 'Train smart' : rv >= 40 ? 'Go light' : 'Recover';
   const hist = [13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0].map(i => v.readiness[shiftDay(t, -i)]);
   const pres = hist.filter(x => x != null);
+  const sub = r != null ? "From today's vitals — the same score your PC shows"
+    : back ? (back.i === 1 ? "Yesterday's score" : back.i + ' days ago') + ' — sleep, energy or protein today updates it' : 'Sleep, energy, mood, water or protein — any one starts it';
   return card(`<div class="row" style="gap:16px">
-      <div style="color:${col}">${ringSvg(r == null ? 0 : r / 100, col, 80, 9, r == null ? '—' : Math.round(r))}</div>
-      <div style="flex:1"><div class="eyebrow">Readiness</div><div style="font-size:1.2rem;font-weight:700;margin-top:2px">${lbl}</div>
-        <div class="sub" style="margin-top:3px">${r == null ? 'Sleep, energy, mood, water or protein — any one starts it' : 'From today\'s vitals — the same score your PC shows'}</div></div></div>
+      <div style="color:${col}${r == null && back ? ';opacity:.55' : ''}">${ringSvg(rv == null ? 0 : rv / 100, col, 80, 9, rv == null ? '—' : Math.round(rv))}</div>
+      <div style="flex:1"><div class="eyebrow">Readiness${r == null && back ? ' · not scored today' : ''}</div><div style="font-size:1.2rem;font-weight:700;margin-top:2px">${lbl}</div>
+        <div class="sub" style="margin-top:3px">${sub}</div></div></div>
     ${pres.length ? `<div class="row num" style="gap:14px;margin-top:10px;font-size:.78rem"><span><b>${Math.round(pres.slice(-7).reduce((a, b) => a + b, 0) / Math.min(7, pres.length))}</b> <span class="sub">7-day avg</span></span><span><b>${Math.max(...pres)}</b> <span class="sub">14-day best</span></span></div>
       <div class="strip7 in-card">${hist.slice(-7).map((r7, i) => { const k = shiftDay(t, i - 6), c7 = r7 == null ? '' : r7 >= 80 ? '#30d158' : r7 >= 60 ? '#ffd60a' : r7 >= 40 ? '#ff9f0a' : '#ff453a';
         return `<div class="${k === t ? 't' : ''}"><b ${c7 ? `style="color:${c7}"` : ''}>${r7 ?? '—'}</b>${fmtDay(k, { weekday: 'narrow' })}</div>`; }).join('')}</div>` : ''}`);
@@ -302,22 +307,24 @@ function readinessCard(v, t) {
 function hud(v, t) {
   const d = v.bio[t] || {}, y = v.bio[shiftDay(t, -1)] || {}, G = (v.bioDefs && v.bioDefs.goals) || { cal: 2500, water: 3, sleep: 8 };
   const rd = v.readiness[t], ry = v.readiness[shiftDay(t, -1)];
+  // A zero for food, water or sleep means "not logged yet" — shown as — with no arrow, never as a drop.
+  const lg = x => (x == null || x === 0 ? null : x);
   const T = [
-    ['HEALTH', '#ff6b5a', rd, rd == null ? '—' : rd, rd == null ? '' : '%', rd, ry, 100],
-    ['STAMINA', '#ffd60a', d.energy, d.energy ?? '—', d.energy == null ? '' : '/10', d.energy, y.energy, 10],
-    ['FOOD', '#ff9f0a', d.cal || 0, (d.cal || 0) >= 1000 ? fmt1((d.cal || 0) / 1000) + 'k' : (d.cal || 0), '', d.cal || 0, y.cal, G.cal],
-    ['WATER', '#40c8e0', d.water || 0, fmt1(d.water || 0), 'L', d.water || 0, y.water, G.water],
-    ['OXYGEN', '#64d2ff', d.sleep || 0, fmt1(d.sleep || 0), 'h', d.sleep || 0, y.sleep, G.sleep],
-    ['TORPOR', '#bf5af2', d.stress, d.stress ?? '—', d.stress == null ? '' : '/10', d.stress, y.stress, 10, true],
+    ['HEALTH', '#ff6b5a', rd, rd, '%', ry, 100],
+    ['STAMINA', '#ffd60a', d.energy, d.energy, '/10', y.energy, 10],
+    ['FOOD', '#ff9f0a', lg(d.cal), lg(d.cal) != null && d.cal >= 1000 ? fmt1(d.cal / 1000) + 'k' : lg(d.cal), '', lg(y.cal), G.cal],
+    ['WATER', '#40c8e0', lg(d.water), lg(d.water) != null ? fmt1(d.water) : null, 'L', lg(y.water), G.water],
+    ['OXYGEN', '#64d2ff', lg(d.sleep), lg(d.sleep) != null ? fmt1(d.sleep) : null, 'h', lg(y.sleep), G.sleep],
+    ['TORPOR', '#bf5af2', d.stress, d.stress, '/10', y.stress, 10, true],
   ];
-  return `<div class="hud">${T.map(([n, c, raw, shown, unit, cur, prev, max, inv]) => {
+  return `<div class="hud">${T.map(([n, c, cur, shown, unit, prev, max, inv]) => {
     let dl = '';
     if (cur != null && prev != null) {
       const diff = cur - prev, good = inv ? diff < 0 : diff > 0;
       dl = Math.abs(diff) < 0.05 ? '<span class="d flat">±0</span>' : `<span class="d ${good ? 'up' : 'down'}">${diff > 0 ? '▲' : '▼'}${Math.abs(diff) >= 1 ? Math.round(Math.abs(diff)) : Math.abs(diff).toFixed(1)}</span>`;
     }
-    const pct = raw == null ? 0 : Math.max(0, Math.min(100, raw / (max || 1) * 100));
-    return `<div style="--hc:${c}"><div class="n">${n}</div><div class="v num">${shown}<small>${unit}</small>${dl}</div><div class="b"><i style="width:${pct}%"></i></div></div>`;
+    const pct = cur == null ? 0 : Math.max(0, Math.min(100, cur / (max || 1) * 100));
+    return `<div style="--hc:${c}"><div class="n">${n}</div><div class="v num">${cur == null ? '—' : shown + '<small>' + unit + '</small>'}${dl}</div><div class="b"><i style="width:${pct}%"></i></div></div>`;
   }).join('')}</div>`;
 }
 function vitalsInputs(v, t) {
@@ -349,28 +356,36 @@ function secMicros(v) {
   if (!D || !D.micros || !D.micros.length) return card(`<div class="empty">Micronutrient tracking appears after the first sync.</div>`);
   const amt = (v.bio[t] || {}).micros || {};
   const fmtN = n => n >= 1000 ? (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + 'k' : (n % 1 === 0 ? '' + n : (+n).toFixed(1));
-  const goals = D.micros.filter(m => !m.limit);
-  const hit = goals.filter(m => (amt[m.k] || 0) >= m.goal).length;
-  let H = `<div class="sub" style="margin:-4px 2px 8px;line-height:1.45">${hit}/${goals.length} at target today · tap one to log it with the time you took it. Amounts in blood are estimates from dose times and average kinetics (±30–50 %), not lab values.</div>`;
-  // One list, in the PC's order — no category groups.
-  [[...(D.cats || []).flatMap(c => D.micros.filter(m => m.cat === c)), ...D.micros.filter(m => !(D.cats || []).includes(m.cat))]].forEach(items => {
-    H += card(items.map(m => {
-      const a = amt[m.k] || 0, saf = L.microSafety(m.k, a), over = (saf && saf.level === 'over') || (m.limit && a > (m.goal || 0));
-      const pct = m.limit ? (a > 0 ? 1 : 0) : Math.min(1, a / (m.goal || 1));
-      const col = over ? '#ff453a' : m.c;
-      const S = standing(m.k);
-      const est = S ? (S.store && S.store.v != null ? S.store.label + ' ' + S.store.v + S.store.unit.replace(/^%/, '%') : S.store && S.store.text ? S.store.label.replace(' (estimate)', '') + ': ' + S.store.text : S.line) : '';
-      const step = (m.steps || [])[0];
-      return `<div class="mic2" style="--mc:${col}">
+  // What you actually take comes first: logged on 3+ different days in the last 30 (dose log or a day's total),
+  // most recent first. One-offs and the ones you never take follow as slim rows — still one list.
+  const last = {}, daysOf = {}, cut30 = shiftDay(t, -30);
+  const saw = (k, d) => { if (!d) return; if (!last[k] || d > last[k]) last[k] = d; if (d >= cut30) (daysOf[k] = daysOf[k] || new Set()).add(d); };
+  (v.doses || []).forEach(x => saw(x.k, String(x.at || '').slice(0, 10)));
+  Object.keys(v.bio || {}).forEach(d => { const mc = (v.bio[d] || {}).micros || {}; Object.keys(mc).forEach(k => { if (mc[k] > 0) saw(k, d); }); });
+  const order = [...(D.cats || []).flatMap(c => D.micros.filter(m => m.cat === c)), ...D.micros.filter(m => !(D.cats || []).includes(m.cat))];
+  const used = order.filter(m => daysOf[m.k] && daysOf[m.k].size >= 3).sort((x, y) => (last[y.k] || '').localeCompare(last[x.k] || ''));
+  const rest = order.filter(m => !used.includes(m));
+  const goals = used.filter(m => !m.limit), hit = goals.filter(m => (amt[m.k] || 0) >= m.goal).length;
+  let H = `<div class="sub" style="margin:-4px 2px 8px;line-height:1.45">${used.length ? hit + ' of ' + goals.length + ' you take at target today · ' : ''}tap one to log it with the time you took it. Amounts in blood are estimates from dose times and average kinetics (±30–50 %), not lab values.</div>`;
+  const row = (m, slim) => {
+    const a = amt[m.k] || 0, saf = L.microSafety(m.k, a), over = (saf && saf.level === 'over') || (m.limit && a > (m.goal || 0));
+    const pct = m.limit ? (a > 0 ? 1 : 0) : Math.min(1, a / (m.goal || 1));
+    const col = over ? '#ff453a' : m.c;
+    const S = slim ? null : standing(m.k);
+    const est = S ? (S.store && S.store.v != null ? S.store.label + ' ' + S.store.v + S.store.unit.replace(/^%/, '%') : S.store && S.store.text ? S.store.label.replace(' (estimate)', '') + ': ' + S.store.text : S.line) : '';
+    const step = (m.steps || [])[0];
+    return `<div class="mic2${slim ? ' slim' : ''}" style="--mc:${col}">
         <button class="mic2-main" data-act="dose-sheet" data-k="${m.k}" aria-label="${esc(m.name)} — log a dose and see the estimate">
-          <span class="ring">${ringSvg(pct, col, 44, 5.5, m.limit ? (a ? fmtN(a) : '0') : over ? '!' : a >= m.goal ? '✓' : Math.round(pct * 100))}</span>
-          <span class="tx"><span class="nm">${m.icon} ${esc(m.name)}</span>
-            <span class="amt">${m.limit ? (a ? fmtN(a) + ' ' + esc(m.unit) + ' today' : 'none today') + ' · keep at ' + fmtN(m.goal || 0) : fmtN(a) + ' / ' + fmtN(m.goal) + ' ' + esc(m.unit)}</span>
+          <span class="ring">${slim ? `<span class="mic2-dot">${m.icon}</span>` : ringSvg(pct, col, 44, 5.5, m.limit ? (a ? fmtN(a) : '0') : over ? '!' : a >= m.goal ? '✓' : Math.round(pct * 100))}</span>
+          <span class="tx"><span class="nm">${slim ? '' : m.icon + ' '}${esc(m.name)}</span>
+            <span class="amt">${slim ? (last[m.k] ? 'last ' + fmtDay(last[m.k], { day: 'numeric', month: 'short' }) + ' · ' : '') + 'goal ' + fmtN(m.goal || 0) + ' ' + esc(m.unit)
+              : m.limit ? (a ? fmtN(a) + ' ' + esc(m.unit) + ' today' : 'none today') + ' · keep at ' + fmtN(m.goal || 0) : fmtN(a) + ' / ' + fmtN(m.goal) + ' ' + esc(m.unit)}</span>
             ${est ? `<span class="est">${esc(est)}</span>` : ''}
-            ${saf && !m.limit ? `<span class="warn ${saf.level}">⚠ ${saf.level === 'over' ? 'Over upper limit' : 'Nearing upper limit'} · ${fmtN(saf.ul)} ${esc(saf.unit)}</span>` : ''}</span></button>
+            ${saf && !m.limit && a > 0 ? `<span class="warn ${saf.level}">⚠ ${saf.level === 'over' ? 'Over upper limit' : 'Nearing upper limit'} · ${fmtN(saf.ul)} ${esc(saf.unit)}</span>` : ''}</span></button>
         ${step ? `<button class="mic2-add" data-act="dose-quick" data-k="${m.k}" data-v="${step}" aria-label="Log ${fmtN(step)} ${esc(m.unit)} of ${esc(m.name)} now">+${fmtN(step)}</button>` : ''}</div>`;
-    }).join(''), 'tight mic-list');
-  });
+  };
+  // One list: what you take (full rows, most recent first), then everything else as slim rows.
+  H += card(used.map(m => row(m, false)).join('') + (used.length && rest.length ? `<div class="mic2-sep">Rarely or never in the last 30 days</div>` : '') + rest.map(m => row(m, !!used.length)).join(''), 'tight mic-list');
   return H;
 }
 
@@ -384,7 +399,8 @@ function secEndo(v) {
   H += hormoneRows(v);
   H += `<div class="ehdr slim"><div><div class="v" style="color:${cc}">${Math.round(E.confidence * 100)}%</div><div class="k">Confidence</div></div>
     <div><div class="v">${E.days}d</div><div class="k">History</div></div><div><div class="v">${E.samples}</div><div class="k">Simulations</div></div></div>`;
-  if (E.next && E.next.length) H += `<div class="eyebrow" style="margin:10px 2px 6px">Log these to sharpen the estimate</div><div class="chips" style="margin-bottom:10px">${E.next.map(n =>
+  const next = (E.next || []).filter(n => !/^(alcohol|illness)$/i.test(n.label) && n.can);
+  if (next.length) H += `<div class="eyebrow" style="margin:10px 2px 6px">Log these to sharpen the estimate</div><div class="chips" style="margin-bottom:10px">${next.map(n =>
     `<button class="chip" ${n.can ? 'data-act="ba-jump" data-sec="ba-vit"' : 'disabled'} style="height:32px;font-size:.78rem">${esc(n.label)}</button>`).join('')}</div>`;
   if ((E.derived || []).length) H += `<div class="eyebrow" style="margin:12px 2px 6px">Overall</div><div class="der2">${E.derived.map(D => {
     const col = D.invert ? (D.score >= 65 ? '#ff6b5a' : D.score >= 45 ? '#ffb340' : '#30d158') : (D.score >= 65 ? '#30d158' : D.score >= 45 ? '#ffb340' : '#ff6b5a');
@@ -463,14 +479,14 @@ const SEC_DEFS = [
    chips open and jump, and "All" opens everything — the old full page. A closed section is not even
    rendered, which also makes the tab cheaper. Open/closed is remembered per section. */
 const baOpen = () => state.settings.baOpen || (state.settings.baOpen = { 'ba-scan': true });
-/* Biometric Status and Body Systems show everything at once when open — no folds inside (Bruno, 2026-10-04). */
-const FLAT = new Set(['ba-vit', 'ba-sys']), OPEN_FIRST = new Set(['ba-scan', 'ba-vit']);
+/* Every section shows everything at once when open — no folds inside (Bruno, 2026-10-04: "not a tab inside a
+   tab", "when I open it I want to see all of them"). The Scanner and Biometric Status start open. */
+const OPEN_FIRST = new Set(['ba-scan', 'ba-vit']);
 const isOpen = id => { const o = baOpen(); return id in o ? !!o[id] : OPEN_FIRST.has(id); };
 const allOpen = () => SECTIONS.every(x => isOpen(x[0]));
-const baSub = () => state.settings.baSub || (state.settings.baSub = {});
 const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
 const SUMMARY = {
-  'ba-scan': v => { const c = v.body.counts || {}; const tn = v.body.muscles.filter(m => m.priority > 0.05).slice(0, 2).map(m => m.name);
+  'ba-scan': v => { const c = v.body.counts || {};
     return (c.ready ?? 0) + ' ready · ' + ((c.recovering || 0) + (c.fresh || 0)) + ' recovering'; },
   'ba-vit': v => { const b = v.bio[today()] || {};
     return 'sleep ' + (b.sleep ? fmt1(b.sleep) + ' h' : '—') + ' · protein ' + (b.prot ? Math.round(b.prot) + ' g' : '—') + ' · water ' + (b.water ? fmt1(b.water) + ' L' : '—'); },
@@ -486,45 +502,15 @@ const SUMMARY = {
   'ba-endo': v => { const E = v.endo; if (!E) return 'not estimated yet'; const a = (E.axes || []).find(x => x.k === 'testosterone');
     return Math.round(E.confidence * 100) + ' % confidence' + (a ? ' · testosterone ' + a.score : ''); },
 };
-/* Inside every section the blocks fold the same way, each with its own one-liner (the Scanner stays open). */
-const SUB_OPEN = new Set(['ba-sys:Log today']);
-const SUBSUM = {
-  'Survivor vitals': v => { const b = v.bio[today()] || {}; return [b.sleep ? 'sleep ' + fmt1(b.sleep) + ' h' : null, b.prot ? 'protein ' + Math.round(b.prot) + ' g' : null, b.water ? 'water ' + fmt1(b.water) + ' L' : null].filter(Boolean).join(' · ') || 'nothing logged yet today'; },
-  'Log today': v => { const b = v.bio[today()] || {}; const n = VIT.filter(x => b[x.f] != null).length; return n + ' of ' + VIT.length + ' logged today'; },
-  'Last 7 days': v => { const r = [0, 1, 2, 3, 4, 5, 6].map(i => (v.readiness || {})[shiftDay(today(), -i)]).filter(x => x != null); return r.length ? 'readiness avg ' + Math.round(r.reduce((a, b) => a + b, 0) / r.length) : 'readiness —'; },
-  'Composition': () => 'age · BMI · lean and fat mass · FFMI',
-  'Energy & daily targets': () => 'BMR · TDEE · protein and water targets',
-  'Biometric Status': v => { const t = today(), b = v.bio[t] || {}, r = (v.readiness || {})[t];
-    return 'readiness ' + (r ?? '—') + ' · sleep ' + (b.sleep ? fmt1(b.sleep) + ' h' : '—') + ' · protein ' + (b.prot ? Math.round(b.prot) + ' g' : '—'); },
-  'Bio-Regen Matrix': v => { const c = v.body.counts || {}; return (c.ready ?? 0) + ' ready · ' + ((c.recovering || 0) + (c.fresh || 0)) + ' recovering · balance ' + (v.body.balance == null ? '—' : v.body.balance + ' %'); },
-  'Weekly sets vs your range': v => plural(v.body.muscles.filter(m => m.vol && (m.vol.zone === 'under' || m.vol.zone === 'none')).length, 'muscle') + ' under range',
-  'Fatigue radar': v => fatigueNow(v).title,
-  'Strength per kg': v => { const R = relNow(v); return R.known ? R.verdict.title.toLowerCase() + (R.index != null ? ' · ' + (R.index > 0 ? '+' : '') + R.index + ' % per kg' : '') : 'needs weigh-ins and a regular lift'; },
-  'Injuries': v => { const n = (v.injuries || []).filter(j => !j.cleared).length; return n ? n + ' active' : 'none'; },
-};
-function subs(sec, v, html) {
-  const parts = html.split('<div class="ba-h">');
-  if (parts.length < 3) return html;
-  const open = baSub();
-  return parts[0] + parts.slice(1).map(p => {
-    const end = p.indexOf('</div>'), head = p.slice(0, end), body = p.slice(end + 6);
-    const title = ((head.match(/<h2[^>]*>([\s\S]*?)<\/h2>/) || [])[1] || '').trim(), k = ((head.match(/<span class="k(?: [^"]*)?">([\s\S]*?)<\/span>/) || [])[1] || '');
-    const extras = head.replace(/<h2[^>]*>[\s\S]*?<\/h2>/, '').replace(/<span class="k(?: [^"]*)?">[\s\S]*?<\/span>/, '');
-    const key = sec + ':' + title.replace(/<[^>]+>/g, ''), on = key in open ? !!open[key] : SUB_OPEN.has(key);
-    let sum = k; try { if (SUBSUM[title]) sum = esc(SUBSUM[title](v)); } catch (e) { /* keep the static line */ }
-    return `<div class="sub-blk${on ? ' open' : ''}"><div class="sub-h"><button class="sub-t" data-act="ba-sub" data-key="${esc(key)}" aria-expanded="${on}">
-      <b>${title}</b><span>${sum}</span>${icon('chev', 14)}</button>${extras}</div>${on ? `<div class="sub-b">${body}</div>` : ''}</div>`;
-  }).join('');
-}
 function sections(v) {
-  const out = {}, open = baOpen();
+  const out = {};
   SEC_DEFS.forEach(([id, title, k, fn]) => {
-    const flat = FLAT.has(id), on = isOpen(id);
+    const on = isOpen(id);
     let sum = ''; try { sum = SUMMARY[id] ? SUMMARY[id](v) : k; } catch (e) { sum = k; }
     const hd = `<button class="ba-hd" data-act="ba-toggle" data-sec="${id}" aria-expanded="${on}">
       <span class="t"><h2>${title}</h2><span class="s">${esc(on ? k : sum)}</span></span>${icon('chev', 18)}</button>`;
     out[id] = `<section class="ba-sec${on ? ' open' : ''}" id="${id}">${hd}
-      ${on ? `<div class="ba-bd">${id === 'ba-scan' || flat ? fn(v) : subs(id, v, fn(v))}</div>` : ''}</section>`;
+      ${on ? `<div class="ba-bd">${fn(v)}</div>` : ''}</section>`;
   });
   return out;
 }
@@ -782,10 +768,11 @@ function secDevelop(v) {
   let H = '';
   /* weekly sets vs range */
   const notes = new Set();
-  const rows = Object.keys(L.VOLUME_LANDMARKS).filter(s => by[s]).map(s => {
+  const keys = Object.keys(L.VOLUME_LANDMARKS).filter(s => by[s]);
+  const rows = [...keys.filter(s => (by[s].weekSets || 0) > 0), ...keys.filter(s => !((by[s].weekSets || 0) > 0))].map(s => {
     const m = by[s], V = volOf(v, s, m); (V.notes || []).forEach(n => notes.add(n));
     const top = Math.max(V.mrv * 1.15, m.weekSets || 0, 1), pc = x => Math.min(100, x / top * 100).toFixed(1) + '%';
-    return `<button class="dv-r" data-act="ba-muscle" data-slug="${s}"><span class="n">${esc(m.name || mName(s))}${inj[s] ? ` <b style="color:${SEV_C[inj[s].sev]}">✚</b>` : ''}</span>
+    return `<button class="dv-r${(m.weekSets || 0) > 0 ? '' : ' idle'}" data-act="ba-muscle" data-slug="${s}"><span class="n">${esc(m.name || mName(s))}${inj[s] ? ` <b style="color:${SEV_C[inj[s].sev]}">✚</b>` : ''}</span>
       <span class="dv-t"><i class="band" style="left:${pc(V.mavLo)};width:calc(${pc(V.mavHi)} - ${pc(V.mavLo)})"></i><i class="fill" style="width:${pc(m.weekSets || 0)};background:${V.color}"></i><i class="tick" style="left:${pc(V.mrv)}"></i></span>
       <span class="v num"><b>${fmt1(m.weekSets || 0)}</b>/${V.mavLo}–${V.mavHi}</span></button>`;
   }).join('');
@@ -801,7 +788,7 @@ function secDevelop(v) {
       return `<button class="li" data-act="inj-open" data-id="${esc(j.id)}" style="--c:${SEV_C[j.sev]}"><span class="ic">${icon('bolt', 17)}</span><span class="tx">
         <div class="tt">${esc(mName(j.slug))} · ${L.INJURY_SEV[j.sev].toLowerCase()} ${esc((L.INJURY_KINDS[j.kind] || j.kind).toLowerCase())}</div>
         <div class="st">${a ? 'day ' + (a.days + 1) + ' · ' + esc(a.advice) : 'from ' + esc(j.start)}</div></span><span class="chev">${icon('chev', 16)}</span></button>`; }).join('')}</section>`
-      : card(`<div class="empty" style="padding:6px">Nothing logged. Hurt beyond normal soreness? Log it — TRAIN NEXT routes around it until you mark it healed.</div>`))
+      : card(`<div class="empty" style="padding:6px">Nothing logged. Hurt beyond normal soreness? Log it — today's training plan leaves it alone until you mark it healed.</div>`))
     + `<button class="btn btn-glass block" style="margin-top:10px" data-act="inj-open">${icon('plus', 16)} Log an injury</button>`;
   /* strength balance */
   let rs = [];
@@ -940,7 +927,7 @@ const devActions = {
     const j = L.cleanInjury(injDraft);
     if (!j) { toast('Pick a muscle, a severity and a start day'); return; }
     emit('injury.set', { injury: j }); closeSheet(topSheet()); haptic();
-    toast(j.sev >= 2 ? '✚ Logged — TRAIN NEXT will leave it alone' : '✚ Logged — train around it');
+    toast(j.sev >= 2 ? '✚ Logged — the training plan leaves it alone' : '✚ Logged — train around it');
   },
   'inj-heal'() {
     injRead(); injDraft.cleared = today();
@@ -992,7 +979,6 @@ export const actions = {
     emitUndoable('bloodwork.del', { id: d.id }, 'Result deleted');
   },
   'ba-toggle'(d) { const o = baOpen(); o[d.sec] = !isOpen(d.sec); haptic(); changed({ now: true }); },
-  'ba-sub'(d) { const o = baSub(); o[d.key] = !(d.key in o ? o[d.key] : SUB_OPEN.has(d.key)); haptic(); changed({ now: true }); },
   'ba-all'() {
     const o = baOpen(), all = allOpen();
     SECTIONS.forEach(x => { o[x[0]] = !all; }); if (all) o['ba-scan'] = true;

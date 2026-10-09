@@ -166,7 +166,7 @@ function hormoneSheet(k) {
           ${drv(a.pos, 'Raising it', '#30d158')}${drv(a.neg, 'Lowering it', '#ff6b5a')}</section>` : ''}
         ${labs ? `<div class="grp-h">Your lab result</div><section class="card frost tight"><b>${esc(labs.latest.marker)} ${esc(String(labs.latest.value))} ${esc(labs.latest.unit || '')}</b>
           <div class="sub">${fmtDay(labs.latest.date, { day: 'numeric', month: 'short', year: 'numeric' })} · shown beside the estimate, never mixed into it</div></section>` : ''}
-        <div class="hconf"><span>Confidence <b style="color:${cw[1]}">${cw[0]}</b></span>${a.missing && a.missing.length ? `<span class="sub">Log ${esc(a.missing.slice(0, 3).join(', ').toLowerCase())} to sharpen it</span>` : ''}</div>
+        <div class="hconf"><span>Confidence <b style="color:${cw[1]}">${cw[0]}</b></span>${(a.missing || []).filter(x => !/^(alcohol|illness|nicotine)$/i.test(x)).length ? `<span class="sub">Log ${esc((a.missing || []).filter(x => !/^(alcohol|illness|nicotine)$/i.test(x)).slice(0, 3).join(', ').toLowerCase())} to sharpen it</span>` : ''}</div>
         <p class="sub" style="line-height:1.5;margin:10px 0 0">A 0–100 estimate of physiological state from a model — not a blood level. The hourly shape uses typical body-clock rhythms and today's events; people differ.</p>`;
     },
   });

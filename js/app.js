@@ -14,7 +14,6 @@ import { actions as hormoneActions } from './hormones.js';
 import { actions as systemActions, onPhotoInput, onWhatIfInput } from './system.js';
 import { actions as dailyActions, importHealthLink } from './daily.js';
 import { actions as rebuildActions } from './rebuild.js';
-import { actions as lymphActions } from './lymph.js';
 import { renderBoards, actions as habitActions, onHabitInput, onHabitSearch } from './habits.js';
 import { actions as weatherActions, onWeatherKey } from './weather.js';
 
@@ -146,7 +145,7 @@ setInterval(tickElapsed, 1000);
 
 /* ── events ── */
 const ACT = {
-  ...viewActions, ...trainActions, ...sheetActions, ...bodyActions, ...moreActions, ...reviewActions, ...doseActions, ...mindActions, ...routineActions, ...hormoneActions, ...systemActions, ...dailyActions, ...lymphActions, ...habitActions, ...weatherActions, ...rebuildActions,
+  ...viewActions, ...trainActions, ...sheetActions, ...bodyActions, ...moreActions, ...reviewActions, ...doseActions, ...mindActions, ...routineActions, ...hormoneActions, ...systemActions, ...dailyActions, ...habitActions, ...weatherActions, ...rebuildActions,
   tab(d) { closeAllSheets(); haptic(); switchTab(d.tab, d.seg); },
   'sheet-close'() { closeSheet(topSheet()); },
 };
