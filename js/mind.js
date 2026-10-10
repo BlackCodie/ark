@@ -45,7 +45,7 @@ export function mindInput(now = Date.now()) {
     checkin: { mood: b.mood ?? null, energy: b.energy ?? null, stress: b.stress ?? null },
     doses: D, daylight: (b.daylight || 0) + beh.sunlight, cold: beh.cold, meditation: (b.mindful || 0) + beh.meditation,
     trainedToday: trained(t), trainedYesterday: trained(day(1)),
-    alcoholYesterday: dayTot('alcohol')[1] || 0, sick: !!b.sick,
+    sick: !!b.sick,
     ashwagandha: L.builtEffect(dayTot('ashwa'), 600),
     hrv: b.hrv || null, hrvBaseline: hrvs.length >= 3 ? hrvs[Math.floor(hrvs.length / 2)] : null,
     endo: { dopamineTone: sc('dopamineTone'), cortisol: sc('cortisol'), thyroid: sc('thyroid'), testosterone: sc('testosterone') },

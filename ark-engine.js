@@ -27,7 +27,7 @@
  * than the point estimate becoming confident and wrong.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DISCLAIMERS = exports.BASELINE_INPUT_LEVERAGE = exports.TREND_EPSILON = exports.SIMULATION = exports.CONFIDENCE = exports.EVIDENCE_QUALITY = exports.EVIDENCE_SD_MULTIPLIER = exports.BIO_AGE_YEARS_PER_10_POINTS = exports.LIFESTYLE_SENSITIVITY = exports.SEX_BASELINE = exports.AGE_EFFECTS = exports.REFERENCE = exports.LATENT_HALF_LIFE_DAYS = exports.LATENT_BASELINE = exports.HALF_LIFE_DAYS = exports.SCORE_MAX = exports.SCORE_MIN = exports.NEUTRAL_SCORE = exports.ENGINE_VERSION = void 0;
+exports.DISCLAIMERS = exports.BASELINE_INPUT_LEVERAGE = exports.TREND_EPSILON = exports.SIMULATION = exports.EVENT_INPUTS = exports.IMPUTE_WEIGHT = exports.IMPUTE_SD = exports.CARRY_DECAY = exports.PERSIST_DAYS = exports.CONFIDENCE = exports.EVIDENCE_QUALITY = exports.EVIDENCE_SD_MULTIPLIER = exports.BIO_AGE_YEARS_PER_10_POINTS = exports.LIFESTYLE_SENSITIVITY = exports.SEX_BASELINE = exports.AGE_EFFECTS = exports.REFERENCE = exports.LATENT_HALF_LIFE_DAYS = exports.LATENT_BASELINE = exports.HALF_LIFE_DAYS = exports.SCORE_MAX = exports.SCORE_MIN = exports.NEUTRAL_SCORE = exports.ENGINE_VERSION = void 0;
 exports.ENGINE_VERSION = '1.0.0';
 /**
  * NORMALISATION ANCHOR
@@ -263,7 +263,65 @@ exports.CONFIDENCE = {
     historyHalfLifeMultiple: 1.5,
     /** How many days of history count as fully adequate regardless of axis. */
     historyCapDays: 60,
+    /**
+     * Recency window. An axis reflects inputs over roughly its own half-life plus the lag of the hidden states
+     * feeding it (~2 days), so coverage weights each day by exp(-age / tau), tau = (half-life + lag) / ln 2.
+     * Cortisol cares about the last few days; thyroid about the last month. Logging nothing for a week therefore
+     * costs cortisol confidence far more than thyroid confidence — as it should.
+     */
+    latentLagDays: 2,
+    /** A carried (not freshly logged) reading counts this much toward coverage; static inputs count fully. */
+    carriedCredit: 0.5,
+    /** Inputs carried at least this long are static (body fat, VO₂max, age) and count as fully observed. */
+    staticPersistDays: 30,
 };
+/**
+ * INPUT PERSISTENCE — for how many days a reading keeps standing in for days nothing was logged.
+ *
+ * Physiology does not stop on the days nobody writes it down: you slept on the night you forgot to log, and
+ * your body fat did not vanish because it was measured last month. Without this, a missed day dropped the
+ * input out of the calculation and the states it feeds swung — the estimate jumped on logging gaps, not on
+ * anything that happened. A carried reading counts at reduced strength (CARRY_DECAY per day) and only
+ * within this window; after it the input is genuinely unknown again (see IMPUTE_SD).
+ *
+ * Exposures — caffeine, daylight, cold, meditation, fasting, illness, ashwagandha — are never carried:
+ * one sunny morning says nothing about the next.
+ */
+exports.PERSIST_DAYS = {
+    sleepDuration: 2, deepSleep: 2, sleepConsistency: 7, hrv: 3, restingHeartRate: 3, recovery: 1, stress: 2,
+    calorieIntake: 2, proteinIntake: 2, hydration: 2, dailySteps: 2,
+    trainingVolume: 3, strengthProgression: 14,
+    zinc: 3, magnesium: 3, iodine: 3, selenium: 3, iron: 3, vitaminD: 7, omega3: 7,
+    bodyFatPercent: 60, bodyWeight: 60, vo2max: 90, calorieMaintenance: 60, age: 3650, sex: 3650,
+};
+/** Strength a carried reading keeps per day of age (0.8 → yesterday's sleep counts 80 %, two days ago 64 %). */
+exports.CARRY_DECAY = 0.8;
+/**
+ * IMPUTATION — physiology that exists whether or not it is logged.
+ *
+ * When sleep, HRV, intake or body fat are unknown, the honest statement is "probably typical, give or take the
+ * usual spread between people" — not "no information, so let the few things we did see decide". Each Monte
+ * Carlo draw therefore samples an unknown input from N(typical, SD) (in normalised deviation units) and lets
+ * it act at reduced weight. Two things follow: with little data the estimate stays near typical instead of
+ * being swung by one stray reading, and the credible interval widens to show what is not known.
+ *
+ * SDs are the between-person spread on each input's own scale: habitual sleep ±0.7 h (span 2 h), resting HR
+ * ±5 bpm (span 12), intake ±8–10 % of maintenance (span 20 %), body fat ±3.5 points (span 8).
+ */
+exports.IMPUTE_SD = {
+    sleepDuration: 0.35, deepSleep: 0.35, sleepConsistency: 0.35, hrv: 0.35, restingHeartRate: 0.4, recovery: 0.35,
+    stress: 0.35, calorieIntake: 0.45, proteinIntake: 0.45, hydration: 0.35, dailySteps: 0.45,
+    bodyFatPercent: 0.45, vo2max: 0.5,
+};
+/** Weight of an imputed input relative to a real reading of the same input. */
+exports.IMPUTE_WEIGHT = 0.5;
+/**
+ * Inputs that are events rather than continuous physiology: present when they happen, absent otherwise. Their
+ * absence on a day is the normal state, not a gap in what the model can see — so they are never counted as
+ * "missing" in confidence and never asked for. Illness is also no longer logged in the app (2026-10-03); a
+ * sick day already in the history still acts on the estimate.
+ */
+exports.EVENT_INPUTS = new Set(['illness', 'fastingHours', 'ashwagandha', 'caffeineAtBedtime']);
 /** Monte Carlo defaults. */
 exports.SIMULATION = {
     defaultSamples: 400,
@@ -355,11 +413,6 @@ const BASE_INPUT_TO_LATENT = [
         evidence: 'B', source: 'consistent-rct',
         note: 'Timing matters more than dose; the engine only sees daily total, so the coefficient is deliberately modest.',
     },
-    {
-        from: 'alcohol', to: 'circadianAlignment', effect: -0.15, shape: 'saturating', sd: 0.22,
-        mechanism: 'Ethanol fragments sleep architecture and blunts nocturnal melatonin.',
-        evidence: 'B', source: 'consistent-rct',
-    },
     // ── Recovery debt ──
     {
         from: 'sleepDuration', to: 'recoveryDebt', effect: -0.50, shape: 'threshold', sd: 0.14,
@@ -399,11 +452,6 @@ const BASE_INPUT_TO_LATENT = [
         evidence: 'A', source: 'consensus-textbook',
     },
     {
-        from: 'alcohol', to: 'inflammationLoad', effect: 0.30, shape: 'saturating', sd: 0.20,
-        mechanism: 'Ethanol increases gut permeability and endotoxin translocation, raising systemic inflammatory tone.',
-        evidence: 'B', source: 'meta-analysis',
-    },
-    {
         from: 'bodyFatPercent', to: 'inflammationLoad', effect: 0.35, shape: 'threshold', sd: 0.16,
         mechanism: 'Adipose tissue is endocrine-active; excess adiposity sustains low-grade inflammatory signalling.',
         evidence: 'A', source: 'consensus-textbook',
@@ -412,11 +460,6 @@ const BASE_INPUT_TO_LATENT = [
         from: 'omega3', to: 'inflammationLoad', effect: -0.18, shape: 'saturating', sd: 0.25,
         mechanism: 'Long-chain omega-3 fatty acids shift eicosanoid balance toward resolution.',
         evidence: 'B', source: 'meta-analysis',
-    },
-    {
-        from: 'nicotine', to: 'inflammationLoad', effect: 0.20, shape: 'saturating', sd: 0.28,
-        mechanism: 'Smoked nicotine delivery raises oxidative and inflammatory burden; route of administration matters.',
-        evidence: 'C', source: 'observational',
     },
     // ── Stress adaptation (buffering capacity) ──
     {
@@ -473,11 +516,6 @@ const BASE_INPUT_TO_LATENT = [
         evidence: 'B', source: 'consistent-rct',
     },
     {
-        from: 'nicotine', to: 'autonomicBalance', effect: -0.22, shape: 'saturating', sd: 0.24,
-        mechanism: 'Nicotine is a sympathomimetic that raises heart rate and reduces HRV.',
-        evidence: 'B', source: 'consistent-rct',
-    },
-    {
         from: 'stress', to: 'autonomicBalance', effect: -0.30, shape: 'linear', sd: 0.18,
         mechanism: 'Psychological stress shifts autonomic balance toward sympathetic dominance.',
         evidence: 'A', source: 'consensus-textbook',
@@ -508,11 +546,6 @@ const BASE_INPUT_TO_LATENT = [
         from: 'stress', to: 'catabolicPressure', effect: 0.35, shape: 'linear', sd: 0.16,
         mechanism: 'Sustained glucocorticoid exposure promotes proteolysis and opposes anabolic signalling.',
         evidence: 'A', source: 'consensus-textbook',
-    },
-    {
-        from: 'alcohol', to: 'catabolicPressure', effect: 0.25, shape: 'saturating', sd: 0.20,
-        mechanism: 'Ethanol impairs muscle protein synthesis and disrupts the nocturnal anabolic window.',
-        evidence: 'B', source: 'consistent-rct',
     },
     {
         from: 'fastingHours', to: 'catabolicPressure', effect: 0.15, shape: 'threshold', sd: 0.28,
@@ -600,11 +633,6 @@ const BASE_INPUT_TO_LATENT = [
         from: 'bodyFatPercent', to: 'aromataseActivity', effect: 0.45, shape: 'threshold', sd: 0.18,
         mechanism: 'Adipose tissue is the dominant site of extragonadal aromatase in men, so estradiol production scales with fat mass.',
         evidence: 'A', source: 'consensus-textbook',
-    },
-    {
-        from: 'alcohol', to: 'aromataseActivity', effect: 0.28, shape: 'saturating', sd: 0.24,
-        mechanism: 'Ethanol induces aromatase expression and impairs hepatic clearance of estradiol.',
-        evidence: 'B', source: 'consensus-textbook',
     },
     // ── COLD EXPOSURE ───────────────────────────────────────────────────
     {
@@ -1343,8 +1371,12 @@ function normaliseInputs(inputs) {
     put(mk('trainingIntensity', fromPercent(inputs.trainingIntensity)));
     put(mk('strengthProgression', fromPercent(inputs.strengthProgression)));
     // ── Nutrition ──
+    // Per kg of body weight when it is known: 1.6 g/kg is the reference (130 g at 80 kg), 0.75 g/kg a full unit.
+    // Without a weight, the 80 kg reference in grams.
     put(mk('proteinIntake', inputs.proteinIntake === undefined ? null
-        : (0, transfer_1.deviation)(inputs.proteinIntake, constants_1.REFERENCE.proteinGramsPerDay, 60)));
+        : inputs.bodyWeight !== undefined && inputs.bodyWeight > 30
+            ? (0, transfer_1.deviation)(inputs.proteinIntake / inputs.bodyWeight, constants_1.REFERENCE.proteinGramsPerDay / 80, 60 / 80)
+            : (0, transfer_1.deviation)(inputs.proteinIntake, constants_1.REFERENCE.proteinGramsPerDay, 60)));
     put(mk('fastingHours', inputs.fastingHours === undefined ? null
         : (0, transfer_1.deviation)(inputs.fastingHours, constants_1.REFERENCE.fastingHours, 6)));
     put(mk('hydration', inputs.hydration === undefined ? null
@@ -1371,9 +1403,6 @@ function normaliseInputs(inputs) {
         put(mk('bodyFatPercent', (0, transfer_1.deviation)(inputs.bodyFatPercent, optimum, 8)));
     }
     // ── Exposures ──
-    // Alcohol has no benign reference point, so any intake is positive drive.
-    put(mk('alcohol', inputs.alcohol === undefined ? null : (0, transfer_1.clamp)(inputs.alcohol / 3, 0, 1.5)));
-    put(mk('nicotine', inputs.nicotine === undefined ? null : (0, transfer_1.clamp)(inputs.nicotine / 100, 0, 1.5)));
     put(mk('caffeine', inputs.caffeine === undefined ? null
         : (0, transfer_1.deviation)(inputs.caffeine, constants_1.REFERENCE.caffeineToleranceMg, 200)));
     // ── Psychological / behavioural ──
@@ -1452,11 +1481,10 @@ exports.INPUT_LABELS = {
     calorieIntake: 'Calorie intake',
     calorieMaintenance: 'Maintenance calories',
     proteinIntake: 'Protein intake',
+    bodyWeight: 'Body weight',
     fastingHours: 'Fasting window',
     bodyFatPercent: 'Body fat %',
     hydration: 'Hydration',
-    alcohol: 'Alcohol',
-    nicotine: 'Nicotine',
     caffeine: 'Caffeine',
     stress: 'Stress',
     meditation: 'Meditation',
@@ -1486,7 +1514,7 @@ exports.INPUT_LABELS = {
 const PLAUSIBLE = {
     sleepDuration: [0, 16], sleepConsistency: [0, 100], deepSleep: [0, 100], hrv: [0, 100], restingHeartRate: [25, 200],
     trainingVolume: [0, 200], trainingIntensity: [0, 100], strengthProgression: [0, 100], calorieIntake: [0, 15000], calorieMaintenance: [800, 8000],
-    proteinIntake: [0, 800], bodyFatPercent: [2, 70], hydration: [0, 15], alcohol: [0, 40], nicotine: [0, 200], caffeine: [0, 3000], stress: [0, 100],
+    proteinIntake: [0, 800], bodyWeight: [30, 300], bodyFatPercent: [2, 70], hydration: [0, 15], caffeine: [0, 3000], stress: [0, 100],
     meditation: [0, 1440], sunlight: [0, 1440], coldExposure: [0, 600], illness: [0, 100], recovery: [0, 100], zinc: [0, 500], magnesium: [0, 500],
     vitaminD: [0, 500], omega3: [0, 500], iodine: [0, 500], selenium: [0, 500], iron: [0, 500], dailySteps: [0, 150000], vo2max: [10, 100],
     caffeineAtBedtime: [0, 2000], ashwagandha: [0, 100], fastingHours: [0, 96], age: [10, 110],
@@ -1711,9 +1739,11 @@ function deriveSeed(parent, label) {
  * probabilistic model instead of a weighted score with error bars bolted on.
  *
  * Per draw:
- *   1. Sample every edge coefficient from its evidence-weighted distribution.
- *   2. Walk the observation history day by day, stepping latent physiology and
- *      then hormones, each relaxing toward its target at its own half-life.
+ *   1. Sample every edge coefficient from its evidence-weighted distribution, and
+ *      a habitual value for each physiological input that is unknown (IMPUTE_SD).
+ *   2. Walk the CALENDAR day by day — days with nothing logged included — stepping
+ *      latent physiology and then hormones, each relaxing toward its target at its
+ *      own half-life.
  *   3. Record the final state and the instantaneous rate of change.
  *
  * Across draws we take the median as the point estimate and the 10th/90th
@@ -1721,14 +1751,20 @@ function deriveSeed(parent, label) {
  * because the transfer functions are non-linear and the resulting distributions
  * are frequently skewed.
  *
+ * CALENDAR TIME. Half-lives are in days, so the walk must be in days. Logged days
+ * used to be stepped back to back, so someone logging three days a week had their
+ * physiology run at more than twice real speed. Gaps are now walked as the days
+ * they are: recent readings stand in for a short while (PERSIST_DAYS, fading by
+ * CARRY_DECAY), and beyond that the input is unknown and imputed.
+ *
  * WARM-UP: a first-order system needs history before its state is meaningful.
- * When the caller supplies fewer days than the slowest axis requires, the
- * earliest observation is repeated backwards to prime the state. Confidence is
- * separately penalised via `historyAdequacy`, so a primed run is never presented
- * as though it were genuinely observed.
+ * When the walk is shorter than the slowest axis requires, the earliest
+ * observation is repeated backwards to prime the state. Confidence is separately
+ * penalised via history adequacy, so a primed run is never presented as though
+ * it were genuinely observed.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.HISTORY_DAYS = void 0;
+exports.MAX_SPAN_DAYS = exports.HISTORY_DAYS = void 0;
 exports.buildSeries = buildSeries;
 exports.simulate = simulate;
 const constants_1 = require("./config/constants");
@@ -1741,42 +1777,106 @@ const uncertainty_1 = require("./core/uncertainty");
 const rng_1 = require("./core/rng");
 /** Days of per-day history kept for charts. Recording does not touch the random draws. */
 exports.HISTORY_DAYS = 21;
+/** Longest calendar span walked; older history has long since decayed out of every axis. */
+exports.MAX_SPAN_DAYS = 120;
+const DAY = 864e5;
+const dayNum = (d) => Math.round(Date.parse(d + 'T00:00:00Z') / DAY);
+const dayStr = (n) => new Date(n * DAY).toISOString().slice(0, 10);
 /**
- * Build the day-by-day series the simulation walks, priming with warm-up when
- * the caller has not supplied enough history for the slowest axis to settle.
+ * Build the calendar the simulation walks: every day from the first observation to `asOf` (default: the last
+ * observation), gaps filled by carrying recent readings forward, warm-up padding in front when the walk is
+ * shorter than the slowest axis needs.
  */
-function buildSeries(history) {
-    if (!history.length) {
-        return { series: [{}], observedDays: 0 };
+function buildSeries(history, asOf) {
+    const valid = (history || []).filter(h => h && /^\d{4}-\d{2}-\d{2}$/.test(h.date));
+    if (!valid.length) {
+        return { series: [{}], days: [{ date: asOf || '', inputs: {}, logged: false, warmup: true, carried: {} }], observedDays: 0 };
     }
-    const sorted = [...history].sort((a, b) => a.date.localeCompare(b.date));
-    const observedDays = sorted.length;
-    const needed = constants_1.SIMULATION.minimumWarmupDays;
-    const series = [];
-    if (observedDays < needed) {
+    // One record per date (a duplicate date merges, later wins).
+    const byDay = new Map();
+    for (const h of [...valid].sort((a, b) => a.date.localeCompare(b.date))) {
+        const n = dayNum(h.date);
+        byDay.set(n, { ...(byDay.get(n) || {}), ...h.inputs });
+    }
+    const keys = [...byDay.keys()].sort((a, b) => a - b);
+    const last = keys[keys.length - 1];
+    const end = Math.max(last, asOf && /^\d{4}-\d{2}-\d{2}$/.test(asOf) ? dayNum(asOf) : last);
+    const start = Math.max(keys[0], end - exports.MAX_SPAN_DAYS + 1);
+    const seen = {};
+    // Readings from before the walk window still seed the carry (static ones especially).
+    for (const n of keys)
+        if (n < start)
+            for (const [k, v] of Object.entries(byDay.get(n)))
+                if (v !== undefined)
+                    seen[k] = { v, day: n };
+    const days = [];
+    for (let n = start; n <= end; n++) {
+        const rec = byDay.get(n);
+        const inputs = rec ? { ...rec } : {};
+        if (rec)
+            for (const [k, v] of Object.entries(rec))
+                if (v !== undefined)
+                    seen[k] = { v, day: n };
+        const carried = {};
+        for (const [k, s] of Object.entries(seen)) {
+            if (inputs[k] !== undefined)
+                continue;
+            const age = n - s.day, keep = constants_1.PERSIST_DAYS[k] ?? 0;
+            if (age > 0 && age <= keep) {
+                inputs[k] = s.v;
+                carried[k] = age;
+            }
+        }
+        days.push({ date: dayStr(n), inputs: inputs, logged: !!rec, warmup: false, carried });
+    }
+    const observedDays = days.filter(d => d.logged).length;
+    if (days.length < constants_1.SIMULATION.minimumWarmupDays) {
         // Repeat the earliest observation backwards. This assumes the recent past
         // resembled the earliest day we can see — stated plainly because it is an
         // assumption, and it is why history-poor runs lose confidence.
-        const pad = needed - observedDays;
-        for (let i = 0; i < pad; i++)
-            series.push(sorted[0].inputs);
+        const first = days.find(d => d.logged) || days[0];
+        const pad = constants_1.SIMULATION.minimumWarmupDays - days.length;
+        const padDays = [];
+        for (let i = pad; i >= 1; i--)
+            padDays.push({ date: dayStr(dayNum(days[0].date) - i), inputs: first.inputs, logged: false, warmup: true, carried: {} });
+        days.unshift(...padDays);
     }
-    for (const d of sorted)
-        series.push(d.inputs);
-    return { series, observedDays };
+    return { series: days.map(d => d.inputs), days, observedDays };
+}
+/** One draw's habitual value for every physiological input that might be unknown. */
+function drawImputation(rng) {
+    const out = {};
+    for (const [k, sd] of Object.entries(constants_1.IMPUTE_SD))
+        out[k] = rng.truncatedNormal(0, sd, -1.5, 1.5);
+    return out;
+}
+/** The day's normalised inputs: carried readings faded by age, unknown physiology filled with this draw's values. */
+function dayInputs(day, imputed) {
+    const norm = (0, inputs_1.normaliseInputs)(day.inputs);
+    for (const [k, age] of Object.entries(day.carried)) {
+        const n = norm[k];
+        if (n && n.observed && (constants_1.PERSIST_DAYS[k] ?? 0) < 30)
+            n.weight = Math.pow(constants_1.CARRY_DECAY, age);
+    }
+    for (const [k, v] of Object.entries(imputed)) {
+        const n = norm[k];
+        if (n && !n.observed)
+            norm[k] = { key: k, drive: v, observed: true, weight: constants_1.IMPUTE_WEIGHT, imputed: true };
+    }
+    return norm;
 }
 /** Run one deterministic trajectory with a fixed coefficient set. */
-function runTrajectory(series, coeffs, age, sex, record = 0) {
+function runTrajectory(days, coeffs, imputed, age, sex, record = 0) {
     let latent = (0, subsystems_1.neutralLatent)();
     let hormones = (0, hormones_1.neutralHormones)();
     let targets = (0, hormones_1.neutralHormones)();
     const path = [];
-    series.forEach((dayInputs, i) => {
-        const norm = (0, inputs_1.normaliseInputs)(dayInputs);
+    days.forEach((day, i) => {
+        const norm = dayInputs(day, imputed);
         latent = (0, subsystems_1.stepLatent)(latent, norm, coeffs, 1);
         targets = (0, hormones_1.hormoneTargets)(latent, hormones, coeffs, age, sex);
         hormones = (0, hormones_1.stepHormones)(hormones, targets, 1);
-        if (i >= series.length - record)
+        if (i >= days.length - record)
             path.push({ ...hormones });
     });
     return { latent, hormones, targets, path };
@@ -1784,7 +1884,7 @@ function runTrajectory(series, coeffs, age, sex, record = 0) {
 function simulate(history, options = {}) {
     const samples = options.samples ?? constants_1.SIMULATION.defaultSamples;
     const seed = options.seed ?? constants_1.SIMULATION.defaultSeed;
-    const { series, observedDays } = buildSeries(history);
+    const { days, observedDays } = buildSeries(history, options.asOf);
     // Demographics come from the most recent observation that carries them.
     let age;
     let sex;
@@ -1803,8 +1903,9 @@ function simulate(history, options = {}) {
         collected[k] = [];
         targetSums[k] = [];
     }
-    const sortedHist = [...history].sort((a, b) => a.date.localeCompare(b.date));
-    const record = Math.min(exports.HISTORY_DAYS, observedDays);
+    // Charts show real calendar days, never warm-up padding.
+    const realDays = days.filter(d => !d.warmup);
+    const record = history.length ? Math.min(exports.HISTORY_DAYS, realDays.length) : 0;
     const paths = Array.from({ length: record }, () => {
         const o = {};
         for (const k of graph_1.HORMONE_RESOLUTION_ORDER)
@@ -1814,7 +1915,8 @@ function simulate(history, options = {}) {
     const rng = new rng_1.Rng(seed);
     for (let s = 0; s < samples; s++) {
         const coeffs = (0, uncertainty_1.sampleCoefficients)(rng);
-        const { latent, hormones, targets, path } = runTrajectory(series, coeffs, age, sex, record);
+        const imputed = drawImputation(rng);
+        const { latent, hormones, targets, path } = runTrajectory(days, coeffs, imputed, age, sex, record);
         path.forEach((hv, d) => { for (const k of graph_1.HORMONE_RESOLUTION_ORDER)
             paths[d][k].push(hv[k]); });
         for (const k of graph_1.HORMONE_RESOLUTION_ORDER) {
@@ -1848,7 +1950,7 @@ function simulate(history, options = {}) {
         const hv = {};
         for (const k of graph_1.HORMONE_RESOLUTION_ORDER)
             hv[k] = med(p[k]);
-        return { date: sortedHist[sortedHist.length - record + d].date, hormones: hv };
+        return { date: realDays[realDays.length - record + d].date, hormones: hv };
     });
     return {
         median,
@@ -1858,6 +1960,7 @@ function simulate(history, options = {}) {
         targets,
         daysSimulated: observedDays,
         daily,
+        calendar: days,
     };
 }
 
@@ -2101,10 +2204,12 @@ function driveToTarget(drive, baseline, gain = exports.DRIVE_GAIN) {
  * would be dishonest regardless of how complete the inputs are.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.recencyTau = void 0;
 exports.sampleCoefficients = sampleCoefficients;
 exports.computeLeverage = computeLeverage;
 exports.resetLeverageCache = resetLeverageCache;
 exports.historyAdequacy = historyAdequacy;
+exports.observationFor = observationFor;
 exports.assessConfidence = assessConfidence;
 exports.quantile = quantile;
 exports.rankGlobalMissing = rankGlobalMissing;
@@ -2192,6 +2297,12 @@ function computeLeverage() {
             }
         }
     }
+    // Free testosterone is half total testosterone's drive plus the SHBG (insulin) path (core/hormones.ts
+    // resolveFreeTestosterone), so it inherits half of total testosterone's leverage. Without this it looked
+    // more certain than the axis it is computed from.
+    for (const [input, w] of Object.entries(result.testosterone ?? {})) {
+        addTo('freeTestosterone', input, w * 0.5);
+    }
     // Demographic inputs shift baselines rather than flowing through edges, so
     // their leverage is asserted from the prior table.
     for (const h of Object.keys(result)) {
@@ -2206,21 +2317,25 @@ function computeLeverage() {
 function resetLeverageCache() {
     cachedLeverage = null;
 }
-/** Mean evidence quality across the edges feeding a hormone. */
+/**
+ * Evidence quality across the edges feeding a hormone, weighted by how much each edge moves it. A strong
+ * grade-A pathway and a faint grade-D one should not count the same.
+ */
 function evidenceQualityFor(hormone) {
-    const grades = [];
-    for (const e of graph_1.LATENT_TO_HORMONE)
-        if (e.to === hormone)
-            grades.push(e.evidence);
-    for (const e of graph_1.HORMONE_TO_HORMONE)
-        if (e.to === hormone)
-            grades.push(e.evidence);
-    if (!grades.length)
-        return constants_1.EVIDENCE_QUALITY.C;
-    return grades.reduce((a, g) => a + constants_1.EVIDENCE_QUALITY[g], 0) / grades.length;
+    let num = 0, den = 0;
+    for (const e of [...graph_1.LATENT_TO_HORMONE, ...graph_1.HORMONE_TO_HORMONE]) {
+        // Free testosterone also stands on every pathway into total testosterone, at half weight.
+        const share = e.to === hormone ? 1 : hormone === 'freeTestosterone' && e.to === 'testosterone' ? 0.5 : 0;
+        if (!share)
+            continue;
+        const w = Math.abs(e.effect) * share;
+        num += w * constants_1.EVIDENCE_QUALITY[e.evidence];
+        den += w;
+    }
+    return den > 0 ? num / den : constants_1.EVIDENCE_QUALITY.C;
 }
 /**
- * How adequate the observation history is for this axis.
+ * How adequate the observation history is for this axis — the simple form, by count of days.
  *
  * A 14-day-half-life axis like thyroid cannot be meaningfully assessed from
  * three days of data — it will not have moved yet. Requiring history in
@@ -2232,27 +2347,76 @@ function historyAdequacy(hormone, daysOfHistory) {
     const required = Math.min(constants_1.CONFIDENCE.historyCapDays, constants_1.HALF_LIFE_DAYS[hormone] * constants_1.CONFIDENCE.historyHalfLifeMultiple);
     return (0, transfer_1.clamp01)(daysOfHistory / Math.max(1, required));
 }
-/** Build the full confidence report for one hormone. */
-function assessConfidence(hormone, inputs, daysOfHistory) {
+/** Recency time constant (days) for an axis: its half-life plus the lag of the hidden states feeding it. */
+const recencyTau = (h) => (constants_1.HALF_LIFE_DAYS[h] + constants_1.CONFIDENCE.latentLagDays) / Math.LN2;
+exports.recencyTau = recencyTau;
+function observationFor(hormone, calendar) {
+    const real = (calendar || []).filter(d => !d.warmup);
+    const tau = (0, exports.recencyTau)(hormone);
+    const span = Math.min(constants_1.CONFIDENCE.historyCapDays, Math.ceil(tau * 3));
+    let full = 0;
+    for (let a = 0; a < span; a++)
+        full += Math.exp(-a / tau);
+    const win = Math.min(real.length, span);
+    let W = 0, logged = 0, staleDays = real.length;
+    const seen = {};
+    for (let a = 0; a < win; a++) {
+        const d = real[real.length - 1 - a], w = Math.exp(-a / tau);
+        W += w;
+        if (d.logged) {
+            logged += w;
+            staleDays = Math.min(staleDays, a);
+        }
+        for (const [k, v] of Object.entries(d.inputs)) {
+            if (v === undefined)
+                continue;
+            const age = d.carried[k];
+            const credit = age === undefined ? (d.logged ? 1 : 0)
+                : (constants_1.PERSIST_DAYS[k] ?? 0) >= constants_1.CONFIDENCE.staticPersistDays ? 1 : constants_1.CONFIDENCE.carriedCredit;
+            seen[k] = (seen[k] ?? 0) + w * credit;
+        }
+    }
+    for (const k of Object.keys(seen))
+        seen[k] = W > 0 ? (0, transfer_1.clamp01)(seen[k] / W) : 0;
+    // Before the first log the staleness is the whole walk; a log anywhere earlier than the window still counts.
+    if (staleDays === real.length) {
+        const i = real.map(d => d.logged).lastIndexOf(true);
+        staleDays = i < 0 ? real.length : real.length - 1 - i;
+    }
+    return { seen, logged, full, staleDays };
+}
+/**
+ * Build the full confidence report for one hormone.
+ *
+ *   confidence = ceiling × coverage^1.35 × evidence quality × history adequacy
+ *
+ * coverage — the share of this axis's causal leverage (computeLeverage) whose inputs were known, recency-
+ *   weighted on this axis's own time scale. Events (illness, fasting, ashwagandha, bedtime caffeine) are left
+ *   out: their absence is the normal state, not a blind spot.
+ * history adequacy — recency-weighted logged days against what the axis needs (1.5 half-lives, capped at
+ *   85 % of a fully logged window), so a week without logging costs cortisol far more than thyroid.
+ */
+function assessConfidence(hormone, calendar) {
     const leverage = computeLeverage()[hormone] ?? {};
-    const entries = Object.entries(leverage);
-    let observedWeight = 0;
-    let totalWeight = 0;
+    const obs = observationFor(hormone, calendar);
+    let observedWeight = 0, totalWeight = 0;
     const supporting = [];
     const missing = [];
-    for (const [key, w] of entries) {
+    for (const [key, w] of Object.entries(leverage)) {
+        if (constants_1.EVENT_INPUTS.has(key))
+            continue;
+        const o = obs.seen[key] ?? 0;
         totalWeight += w;
-        if (inputs[key]?.observed) {
-            observedWeight += w;
-            supporting.push([inputs_1.INPUT_LABELS[key] ?? key, w]);
-        }
-        else {
-            missing.push([inputs_1.INPUT_LABELS[key] ?? key, w]);
-        }
+        observedWeight += w * o;
+        if (o >= 0.5)
+            supporting.push([inputs_1.INPUT_LABELS[key] ?? key, w * o]);
+        else
+            missing.push([inputs_1.INPUT_LABELS[key] ?? key, w * (1 - o)]);
     }
     const inputCoverage = totalWeight > 0 ? observedWeight / totalWeight : 0;
     const evidenceQuality = evidenceQualityFor(hormone);
-    const history = historyAdequacy(hormone, daysOfHistory);
+    const required = Math.min(constants_1.CONFIDENCE.historyCapDays, constants_1.HALF_LIFE_DAYS[hormone] * constants_1.CONFIDENCE.historyHalfLifeMultiple, obs.full * 0.85);
+    const history = (0, transfer_1.clamp01)(obs.logged / Math.max(0.5, required));
     const value = (0, transfer_1.clamp)(constants_1.CONFIDENCE.ceiling
         * Math.pow(inputCoverage, constants_1.CONFIDENCE.coverageExponent)
         * evidenceQuality
@@ -2266,6 +2430,7 @@ function assessConfidence(hormone, inputs, daysOfHistory) {
         historyAdequacy: history,
         supporting: supporting.slice(0, 5).map(s => s[0]),
         missing: missing.slice(0, 5).map(m => m[0]),
+        staleDays: obs.staleDays,
     };
 }
 /** Empirical quantile of a sample set. */
@@ -2280,21 +2445,25 @@ function quantile(sorted, q) {
     return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 }
 /**
- * Inputs the model most wants next, ranked by how much total leverage they
- * carry across every axis they touch. This is what powers the "what should I
- * measure next" guidance.
+ * Inputs the model most wants next, ranked by how much leverage is still unseen across every axis they touch —
+ * recency-weighted per axis, so something logged yesterday is not "missing" and something last seen a month
+ * ago is. Events are never asked for. This is what powers the "what should I measure next" guidance.
  */
-function rankGlobalMissing(inputs) {
+function rankGlobalMissing(calendar) {
     const lev = computeLeverage();
     const totals = new Map();
     for (const [h, m] of Object.entries(lev)) {
+        const seen = observationFor(h, calendar).seen;
         for (const [k, w] of Object.entries(m)) {
-            if (inputs[k]?.observed)
+            if (constants_1.EVENT_INPUTS.has(k))
+                continue;
+            const unseen = 1 - (seen[k] ?? 0);
+            if (unseen < 0.5)
                 continue;
             if (!totals.has(k))
                 totals.set(k, { w: 0, affects: new Set() });
             const t = totals.get(k);
-            t.w += w;
+            t.w += w * unseen;
             t.affects.add(h);
         }
     }
@@ -2547,7 +2716,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.clamp = exports.HALF_LIFE_DAYS = exports.computeLeverage = exports.ALL_EDGES = exports.validateGraph = void 0;
+exports.clamp = exports.HALF_LIFE_DAYS = exports.computeLeverage = exports.ALL_EDGES = exports.validateGraph = exports.buildSeries = void 0;
 exports.estimateEndocrineState = estimateEndocrineState;
 exports.estimateFromSnapshot = estimateFromSnapshot;
 exports.explainLatentState = explainLatentState;
@@ -2555,8 +2724,10 @@ const constants_1 = require("./config/constants");
 const graph_1 = require("./config/graph");
 const graph_2 = require("./config/graph");
 const inputs_1 = require("./core/inputs");
+var simulate_1 = require("./core/simulate");
+Object.defineProperty(exports, "buildSeries", { enumerable: true, get: function () { return simulate_1.buildSeries; } });
 const inputs_2 = require("./core/inputs");
-const simulate_1 = require("./core/simulate");
+const simulate_2 = require("./core/simulate");
 const hormones_1 = require("./core/hormones");
 const uncertainty_1 = require("./core/uncertainty");
 const kinetics_1 = require("./core/kinetics");
@@ -2684,9 +2855,11 @@ function estimateEndocrineState(history0, options = {}) {
     }
     const samples = options.samples ?? constants_1.SIMULATION.defaultSamples;
     const seed = options.seed ?? constants_1.SIMULATION.defaultSeed;
-    const sim = (0, simulate_1.simulate)(history, { samples, seed });
-    const latest = history.length ? history[history.length - 1] : { date: '', inputs: {} };
-    const norm = (0, inputs_1.normaliseInputs)(latest.inputs);
+    const sim = (0, simulate_2.simulate)(history, { samples, seed, asOf: options.asOf });
+    // The last calendar day walked (gap days carry recent readings), for the adaptation read-out and the date.
+    const sorted = [...history].sort((a, b) => a.date.localeCompare(b.date));
+    const lastDay = sim.calendar[sim.calendar.length - 1];
+    const latest = { date: lastDay && lastDay.date ? lastDay.date : (sorted.length ? sorted[sorted.length - 1].date : ''), inputs: lastDay ? lastDay.inputs : {} };
     const hormones = {};
     let confidenceSum = 0;
     let intervalWidthSum = 0;
@@ -2695,7 +2868,7 @@ function estimateEndocrineState(history0, options = {}) {
         const sorted = sim.samples[key];
         const lo = (0, hormones_1.unitToScore)((0, uncertainty_1.quantile)(sorted, constants_1.SIMULATION.intervalLower));
         const hi = (0, hormones_1.unitToScore)((0, uncertainty_1.quantile)(sorted, constants_1.SIMULATION.intervalUpper));
-        const confidence = (0, uncertainty_1.assessConfidence)(key, norm, sim.daysSimulated);
+        const confidence = (0, uncertainty_1.assessConfidence)(key, sim.calendar);
         confidenceSum += confidence.value;
         intervalWidthSum += hi - lo;
         const mom = sim.momentum[key];
@@ -2741,7 +2914,7 @@ function estimateEndocrineState(history0, options = {}) {
         latent: sim.latent,
         adaptationState: adaptation,
         disclaimers,
-        globalMissing: (0, uncertainty_1.rankGlobalMissing)(norm).slice(0, 8),
+        globalMissing: (0, uncertainty_1.rankGlobalMissing)(sim.calendar).slice(0, 8),
         history: sim.daily.map(d => {
             const scores = {};
             for (const k of graph_1.HORMONE_RESOLUTION_ORDER)
@@ -2859,7 +3032,8 @@ function driveFor(target, inputs, previous, coeffs) {
         if (!src || !src.observed)
             continue; // absence contributes nothing
         const c = coeffs.get(edgeId(e)) ?? e.effect;
-        (0, transfer_1.addDrive)(acc, c, (0, transfer_1.applyShape)(e.shape, src.drive));
+        // A carried or imputed reading acts at its weight: it pushes less, and counts less in the average.
+        (0, transfer_1.addDrive)(acc, c * (src.weight ?? 1), (0, transfer_1.applyShape)(e.shape, src.drive));
     }
     for (const e of graph_1.LATENT_TO_LATENT) {
         if (e.to !== target)

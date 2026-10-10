@@ -1119,6 +1119,8 @@ exports.eatMeal = eatMeal;
 exports.uneatMeal = uneatMeal;
 exports.fuelDay = fuelDay;
 exports.mealsByUse = mealsByUse;
+exports.foodLogComplete = foodLogComplete;
+exports.intakeFromWeightTrend = intakeFromWeightTrend;
 const num = (v, lo, hi) => { const n = Number(v); return isFinite(n) ? Math.max(lo, Math.min(hi, Math.round(n))) : 0; };
 function cleanMeal(x, ts) {
     if (!x || typeof x !== 'object')
@@ -1176,6 +1178,45 @@ function mealsByUse(meals, bio) {
     Object.values(bio || {}).forEach(r => ((r && r.meals) || []).forEach((e) => { if (e.id)
         n.set(e.id, (n.get(e.id) || 0) + 1); }));
     return meals.slice().sort((a, b) => (n.get(b.id) || 0) - (n.get(a.id) || 0) || a.name.localeCompare(b.name));
+}
+/**
+ * Is a day's food log complete enough to read intake from?
+ *
+ * Most people log some meals, not all. A 1,000 kcal day for someone whose maintenance is 3,700 kcal and whose
+ * weight is steady is a partial log, not a fast — read literally it turns into weeks of "severe energy
+ * deficit" and drags every energy-sensitive estimate (thyroid, testosterone, IGF-1) down for nothing.
+ * Calories count when they reach 75 % of maintenance; protein counts on those days, or on its own when it
+ * reaches 1.0 g per kg (a high number is not produced by forgetting meals), or when no calories were logged at
+ * all. Without a maintenance or a weight, the respective check is skipped and the log is taken as written.
+ */
+function foodLogComplete(cal, prot, weight, maintenance) {
+    const c = Number(cal) || 0, p = Number(prot) || 0;
+    const calOk = c > 0 && (!(Number(maintenance) > 0) || c >= 0.75 * Number(maintenance));
+    // With no calories logged there is no sign of a partial day, so protein is taken as written.
+    const protOk = p > 0 && (c === 0 || calOk || !(Number(weight) > 30) || p / Number(weight) >= 1.0);
+    return { cal: calOk, prot: protOk };
+}
+/**
+ * Average daily intake implied by the weight trend (energy balance, ~7,700 kcal per kg), or null without 4+
+ * weigh-ins over 10+ of the last 21 days. Changes under 0.25 % of body weight a week are weighing noise and
+ * read as maintenance. This is the one intake figure under-logging cannot distort.
+ */
+function intakeFromWeightTrend(weights, today, maintenance) {
+    const m = Number(maintenance);
+    if (!(m > 0))
+        return null;
+    const day = (k) => Date.parse(k + 'T00:00:00Z') / 864e5;
+    const t = day(today);
+    const pts = Object.keys(weights || {}).filter(k => /^\d{4}-\d{2}-\d{2}$/.test(k) && day(k) <= t && day(k) > t - 21 && Number(weights[k]) > 30)
+        .sort().map(k => [day(k), Number(weights[k])]);
+    if (pts.length < 4 || pts[pts.length - 1][0] - pts[0][0] < 10)
+        return null;
+    const mx = pts.reduce((a, p) => a + p[0], 0) / pts.length, my = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+    const sxx = pts.reduce((a, p) => a + (p[0] - mx) ** 2, 0);
+    const slope = sxx ? pts.reduce((a, p) => a + (p[0] - mx) * (p[1] - my), 0) / sxx : 0; // kg per day
+    if (Math.abs(slope * 7) < my * 0.0025)
+        return Math.round(m);
+    return Math.round(m + slope * 7700);
 }
 
   },
@@ -2097,7 +2138,7 @@ const sanitize_1 = require("./sanitize");
  * The endocrine engine estimates each axis as a daily state (0–100) from everything logged. Real
  * hormones also move within the day, on the body clock and with events. This layer puts that
  * within-day shape around the engine's daily score — the curve averages to the score over a
- * normal day, and timed events (training, caffeine, alcohol, sleep, light) move it at the hours
+ * normal day, and timed events (training, caffeine, sleep, light) move it at the hours
  * they happened. Shapes and timings come from the human studies:
  *
  *  · Cortisol: rises through the second half of the night, then the cortisol awakening response —
@@ -2149,10 +2190,9 @@ function hormoneHours(inp0, stepMin = 15) {
     const age = inp.age || 30;
     const sleepLen = (wake - sleepOnset) / H;
     const tAmp = (male ? 1 : 0.35) * Math.max(0.35, 1 - 0.015 * Math.max(0, age - 25)) * Math.min(1, Math.max(0.4, sleepLen / 7));
-    const alcAtOnset = (t) => (0, pk_1.amountAt)('alcohol', doses, t);
     const cafAtOnset = (t) => (0, pk_1.amountAt)('caffeine', doses, t);
-    // deep-sleep quality at each sleep onset: alcohol and caffeine still in you cut the first GH pulse
-    const swsAt = (onset) => (1 - 0.7 * Math.min(1, alcAtOnset(onset) / 28)) * (1 - 0.4 * Math.min(1, cafAtOnset(onset) / 200));
+    // deep-sleep quality at each sleep onset: caffeine still in you cuts the first GH pulse
+    const swsAt = (onset) => 1 - 0.4 * Math.min(1, cafAtOnset(onset) / 200);
     const sws0 = swsAt(sleepOnset), sws1 = swsAt(bedtime);
     const ts = [];
     for (let t = day0; t <= day0 + 24 * H; t += stepMin * 60e3)
@@ -2221,13 +2261,11 @@ function hormoneHours(inp0, stepMin = 15) {
             if (k === 'dopamineTone')
                 d += pulse(0.25, 2);
         });
-        const caf = (0, pk_1.amountAt)('caffeine', doses, t), alc = (0, pk_1.amountAt)('alcohol', doses, t);
+        const caf = (0, pk_1.amountAt)('caffeine', doses, t);
         if (k === 'cortisol')
-            d += 0.12 * Math.min(1, caf / 200) + 0.1 * Math.min(1, alc / 28);
+            d += 0.12 * Math.min(1, caf / 200);
         if (k === 'dopamineTone')
             d += 0.25 * Math.min(1, caf / 200);
-        if (k === 'testosterone' || k === 'freeTestosterone')
-            d -= 0.25 * Math.min(1, alc / 40);
         if (k === 'cortisol' && inp.stress != null && t >= inp.wake && t < inp.bedtime)
             d += 0.04 * (inp.stress - 5);
         return d;
@@ -2263,8 +2301,6 @@ function hormoneHours(inp0, stepMin = 15) {
             return;
         if (d.k === 'caffeine' && Number(d.amount) >= 40)
             ev.push({ t, kind: 'caffeine', label: Math.round(Number(d.amount)) + ' mg caffeine ' + hm(t) });
-        if (d.k === 'alcohol')
-            ev.push({ t, kind: 'alcohol', label: d.amount + ' drink' + (Number(d.amount) === 1 ? '' : 's') + ' ' + hm(t) });
     });
     out.events = ev.sort((a, b) => a.t - b.t);
     return out;
@@ -2300,7 +2336,7 @@ function notesFor(k, inp, peak, x) {
         case 'growthHormone':
             n.push('Most of the day\'s growth hormone is released about an hour after you fall asleep, in the first deep sleep.');
             if (x.sws0 < 0.75)
-                n.push('Last night\'s pulse was blunted — alcohol or caffeine still in you at sleep.');
+                n.push('Last night\'s pulse was blunted — caffeine still in you at sleep.');
             if (x.sws1 < 0.75)
                 n.push('Tonight\'s pulse will be blunted by what is still in you at bedtime.');
             if (trainedToday)
@@ -3061,7 +3097,7 @@ function lymphReport(inp) {
         D.push({ label: 'Short night (' + sleep + ' h)', d: -8, ev: 'C', src: 'Short sleep and salt/alcohol are the usual causes of a puffy face', area: 'load' });
     }
     load = clamp(load);
-    // head & face: drained by gravity once upright; puffiness tracks salt, alcohol and short sleep
+    // head & face: drained by gravity once upright; puffiness tracks salt and short sleep
     regions.head = clamp(70 - (load - 30) * 0.9);
     // Puffiness is about the LOAD (salt, drinks, short sleep, inflammation); little movement is its own
     // message — a still day is not the same thing as fluid building up.
@@ -3429,7 +3465,7 @@ exports.KINETICS = {
     collagen: { kind: 'flow' }, ashwa: { kind: 'flow' },
     caffeine: { kind: 'flow' }, fiber: { kind: 'flow' },
     sodium: { kind: 'flow' }, theanine: { kind: 'flow' }, glycine: { kind: 'flow' }, apigenin: { kind: 'flow' },
-    melatonin: { kind: 'flow' }, alcohol: { kind: 'flow' }, nicotine: { kind: 'flow' },
+    melatonin: { kind: 'flow' },
 };
 function kineticsFor(k) {
     return exports.KINETICS[k] || { kind: 'flow' };
@@ -3474,7 +3510,6 @@ exports.UPPER_LIMITS = {
     mag: { ul: 350, unit: 'mg', note: 'Applies to supplemental magnesium only — food magnesium is not capped.' },
     caffeine: { ul: 400, unit: 'mg', note: 'Above ~400 mg/day raises resting cortisol and disrupts sleep architecture.' },
     creatine: { ul: 25, unit: 'g', note: 'Loading uses ~20 g/day for a week; beyond that there is no added benefit. 10 g/day is well tolerated by healthy adults.' },
-    alcohol: { ul: 2, unit: 'drinks', note: 'No amount helps hormones or sleep; above ~2 a day health risks rise clearly.' },
     melatonin: { ul: 5, unit: 'mg', note: 'More is not better — 0.3–1 mg works as well for most people.' },
 };
 function microSafety(key, amount) {
@@ -3513,7 +3548,7 @@ function microAdherence(key, goal, records, days = 30) {
         }
         logged++;
         const amt = Number((r.micros || {})[key]) || 0;
-        // A limit (goal 0 — alcohol, nicotine) is met by staying at or under it.
+        // A limit (goal 0) is met by staying at or under it.
         if (goal > 0 ? amt >= goal : amt <= goal) {
             hit++;
             if (streakLive)
@@ -3547,7 +3582,7 @@ const sanitize_1 = require("./sanitize");
  * Around that core, the states you can act on — focus, drive, calm, mood,
  * energy, resilience — combine your check-in (what you feel counts most) with
  * the things that measurably move them: sleep, light, training, cold,
- * meditation, caffeine, alcohol, illness, HRV, and the endocrine estimate
+ * meditation, caffeine, illness, HRV, and the endocrine estimate
  * (dopamine tone, cortisol, thyroid). Every state lists its drivers. It is an
  * estimate to plan a day with, not a diagnosis.
  */
@@ -3577,7 +3612,7 @@ function mind(inp0) {
         doses: (inp0.doses || []).filter(d => d && Number(d.amount) > 0 && isFinite(Number(d.amount)) && isFinite(Date.parse(d.at))),
         checkin: ck0 ? { mood: (0, sanitize_1.numIn)(ck0.mood, 0, 10), energy: (0, sanitize_1.numIn)(ck0.energy, 0, 10), stress: (0, sanitize_1.numIn)(ck0.stress, 0, 10) } : null,
         daylight: (0, sanitize_1.numOr)(inp0.daylight, 0, 1440, 0), cold: (0, sanitize_1.numOr)(inp0.cold, 0, 600, 0), meditation: (0, sanitize_1.numOr)(inp0.meditation, 0, 1440, 0),
-        alcoholYesterday: (0, sanitize_1.numOr)(inp0.alcoholYesterday, 0, 40, 0), ashwagandha: (0, sanitize_1.numOr)(inp0.ashwagandha, 0, 1, 0),
+        ashwagandha: (0, sanitize_1.numOr)(inp0.ashwagandha, 0, 1, 0),
         hrv: (0, sanitize_1.numIn)(inp0.hrv, 5, 300), hrvBaseline: (0, sanitize_1.numIn)(inp0.hrvBaseline, 5, 300),
         endo: en0 ? { dopamineTone: (_a = (0, sanitize_1.numIn)(en0.dopamineTone, 0, 100)) !== null && _a !== void 0 ? _a : undefined, cortisol: (_b = (0, sanitize_1.numIn)(en0.cortisol, 0, 100)) !== null && _b !== void 0 ? _b : undefined,
             thyroid: (_c = (0, sanitize_1.numIn)(en0.thyroid, 0, 100)) !== null && _c !== void 0 ? _c : undefined, testosterone: (_d = (0, sanitize_1.numIn)(en0.testosterone, 0, 100)) !== null && _d !== void 0 ? _d : undefined } : null,
@@ -3599,8 +3634,7 @@ function mind(inp0) {
     const alertAt = (t) => {
         const caf = (0, pk_1.amountAt)('caffeine', doses, t);
         const inertia = t >= wake ? 0.25 * Math.exp(-((t - wake) / H) / 0.5) : 0.25;
-        const alc = (0, pk_1.amountAt)('alcohol', doses, t);
-        const A = 1 - pressureAt(t) + clockAt(t) + 0.15 * caf / (caf + 150) - inertia - 0.004 * alc;
+        const A = 1 - pressureAt(t) + clockAt(t) + 0.15 * caf / (caf + 150) - inertia;
         return clamp((A - 0.15) / 0.75 * 100);
     };
     const curve = [];
@@ -3648,9 +3682,8 @@ function mind(inp0) {
         ['Cold exposure today', Math.min(12, (inp.cold || 0) * 3)],
         ['Trained today', inp.trainedToday ? 6 : inp.trainedYesterday ? 3 : 0],
         ['Morning daylight', Math.min(6, (inp.daylight || 0) / 4)],
-        ['Your mood', ck.mood != null ? (Number(ck.mood) - 2.5) * 4 : 0],
+        ['Your mood', ck.mood != null ? (Number(ck.mood) - 2) * 4 : 0],
         ['Sleep debt', -debt * 4],
-        ['Alcohol yesterday', -(inp.alcoholYesterday || 0) * 3],
         ['Illness', inp.sick ? -10 : 0],
         ['Testosterone (estimate)', e.testosterone != null ? (e.testosterone - 50) * 0.15 : 0],
     ]);
@@ -3665,7 +3698,7 @@ function mind(inp0) {
         ['Ashwagandha (built up)', (inp.ashwagandha || 0) * 8],
         ['Illness', inp.sick ? -5 : 0],
     ]);
-    const modelMood = 50 + Math.min(8, (inp.daylight || 0) / 3) + (inp.trainedToday ? 6 : 0) - debt * 4 - (inp.sick ? 12 : 0) - (inp.alcoholYesterday || 0) * 2;
+    const modelMood = 50 + Math.min(8, (inp.daylight || 0) / 3) + (inp.trainedToday ? 6 : 0) - debt * 4 - (inp.sick ? 12 : 0);
     const mood = ck.mood != null
         ? build(0, [['Your check-in', Number(ck.mood) * 20 * 0.65], ['Light, training, sleep', modelMood * 0.35]])
         : build(modelMood, []);
@@ -3688,7 +3721,7 @@ function mind(inp0) {
         striatum: { v: drive.v, drivers: drive.drivers },
         amygdala: { v: r0(clamp(100 - calm.v)), drivers: calm.drivers.map(x => ({ label: x.label, d: -x.d })) },
         hippocampus: build(55, [['Sleep last night', lastSleep ? (lastSleep - 7) * 8 : 0], ['Exercise (BDNF)', inp.trainedToday ? 10 : inp.trainedYesterday ? 6 : 0],
-            ['Stress', ck.stress != null ? -Math.max(0, Number(ck.stress) - 5) * 3 : 0], ['Alcohol yesterday', -(inp.alcoholYesterday || 0) * 3]]),
+            ['Stress', ck.stress != null ? -Math.max(0, Number(ck.stress) - 5) * 3 : 0]]),
         hypothalamus: build(50, [['Testosterone (estimate)', e.testosterone != null ? (e.testosterone - 50) * 0.3 : 0],
             ['Thyroid (estimate)', e.thyroid != null ? (e.thyroid - 50) * 0.3 : 0], ['Cortisol (estimate)', e.cortisol != null ? -(e.cortisol - 50) * 0.3 : 0]]),
         scn: build(50, [['Morning daylight', Math.min(25, (inp.daylight || 0) * 1.2)], ['Regular sleep', (((_k = c.sleepRegularity) !== null && _k !== void 0 ? _k : 0.5) - 0.5) * 40],
@@ -4076,11 +4109,6 @@ exports.PK = {
     melatonin: { name: 'Melatonin', unit: 'mg', toMass: 1, mass: 'mg', F: () => 0.15, tAbs: 0.3, tElim: 0.75, plasmaShare: 0.5, baseline: null, where: 'blood',
         note: 'Signals night to the body clock; oral doses peak in ~50 min and are gone in a few hours. Small doses (0.3–1 mg) are as effective as large ones.',
         timing: 'Shifts the clock best a few hours before your usual bedtime; for jet lag more than nightly use.', src: 'Zhdanova 2001; AASM guideline' },
-    alcohol: { name: 'Alcohol', unit: 'drinks', toMass: 14, mass: 'g', F: () => 0.9, tAbs: 0.4, tElim: 1, plasmaShare: 1, baseline: null, where: 'body', zeroOrder: 7,
-        note: 'One standard drink ≈ 14 g ethanol; the liver clears a roughly fixed ~7 g per hour however much is in you. Alcohol in the body at sleep suppresses REM and growth hormone release.',
-        timing: 'Finish ≥3 h before bed if you drink at all; every drink still in you at bedtime costs sleep quality.', src: 'Ebrahim et al. 2013 review; Prinz 1980 GH' },
-    nicotine: { name: 'Nicotine', unit: 'mg', toMass: 1, mass: 'mg', F: () => 0.4, tAbs: 0.2, tElim: 2, plasmaShare: 1, baseline: null, where: 'body',
-        note: 'Half-life ~2 h (the metabolite cotinine ~16 h). Raises heart rate, blood pressure and cortisol acutely.', timing: '—', src: 'Benowitz 2009' },
 };
 function pkFor(k) { return exports.PK[k] || null; }
 const H = 3600e3;
@@ -4792,6 +4820,7 @@ exports.rebuildModel = rebuildModel;
 const series_1 = require("./series");
 const strong_1 = require("./strong");
 const lifts_1 = require("./lifts");
+const fuel_1 = require("./fuel");
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 const r1 = (x) => Math.round(x * 10) / 10;
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
@@ -4916,18 +4945,25 @@ function rebuildModel(inp) {
     const T = inp.today, bio = inp.bio || {}, w = inp.weight && inp.weight > 30 ? inp.weight : null;
     const factors = [];
     // 1 · protein — the last 7 complete days (today is still being eaten)
+    // Only days whose food log looks complete (fuel.ts foodLogComplete): a 50 g day logged next to 1,000 kcal is a
+    // partial log, and averaging it in would read as low protein.
     const pr = [];
+    let prLogged = 0;
     for (let i = 1; i <= 7; i++) {
-        const v = num((bio[(0, series_1.shiftDayKey)(T, -i)] || {}).prot);
-        if (v > 0)
-            pr.push(v);
+        const r = bio[(0, series_1.shiftDayKey)(T, -i)] || {}, v = num(r.prot);
+        if (v > 0) {
+            prLogged++;
+            if ((0, fuel_1.foodLogComplete)(r.cal, v, w, inp.tdee).prot)
+                pr.push(v);
+        }
     }
+    const partialNote = prLogged > pr.length ? prLogged + ' days logged, ' + pr.length + ' look complete (the rest sit next to under 75 % of your calories, so meals are probably missing)' : '';
     const gkg = w && pr.length >= 3 ? mean(pr) / w : null;
     const fP = gkg == null ? null : proteinFactor(gkg);
     factors.push({ key: 'protein', name: 'Protein', known: fP != null,
-        value: gkg == null ? (pr.length < 3 ? 'logged on ' + pr.length + ' of the last 7 days' : 'needs your weight') : Math.round(mean(pr)) + ' g a day · ' + r1(gkg) + ' g/kg',
+        value: gkg == null ? (pr.length < 3 ? (partialNote || 'logged on ' + pr.length + ' of the last 7 days') : 'needs your weight') : Math.round(mean(pr)) + ' g a day · ' + r1(gkg) + ' g/kg',
         effect: fP == null ? 0 : fP - 1,
-        note: gkg == null ? 'Log protein on 3 or more days (and your weight) to include it.' : gkg >= 1.62 ? 'At or past 1.6 g/kg — more adds no muscle in the research.' : 'Below 1.6 g/kg, where gains are still rising. If some meals are not logged, this reads low.',
+        note: gkg == null ? (partialNote ? 'Needs 3 days with the whole day\'s food logged — a half-logged day would read as low protein.' : 'Log protein on 3 or more days (and your weight) to include it.') : gkg >= 1.62 ? 'At or past 1.6 g/kg — more adds no muscle in the research.' : 'Below 1.6 g/kg, where gains are still rising. If some meals are not logged, this reads low.',
         source: 'Morton 2018, Br J Sports Med' });
     // 2 · sleep & hormones — one pathway
     const sl = [];
@@ -5007,7 +5043,9 @@ function rebuildModel(inp) {
     }
     const personal = personalLink(inp, w);
     if (fP == null) {
-        return { known: false, why: w ? 'Log protein on 3 or more of the last 7 days — it is the main dial.' : 'Needs your weight and protein logged on 3 or more days.',
+        return { known: false, why: !w ? 'Needs your weight and protein logged on 3 or more days.'
+                : partialNote ? 'Protein: ' + partialNote + '. It needs 3 complete days — protein is the main dial.'
+                    : 'Log protein on 3 or more of the last 7 days — it is the main dial.',
             index: null, low: null, high: null, grade: null, factors, limiting: null, windows, windowH, trained, perMeal, personal };
     }
     const env = Math.max(sPen || 0, hPen || 0);
@@ -5267,7 +5305,7 @@ const LEVER_TEXT = {
     'low anabolic drive': 'Train with progression — anabolic drive is low',
     'high recovery debt': 'Recover: protect sleep, cut junk volume',
     'high catabolic pressure': 'Eat enough protein and energy — catabolic pressure is high',
-    'high inflammation load': 'Lower inflammation: sleep, steps, less alcohol',
+    'high inflammation load': 'Lower inflammation: sleep, steps, daylight',
     'low circadian alignment': 'Regular sleep times and morning daylight',
     'high stress load': 'Bring stress down — it is the biggest drag',
     'low stress adaptation': 'Build stress resilience: daylight, training, breathing work',
@@ -6560,7 +6598,7 @@ function survivability(input) {
             why: parts.length ? `Inflammation and stress load are ${score >= 60 ? 'low' : 'elevated'}.`
                 : 'Needs enough logged days for the endocrine estimate to resolve.',
             fix: score < 55
-                ? 'Illness, alcohol and chronic deficit are the usual drivers — check those first.'
+                ? 'Illness and a chronic deficit are the usual drivers — check those first.'
                 : 'Low systemic load. This is what lets you train through a bad week.',
         });
     }
@@ -7514,7 +7552,7 @@ function bodyAge(inp) {
         const y = clamp(yrs(1.09, (rhr - 60) / 10), -3, 6);
         M.push({ key: 'rhr', label: 'Resting heart rate', value: Math.round(rhr) + ' bpm', years: r1(y), ref: 'vs 60 bpm', source: 'Zhang 2016' });
         if (rhr > 60)
-            consider('Resting heart rate', 'Bring resting HR toward 60 bpm (zone-2 cardio, sleep, less alcohol)', y);
+            consider('Resting heart rate', 'Bring resting HR toward 60 bpm (zone-2 cardio and sleep)', y);
     }
     else
         missing.push('Resting heart rate (Apple Watch via the Health link)');
@@ -7615,7 +7653,7 @@ function systemsReport(inp) {
         }
         const dp = mean(recent(inp.bio, T, 'deep', 7, 0));
         if (dp != null && s7)
-            P.push({ s: clamp(dp / s7 * 100 * 5, 0, 100), label: r1(dp) + ' h deep', act: 'Deep sleep is low — no alcohol or late heavy meals before bed' });
+            P.push({ s: clamp(dp / s7 * 100 * 5, 0, 100), label: r1(dp) + ' h deep', act: 'Deep sleep is low — no caffeine after midday and no heavy meal late' });
         const A = avgScore(P);
         rows.push({ key: 'sleep', name: 'Sleep', icon: '🌙', grade: grade(A.score), score: A.score, line: (P.length ? P.map(p => p.label).join(' · ') + of(P.length, 3) : '') || 'no nights logged this week', weakest: A.weakest, action: A.action });
     }
@@ -8293,13 +8331,21 @@ exports.WHATIF_LEVERS = void 0;
 exports.baselineInputs = baselineInputs;
 exports.whatIfHistories = whatIfHistories;
 exports.compareReports = compareReports;
+/**
+ * WHAT-IF — the same engine, run forward on two futures.
+ *
+ * "As is" repeats your last two weeks' averages for the chosen number of weeks; the scenario repeats them
+ * with the sliders applied. Both start from your real history, so the comparison shows what the change
+ * alone would do according to the model — with the engine's own uncertainty, not a promise. Inputs you
+ * never log stay unobserved in both futures rather than being made up.
+ */
+const dates_1 = require("./dates");
 exports.WHATIF_LEVERS = [
     { k: 'sleepDuration', label: 'Sleep', unit: 'h', min: 4, max: 10, step: 0.25 },
-    { k: 'trainingVolume', label: 'Hard sets / week', unit: 'sets', min: 0, max: 36, step: 1 },
+    { k: 'trainingVolume', label: 'Hard sets / week per muscle group', unit: 'sets', min: 0, max: 30, step: 1 },
     { k: 'proteinIntake', label: 'Protein', unit: 'g', min: 40, max: 260, step: 5 },
     { k: 'calorieIntake', label: 'Calories', unit: 'kcal', min: 1200, max: 4500, step: 50 },
     { k: 'stress', label: 'Stress', unit: '/100', min: 0, max: 100, step: 5 },
-    { k: 'alcohol', label: 'Alcohol', unit: 'drinks/day', min: 0, max: 6, step: 0.5 },
     { k: 'dailySteps', label: 'Steps', unit: '/day', min: 0, max: 20000, step: 500 },
     { k: 'caffeine', label: 'Caffeine', unit: 'mg/day', min: 0, max: 600, step: 25 },
     { k: 'sunlight', label: 'Daylight', unit: 'min/day', min: 0, max: 120, step: 5 },
@@ -8322,7 +8368,7 @@ function baselineInputs(history, days = 14) {
 function whatIfHistories(history, overrides, weeks) {
     const real = history.slice().sort((a, b) => a.date.localeCompare(b.date));
     const base = baselineInputs(real);
-    const last = real.length ? real[real.length - 1].date : new Date().toISOString().slice(0, 10);
+    const last = real.length ? real[real.length - 1].date : (0, dates_1.dayKey)(new Date()); // local day, never UTC
     const fut = (inputs) => Array.from({ length: Math.max(1, Math.round(weeks * 7)) }, (_, i) => ({ date: dk(last, i + 1), inputs }));
     return { asIs: real.concat(fut(base)), scenario: real.concat(fut({ ...base, ...overrides })), base };
 }
