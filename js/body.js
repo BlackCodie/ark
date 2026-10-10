@@ -372,7 +372,7 @@ function secMicros(v) {
     const pct = m.limit ? (a > 0 ? 1 : 0) : Math.min(1, a / (m.goal || 1));
     const col = over ? '#ff453a' : m.c;
     const S = slim ? null : standing(m.k);
-    const est = S ? (S.store && S.store.v != null ? S.store.label + ' ' + S.store.v + S.store.unit.replace(/^%/, '%') : S.store && S.store.text ? S.store.label.replace(' (estimate)', '') + ': ' + S.store.text : S.line) : '';
+    const est = S ? (S.store && S.store.v != null ? S.store.label + ' ' + S.store.v + S.store.unit.replace(/^%/, '%') : S.store && S.store.text ? S.store.label.replace(' (estimate)', '') + ': ' + S.store.text : S.recent || S.sp.where === 'gut' ? S.line : '') : '';   // no dose, no claim
     const step = (m.steps || [])[0];
     return `<div class="mic2${slim ? ' slim' : ''}" style="--mc:${col}">
         <button class="mic2-main" data-act="dose-sheet" data-k="${m.k}" aria-label="${esc(m.name)} — log a dose and see the estimate">

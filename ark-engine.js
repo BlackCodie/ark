@@ -2885,6 +2885,7 @@ function estimateEndocrineState(history0, options = {}) {
             score: Number(score.toFixed(1)),
             interval: [Number(lo.toFixed(1)), Number(hi.toFixed(1))],
             percentile: Number((0, hormones_1.percentileFor)(key, score, latest.inputs.age).toFixed(1)),
+            reference: Number(((0, hormones_1.ageAdjustedBaseline)(key, latest.inputs.age) * 100).toFixed(1)),
             confidence,
             momentum: Number(mom.toFixed(3)),
             trend,

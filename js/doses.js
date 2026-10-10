@@ -25,8 +25,11 @@ const dayOf = t => L.dayKey(new Date(t));
 export function standing(k, now = Date.now()) {
   const P = L.pkNow(k, doses(), now);
   if (!P) return null;
-  const sp = P.spec, out = { P, sp, line: '', sub: '', store: null };
+  const sp = P.spec, out = { P, sp, line: '', sub: '', store: null, recent: false };
   const u = sp.mass;
+  // Only what you logged is estimated. With no dose in the last 3 days nothing is claimed about your blood —
+  // the "typical adult baseline" is not your number, and showing it read as if it were (2026-10-10).
+  out.recent = doses().some(d => d.k === k && now - Date.parse(d.at) < 72 * H && now >= Date.parse(d.at));
   if (sp.where === 'gut') { out.line = 'Works in the gut — not absorbed'; return out; }
   if (sp.zeroOrder) {
     const g = P.inBody;
@@ -42,12 +45,15 @@ export function standing(k, now = Date.now()) {
     }
     return out;
   }
-  if (sp.baseline !== null) {
+  if (!out.recent) {
+    out.line = 'Nothing logged in the last 3 days';
+    out.sub = sp.baseline !== null ? 'Your body keeps some from food — ARK only estimates what you log.' : '';
+  } else if (sp.baseline !== null) {
     const extra = P.extraInBlood;
-    out.line = `~${fmtAmt(P.inBlood, u)} in your blood`;
-    out.sub = extra >= sp.baseline * 0.005 ? `baseline ~${fmtAmt(sp.baseline, u)} + ${fmtAmt(extra, u)} from your doses` : `your baseline — nothing extra circulating now`;
+    out.line = extra >= sp.baseline * 0.005 ? `~${fmtAmt(extra, u)} extra in your blood from your doses` : 'Cleared — nothing extra circulating now';
+    out.sub = 'On top of what your body keeps from food, which ARK does not know.';
   } else {
-    out.line = P.extraInBlood >= 0.05 ? `~${fmtAmt(P.extraInBlood, u)} circulating from your doses` : 'Nothing circulating from doses now';
+    out.line = P.extraInBlood >= 0.05 ? `~${fmtAmt(P.extraInBlood, u)} circulating from your doses` : 'Cleared — nothing circulating now';
   }
   out.store = storeOf(k);
   return out;
@@ -57,22 +63,27 @@ export function standing(k, now = Date.now()) {
 function storeOf(k) {
   const t = today(), D = doses();
   const days = n => L.dailyTotals(k, D, t, n, x => dayOf(x));
+  const any = n => days(n).some(x => x > 0);
   if (k === 'creatine') {
+    if (!any(90)) return null;
     const sat = L.creatineSaturation(days(90));
     return { label: 'Muscle creatine store', v: Math.round(sat * 100), unit: '% saturated', note: sat >= 0.95 ? 'Saturated — keep the daily dose to stay there.' : 'Fills faster with bigger daily doses; timing does not matter.' };
   }
   if (k === 'vitd') {
     const lab = labFor(/vitamin\s*d|25.?oh/i);
+    if (!lab && !any(90)) return null;
     const st = L.vitaminDStatus(days(90), lab);
     const band = st.level < 20 ? ['likely low', '#ff9f0a'] : st.level < 30 ? ['borderline', '#ffd60a'] : st.level <= 70 ? ['likely adequate', '#30d158'] : ['high end', '#ff9f0a'];
     return { label: 'Vitamin D status (estimate)', text: band[0], color: band[1],
       note: st.basis === 'lab' ? 'Anchored to your lab result, adjusted for what you have taken since.' : 'No lab result yet — started from a typical unsupplemented level. A 25(OH)D test replaces the guess.' };
   }
   if (k === 'omega') {
+    if (!any(120)) return null;
     const idx = L.omega3Index(days(120));
     return { label: 'Omega-3 index (estimate)', v: fmt1(idx), unit: '%', note: 'Builds into red-cell membranes over ~3–4 months; 8 %+ is the range linked with the benefits in studies.' };
   }
   if (k === 'ashwa') {
+    if (!any(90)) return null;
     const b = L.builtEffect(days(90), 600);
     return { label: 'Effect built up', v: Math.round(b * 100), unit: '% of trial effect', note: 'The cortisol drop in trials appears after 4–8 weeks of daily use; it feeds the calm and cortisol estimates.' };
   }
@@ -137,10 +148,10 @@ export function doseSheet(k, preset) {
       if (S) {
         H0 += `<section class="card frost pk-now"><div class="eyebrow">Estimated now</div><div class="pk-big">${esc(S.line)}</div>
           ${S.sub ? `<div class="sub">${esc(S.sub)}</div>` : ''}
-          ${S.P.curve.some(p => p.v > 0) && sp.where !== 'gut' ? `<div style="margin-top:10px">${curveSvg(S.P)}</div>
+          ${S.recent && S.P.curve.some(p => p.v > 0) && sp.where !== 'gut' ? `<div style="margin-top:10px">${curveSvg(S.P)}</div>
             <div class="row num sub" style="gap:14px;margin-top:4px;font-size:.78rem">${dosed && S.P.peakAt ? `<span>Peak ~${hm(S.P.peakAt)}</span>` : ''}${dosed && S.P.clearAt ? `<span>Clears ~${hm(S.P.clearAt)}</span>` : ''}${S.P.pending > 0.01 ? `<span>${fmtAmt(S.P.pending, sp.mass)} still absorbing</span>` : ''}</div>` : ''}
           ${S.store ? `<div class="pk-store"><span>${esc(S.store.label)}</span><b style="${S.store.color ? 'color:' + S.store.color : ''}">${S.store.text ? esc(S.store.text) : esc(String(S.store.v)) + '<small> ' + esc(S.store.unit) + '</small>'}</b></div><div class="sub" style="line-height:1.45">${esc(S.store.note)}</div>` : ''}
-          <p class="sub" style="margin:10px 0 0;line-height:1.45">Estimate from your dose times and population-average kinetics — people differ by ±30–50 %. Not a lab value${sp.baseline !== null ? '; the baseline is a typical adult amount' : ''}.</p></section>`;
+          <p class="sub" style="margin:10px 0 0;line-height:1.45">Estimate from your dose times and population-average kinetics — people differ by ±30–50 %. Not a lab value.</p></section>`;
       }
       H0 += `<div class="eyebrow" style="margin:16px 2px 8px">Log a dose</div>
         <div class="chips">${[...new Set([...(def.steps || []), def.goal].filter(x => x > 0))].map(a => `<button class="chip num ${ds.amt === a ? 'on' : ''}" data-act="ds-amt" data-v="${a}">${fmtAmt(a, def.unit)}</button>`).join('')}

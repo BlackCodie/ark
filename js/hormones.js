@@ -5,7 +5,8 @@
    training, food, stress, light, doses… through its causal graph) and the last
    21 days of it. logic/hourly.ts puts the within-day shape around that: body
    clock rhythms and the timed events of today — training, caffeine, alcohol,
-   sleep and light. Estimates of relative state, never lab concentrations.
+   sleep and light. logic/labs.ts translates each daily state into the units
+   its blood test reports (ng/dL, µg/dL…) — an estimate, labelled as one.
    ══════════════════════════════════════════════════════════════════════ */
 import { L, state, view, esc, icon, today, fmtDay, haptic, openSheet, topSheet } from './core.js';
 import { bedtimeTonight } from './doses.js';
@@ -124,6 +125,61 @@ function histChart(a, color, band) {
   </svg>`;
 }
 
+/* ── estimated blood level (logic/labs.ts) ── */
+const pctTxt = x => (x >= 0 ? '+' : '−') + Math.abs(Math.round(x * 100)) + '%';
+export function labFor(v, a) {
+  const sp = L.specimen(v.profile || {}) || {};
+  return L.labEstimate({ k: a.k, score: a.score, lo: a.lo, hi: a.hi, ref: a.ref, pos: a.pos, neg: a.neg, hist: a.hist },
+    { age: sp.age || null, sex: (v.profile || {}).sex || 'male', blood: v.bloodwork || [], today: today() });
+}
+/* Where the estimate sits against men of the same age: their range shaded, yours as the dot and bar. */
+function labScale(E, color) {
+  const W = 320, h = 34, lo = Math.min(E.typical.lo, E.lo) * 0.8, hi = Math.max(E.typical.hi, E.hi) * 1.15;
+  const X = x => 4 + (Math.log(x) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) * (W - 8);
+  const fmt = x => E.kind === 'output' ? Math.round(x) + '%' : Number(x).toFixed(E.digits);
+  return `<svg class="hlb-scale" viewBox="0 0 ${W} ${h}" role="img" aria-label="Your estimate against the typical range for your age">
+    <rect x="4" y="9" width="${W - 8}" height="6" rx="3" fill="rgba(255,255,255,.06)"/>
+    <rect x="${X(E.typical.lo).toFixed(1)}" y="9" width="${(X(E.typical.hi) - X(E.typical.lo)).toFixed(1)}" height="6" rx="3" fill="rgba(255,255,255,.16)"/>
+    <rect x="${X(E.lo).toFixed(1)}" y="7" width="${Math.max(2, X(E.hi) - X(E.lo)).toFixed(1)}" height="10" rx="5" fill="${color}" opacity=".35"/>
+    <circle cx="${X(E.value).toFixed(1)}" cy="12" r="5.5" fill="#fff" stroke="${color}" stroke-width="2.5"/>
+    <text x="${X(E.typical.lo).toFixed(1)}" y="31" text-anchor="middle" font-size="10" fill="rgba(235,240,245,.5)" font-family="system-ui">${fmt(E.typical.lo)}</text>
+    <text x="${X(E.typical.hi).toFixed(1)}" y="31" text-anchor="middle" font-size="10" fill="rgba(235,240,245,.5)" font-family="system-ui">${fmt(E.typical.hi)}</text>
+  </svg>`;
+}
+function labCard(v, a) {
+  const E = labFor(v, a);
+  if (!E) return '';
+  if (E.kind === 'none') return `<div class="grp-h">Blood level</div><section class="card frost tight hlb"><div class="eyebrow">${esc(E.test)}</div><p class="hlb-how" style="margin-top:6px">${esc(E.note)}</p></section>`;
+  const out = E.kind === 'output', u = out ? '%' : E.unit, nf = x => Number(x).toFixed(E.digits);
+  const inRange = E.value >= E.typical.lo && E.value <= E.typical.hi;
+  const good = E.better === 'band' ? inRange : E.better === 'lower' ? E.vsTypical <= 0.05 : E.vsTypical >= -0.05;
+  const warn = E.better === 'band' ? !inRange : Math.abs(E.vsTypical) > 0.15;
+  const tcol = good ? '#30d158' : warn ? '#ffb340' : 'var(--t2)';
+  const tag = Math.abs(E.vsTypical) < 0.03 ? 'typical for your age' : `${pctTxt(E.vsTypical)} vs typical`;
+  const sp = L.specimen(v.profile || {}) || {}, bf = (v.profile || {}).bodyfat;
+  const row = (l, r) => `<div class="hlb-row"><span>${l}</span><b class="num">${r}</b></div>`;
+  const unitTxt = x => out ? nf(x) + '%' : `${nf(x)}${u ? ' ' + esc(u) : ''}`;
+  return `<div class="grp-h">${out ? "Estimated daily output" : "Estimated blood level"}</div>
+    <section class="card frost tight hlb">
+      <div class="hlb-top">
+        <div style="min-width:0"><div class="eyebrow">${esc(E.test)}${E.anchored ? ' · from your lab' : ''}</div>
+          <div class="hlb-v num">≈ ${nf(E.value)}<small>${out ? '%' : u ? ' ' + esc(u) : ''}</small></div>
+          <div class="sub">likely ${nf(E.lo)}–${nf(E.hi)}${out ? '% of a typical 25-year-old' : ''}${E.si ? ` · ≈ ${E.si.value} ${esc(E.si.unit)}` : ''}</div>
+          ${E.insulin ? `<div class="sub">fasting insulin ≈ ${E.insulin.value} µIU/mL (at glucose 90 mg/dL)</div>` : ''}</div>
+        <span class="tag" style="--c:${tcol};color:${tcol}">${tag}</span></div>
+      ${labScale(E, a.c)}
+      <div class="hlb-rows">
+        ${row(`Typical man your age (${E.typical.age})`, unitTxt(E.typical.value))}
+        ${Math.abs(E.ageEffect) >= 0.01 ? row(`Age ${E.typical.age} vs 25`, pctTxt(E.ageEffect)) : ''}
+        ${E.anchored ? row(`Your lab · ${fmtDay(E.anchored.date, { day: 'numeric', month: 'short' })}`, `${esc(String(E.anchored.value))} ${esc(E.anchored.unit || '')}`) + row('Change in your logs since', pctTxt(E.anchored.shift))
+          : row('Your logs — sleep, food, training, stress, supplements', pctTxt(E.lifestyle))}
+      </div>
+      <div class="sub" style="margin-top:6px;font-size:.76rem;line-height:1.45">Typical range ${nf(E.typical.lo)}–${nf(E.typical.hi)}${out ? '%' : u ? ' ' + esc(u) : ''}: ${esc(E.typical.who)}. Based on age ${sp.age || '—'}${bf ? ` · body fat ${bf}%` : ''} · ${(v.endo && v.endo.days) || '—'} days of logs.</div>
+      <p class="hlb-how"><b>How it’s tested</b> ${esc(E.how)}</p>
+      <p class="hlb-src">${E.sources.map(x => `<a href="https://doi.org/${esc(x.doi)}" target="_blank" rel="noopener" title="${esc(x.cite)}">${esc(x.cite.split(',')[0])}</a>`).join(' · ')}</p>
+    </section>`;
+}
+
 /* ── the list on Body Arch ── */
 export function hormoneRows(v) {
   const D = hormoneDay(), axes = (v.endo && v.endo.axes) || [];
@@ -150,13 +206,17 @@ function hormoneSheet(k) {
       const now = D.out.now[k], pk = D.out.peak[k], lo = D.out.low[k];
       const cw = a.conf >= 0.55 ? ['Good', '#30d158'] : a.conf >= 0.3 ? ['Partial', '#ffb340'] : ['Low', '#ff6b5a'];
       const labs = L.bloodMarkers(v.bloodwork || []).find(m => m.axis === k);
-      const drv = (list, title, col) => (list || []).length ? `<div class="hdh" style="color:${col}">${title}</div>` + list.map(x => `<div class="hd"><span style="color:${col}">●</span><span>${esc(plain(x.label))}</span></div>`).join('') : '';
+      const E = labFor(v, a), dp = E && E.kind !== 'none' ? Object.fromEntries(E.drivers.map(d => [d.label, d.pct])) : {};
+      const dpTxt = l => dp[l] === undefined || Math.abs(dp[l]) < 0.005 ? '' : `<b class="num">≈ ${pctTxt(dp[l])}${E.k === 'insulinSensitivity' ? ' HOMA' : ''}</b>`;
+      const drv = (list, title, col) => (list || []).length ? `<div class="hdh" style="color:${col}">${title}</div>` + list.map(x => `<div class="hd"><span style="color:${col}">●</span><span>${esc(plain(x.label))}</span>${dpTxt(x.label)}</div>`).join('') : '';
       return `<div class="hhead" style="--c:${a.color}">
           <div><div class="eyebrow">Now · ${hm(Date.now())}</div><div class="hbig num">${isNaN(now) ? a.score : now}</div></div>
           <div class="hsum"><span class="tag" style="--c:${a.color}">${esc(statusText(a.status))}</span>
             <div class="sub">Today's level <b style="color:var(--t1)">${a.score}</b> (likely ${a.lo}–${a.hi})</div>
             <div class="sub">${a.trend === 'rising' ? '↗ rising' : a.trend === 'falling' ? '↘ falling' : '→ steady'} over recent days</div></div></div>
         <p class="hwhat">${esc(info[1])}</p>
+        ${labCard(v, a)}
+        <div class="grp-h">Through the day</div>
         <div class="seg" style="margin:4px 0 10px">${[['today', 'Today by the hour'], ['days', 'Last 21 days']].map(([x, l]) => `<button class="${hSeg === x ? 'on' : ''}" data-act="h-seg" data-v="${x}">${l}</button>`).join('')}</div>
         <section class="card frost tight">${hSeg === 'today' ? dayChart(k, D, a.c, a.band)
           + `<div class="row num sub" style="gap:14px;margin-top:6px;font-size:.78rem;flex-wrap:wrap">${pk ? `<span>Peak <b style="color:var(--t1)">${hm(pk.t)}</b> · ${pk.v}</span>` : ''}${lo ? `<span>Low <b style="color:var(--t1)">${hm(lo.t)}</b> · ${lo.v}</span>` : ''}<span>🌙 shaded = sleep</span></div>`
@@ -167,7 +227,7 @@ function hormoneSheet(k) {
         ${labs ? `<div class="grp-h">Your lab result</div><section class="card frost tight"><b>${esc(labs.latest.marker)} ${esc(String(labs.latest.value))} ${esc(labs.latest.unit || '')}</b>
           <div class="sub">${fmtDay(labs.latest.date, { day: 'numeric', month: 'short', year: 'numeric' })} · shown beside the estimate, never mixed into it</div></section>` : ''}
         <div class="hconf"><span>Confidence <b style="color:${cw[1]}">${cw[0]}</b></span>${(a.missing || []).filter(x => !/^(alcohol|illness|nicotine)$/i.test(x)).length ? `<span class="sub">Log ${esc((a.missing || []).filter(x => !/^(alcohol|illness|nicotine)$/i.test(x)).slice(0, 3).join(', ').toLowerCase())} to sharpen it</span>` : ''}</div>
-        <p class="sub" style="line-height:1.5;margin:10px 0 0">A 0–100 estimate of physiological state from a model — not a blood level. The hourly shape uses typical body-clock rhythms and today's events; people differ.</p>`;
+        <p class="sub" style="line-height:1.5;margin:10px 0 0">The 0–100 score is the engine's estimate of physiological state; the blood level places it on published ranges for men your age. Both are estimates from your logs, not measurements — only a blood test gives your actual number. The hourly shape uses typical body-clock rhythms and today's events.</p>`;
     },
   });
   s.seg = x => { hSeg = x; s.refresh(); };

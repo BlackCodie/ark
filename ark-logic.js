@@ -2428,6 +2428,230 @@ __exportStar(require("./weather"), exports);
 __exportStar(require("./habitimport"), exports);
 __exportStar(require("./backup"), exports);
 __exportStar(require("./rebuild"), exports);
+__exportStar(require("./labs"), exports);
+
+  },
+  "./labs": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LAB_SPECS = void 0;
+exports.labSlope = labSlope;
+exports.labEstimate = labEstimate;
+const AGE_REF = 25;
+const ENGINE_SD = 15;
+const Z80 = 1.2816;
+const SRC = {
+    travison: { cite: 'Travison et al. 2017, J Clin Endocrinol Metab — harmonised testosterone reference, non-obese men 19–39', doi: '10.1210/jc.2016-2935' },
+    feldman: { cite: 'Feldman et al. 2002, J Clin Endocrinol Metab — age trends in testosterone (Massachusetts Male Aging Study)', doi: '10.1210/jcem.87.2.8201' },
+    wu: { cite: 'Wu et al. 2008, J Clin Endocrinol Metab — body size, lifestyle and testosterone (EMAS)', doi: '10.1210/jc.2007-1972' },
+    su: { cite: 'Su et al. 2021, Sleep Med — meta-analysis: total, not partial, sleep loss lowers testosterone', doi: '10.1016/j.sleep.2021.10.031' },
+    bhasin: { cite: 'Bhasin et al. 2011, J Clin Endocrinol Metab — testosterone and free testosterone reference, young men', doi: '10.1210/jc.2010-3012' },
+    frederiksen: { cite: 'Frederiksen et al. 2020, J Clin Endocrinol Metab — estradiol by LC-MS/MS, men 50–150 pmol/L, flat with age', doi: '10.1210/clinem/dgz196' },
+    verdonk: { cite: 'Verdonk et al. 2019, Clin Chim Acta — LC-MS/MS estradiol reference interval for men', doi: '10.1016/j.cca.2019.04.062' },
+    panton: { cite: 'Panton et al. 2019, Scand J Clin Lab Invest — morning serum cortisol reference interval', doi: '10.1080/00365513.2019.1622031' },
+    lung: { cite: 'Lung et al. 2018, Diagnosis — cortisol at 7 am vs 7 pm in healthy adults', doi: '10.1515/dx-2018-0003' },
+    iranmanesh: { cite: 'Iranmanesh et al. 1991, J Clin Endocrinol Metab — GH secretion falls ~14 % per decade and ~6 % per BMI unit', doi: '10.1210/jcem-73-5-1081' },
+    bidlingmaier: { cite: 'Bidlingmaier et al. 2014, J Clin Endocrinol Metab — IGF-1 age- and sex-specific reference intervals', doi: '10.1210/jc.2013-3059' },
+    jeong: { cite: 'Jeong et al. 2020, Endocrinol Metab — IGF-1 falls with age; tracks nutrition and body size', doi: '10.3803/EnM.2020.785' },
+    isokuortti: { cite: 'Isokuortti et al. 2017, Diabetologia — HOMA-IR upper limit 1.9–2.0 in healthy non-obese adults; insulin assays differ ~25 %', doi: '10.1007/s00125-017-4340-1' },
+    gayoso: { cite: 'Gayoso-Diz et al. 2013, BMC Endocr Disord — HOMA-IR cut-offs by age and sex', doi: '10.1186/1472-6823-13-47' },
+    jun: { cite: 'Jun et al. 2024, Sci Rep — routine T3 reference range 76–190 ng/dL', doi: '10.1038/s41598-024-66096-9' },
+    weiss: { cite: 'Weiss et al. 2008, Rejuvenation Res — calorie restriction lowers T3 (−9.8 ng/dL over 12 months)', doi: '10.1089/rej.2007.0622' },
+};
+/** Flat to `onset`, then compounding change per year. */
+const ageCurve = (m, onset, perYear) => (age) => age <= onset ? m : m * Math.pow(1 + perYear, age - onset);
+exports.LAB_SPECS = {
+    testosterone: {
+        test: 'Total testosterone', unit: 'ng/dL', si: { unit: 'nmol/L', f: 0.0347, step: 0.5 }, step: 10,
+        // Travison 2017: median 531 ng/dL, 2.5–97.5th 264–916 (non-obese 19–39). Feldman 2002: −0.8 %/yr cross-sectional after 40.
+        median: ageCurve(531, 40, -0.008), lnSd: 0.32, r: 0.55, dir: 1, better: 'higher',
+        range: [264, 916], rangeWho: 'healthy non-obese men 19–39', cv: 0.12, female: 'none',
+        lab: { re: /testosterone|^total\s*t$/i, not: /free|bioavail|saliva|urine/i,
+            units: [{ re: /^ng\/?dl$/i, f: 1 }, { re: /^nmol\/?l$/i, f: 28.84 }, { re: /^ng\/?ml$/i, f: 100 }] },
+        how: 'Blood draw between 7 and 10 am, ideally fasted — testosterone runs highest in the morning. A low result is repeated on a second morning before anyone acts on it.',
+        sources: [SRC.travison, SRC.feldman, SRC.wu, SRC.su],
+    },
+    freeTestosterone: {
+        test: 'Free testosterone', unit: 'pg/mL', si: { unit: 'pmol/L', f: 3.467, step: 5 }, step: 5,
+        // Bhasin 2011: young-men median ~134 pg/mL, 2.5th 70. Falls faster than total T with age (SHBG rises).
+        median: ageCurve(134, 40, -0.012), lnSd: 0.33, r: 0.55, dir: 1, better: 'higher',
+        range: [70, 255], rangeWho: 'healthy young men', cv: 0.14, female: 'none',
+        lab: { re: /free\s*t(estosterone)?\b|free testosterone/i, not: /t3|t4|thyrox|triiodo|bioavail|saliva/i,
+            units: [{ re: /^pg\/?ml$/i, f: 1 }, { re: /^pmol\/?l$/i, f: 1 / 3.467 }, { re: /^ng\/?dl$/i, f: 10 }, { re: /^nmol\/?l$/i, f: 288.4 }] },
+        how: 'Calculated from total testosterone, SHBG and albumin on the same morning draw — or measured directly by equilibrium dialysis.',
+        sources: [SRC.bhasin, SRC.feldman],
+    },
+    estradiol: {
+        test: 'Estradiol (E2)', unit: 'pg/mL', si: { unit: 'pmol/L', f: 3.671, step: 5 }, step: 1,
+        // Frederiksen 2020 (LC-MS/MS): adult men 50–150 pmol/L (≈14–41 pg/mL), no change with age.
+        median: () => 22, lnSd: 0.40, r: 0.5, dir: 1, better: 'band',
+        range: [14, 41], rangeWho: 'most adult men (LC-MS/MS)', cv: 0.2, female: 'none',
+        lab: { re: /estradiol|oestradiol|^e2$/i, not: /free/i,
+            units: [{ re: /^pg\/?ml$/i, f: 1 }, { re: /^pmol\/?l$/i, f: 1 / 3.671 }, { re: /^ng\/?l$/i, f: 1 }] },
+        how: 'Ask for a sensitive (LC-MS/MS) estradiol — standard immunoassays read the low levels men have poorly.',
+        sources: [SRC.frederiksen, SRC.verdonk],
+    },
+    cortisol: {
+        test: 'Cortisol, 8 am', unit: 'µg/dL', si: { unit: 'nmol/L', f: 27.59, step: 10 }, step: 0.5,
+        // Lung 2018: 7 am mean ~400 nmol/L (14.5 µg/dL); Panton 2019: 8–10:30 am interval 159–569 nmol/L.
+        median: () => 14.5, lnSd: 0.33, r: 0.5, dir: 1, better: 'band',
+        range: [5.8, 20.6], rangeWho: 'healthy adults, 8–10:30 am draw', cv: 0.2, female: 'same',
+        lab: { re: /cortisol/i, not: /saliva|urine|free|evening|night|midnight|cbg|binding/i,
+            units: [{ re: /^(µ|u|mc)g\/?dl$/i, f: 1 }, { re: /^nmol\/?l$/i, f: 1 / 27.59 }] },
+        how: 'Serum cortisol drawn around 8 am. Time of day matters more than anything: by evening it is a fraction of the morning value.',
+        sources: [SRC.lung, SRC.panton],
+    },
+    growthHormone: {
+        test: 'Daily growth-hormone output', unit: '% of a typical 25-year-old', step: 5,
+        // Iranmanesh 1991: daily GH production falls ~14 % per decade (and ~6 % per BMI unit — via the engine).
+        median: age => 100 * Math.pow(0.86, Math.max(0, age - AGE_REF) / 10), lnSd: 0.5, r: 0.6, dir: 1, better: 'higher',
+        range: [40, 265], rangeWho: 'healthy men your age (GH varies a lot between people)', cv: 0.3, female: 'same',
+        how: 'There is no useful single blood test: GH comes in pulses, so a random draw reads anywhere from near zero to very high. Doctors test IGF-1 instead, or a stimulation test.',
+        sources: [SRC.iranmanesh],
+    },
+    igf1: {
+        test: 'IGF-1', unit: 'ng/mL', si: { unit: 'nmol/L', f: 0.1307, step: 1 }, step: 5,
+        // Peaks in the late teens, ~230 ng/mL at 25, then falls ~1.4 %/yr (roughly halves by 70).
+        median: age => age < AGE_REF ? 230 * (1 + 0.03 * Math.min(AGE_REF - age, 9)) : 230 * Math.exp(-0.014 * (age - AGE_REF)),
+        lnSd: 0.28, r: 0.55, dir: 1, better: 'higher',
+        range: [135, 395], rangeWho: 'healthy men your age (assay-dependent)', cv: 0.1, female: 'same',
+        lab: { re: /igf-?1|igf-?i\b|somatomedin/i, not: /bp-?3|binding/i,
+            units: [{ re: /^ng\/?ml$/i, f: 1 }, { re: /^(µ|u|mc)g\/?l$/i, f: 1 }, { re: /^nmol\/?l$/i, f: 7.649 }] },
+        how: 'Any time of day — IGF-1 barely moves across a day. Results differ by assay, so compare with the age range printed by the lab.',
+        sources: [SRC.bidlingmaier, SRC.jeong],
+    },
+    insulinSensitivity: {
+        test: 'HOMA-IR (insulin resistance)', unit: '', step: 0.1,
+        // Isokuortti 2017: upper 95th percentile 1.9–2.0 in healthy non-obese adults → median ≈ 1.0.
+        median: () => 1.0, lnSd: 0.45, r: 0.7, dir: -1, better: 'lower',
+        range: [0.4, 2.0], rangeWho: 'healthy non-obese adults', cv: 0.25, female: 'same',
+        lab: { re: /homa|fasting insulin|^insulin(\s*\(fasting\))?$/i, not: /c-?pept|antibod|igf/i, units: [] },
+        how: 'Fasting draw (8–12 h without food): insulin and glucose. HOMA-IR = insulin (µIU/mL) × glucose (mg/dL) ÷ 405 — lower means your muscles respond to insulin more easily.',
+        sources: [SRC.isokuortti, SRC.gayoso],
+    },
+    thyroid: {
+        test: 'Total T3', unit: 'ng/dL', si: { unit: 'nmol/L', f: 0.01536, step: 0.05 }, step: 5,
+        // Jun 2024: routine range 76–190 ng/dL. Weiss 2008: sustained calorie restriction lowers it ~9 %.
+        median: () => 120, lnSd: 0.23, r: 0.5, dir: 1, better: 'band',
+        range: [76, 190], rangeWho: 'adults (routine lab range)', cv: 0.08, female: 'same',
+        lab: { re: /^(total\s*)?t3$|^triiodothyronine$|^total triiodothyronine$/i, not: /free|ft3|reverse|rt3|uptake/i,
+            units: [{ re: /^ng\/?dl$/i, f: 1 }, { re: /^nmol\/?l$/i, f: 65.1 }] },
+        how: 'Total T3 on a routine thyroid panel (usually with TSH and free T4). It is the thyroid number that drops when food runs short for weeks.',
+        sources: [SRC.jun, SRC.weiss],
+    },
+};
+/** Axes with no blood measurement at all. */
+const NO_TEST = {
+    dopamineTone: 'Brain dopamine has no blood test — blood dopamine comes mostly from the gut and nerves, not the brain. It is only measured with PET scans in research, so ARK keeps it as a 0–100 state.',
+};
+const round = (v, step) => Math.round(v / step) * step;
+const fix = (v, step) => Number(round(v, step).toFixed(step < 1 ? (String(step).split('.')[1] || '').length : 0));
+const dayMs = 864e5;
+const daysBetween = (a, b) => Math.round((Date.parse(b + 'T12:00:00Z') - Date.parse(a + 'T12:00:00Z')) / dayMs);
+/** log-change per engine point for one axis. */
+function labSlope(k) {
+    const s = exports.LAB_SPECS[k];
+    return s ? s.r * s.lnSd / ENGINE_SD : 0;
+}
+/** A lab entry in the display unit, or null when its unit is not one we can read. */
+function labValue(spec, e, all) {
+    const u = String(e.unit || '').trim().replace(/\s+/g, '').replace('μ', 'µ');
+    if (spec === exports.LAB_SPECS.insulinSensitivity) {
+        if (/homa/i.test(e.marker))
+            return e.value;
+        // Fasting insulin → HOMA-IR, with that day's glucose if it was measured.
+        let ins = /pmol/i.test(u) ? e.value / 6 : /^(µ|u|m)(iu|u)\/?(ml|l)$/i.test(u) || u === '' ? e.value : NaN;
+        if (!isFinite(ins))
+            return null;
+        const g = all.find(x => x.date === e.date && /glucose/i.test(x.marker) && !/urine/i.test(x.marker));
+        const glu = g ? (/mmol/i.test(g.unit) ? g.value * 18 : g.value) : 90;
+        return ins * glu / 405;
+    }
+    if (!spec.lab)
+        return null;
+    const c = spec.lab.units.find(x => x.re.test(u));
+    return c ? e.value * c.f : null;
+}
+/** The most recent lab of this marker, within a year, read in display units. */
+function findAnchor(spec, blood, today) {
+    if (!spec.lab || !blood.length)
+        return null;
+    const hits = blood
+        .filter(e => spec.lab.re.test(e.marker) && !(spec.lab.not && spec.lab.not.test(e.marker)) && isFinite(e.value) && e.value > 0)
+        .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    for (const e of hits) {
+        const days = daysBetween(e.date, today);
+        if (days < 0 || days > 365)
+            continue;
+        const v = labValue(spec, e, blood);
+        // A unit we misread would put it 10–100× off: refuse anything implausible.
+        const m = spec.median(AGE_REF);
+        if (v === null || !(v > m / 15 && v < m * 15))
+            continue;
+        return { e, v, days };
+    }
+    return null;
+}
+/**
+ * The estimate for one axis. `age` is required (it sets the reference); `blood` is the
+ * measured track (logic/bloodwork.ts), used only to anchor the units; `today` is a day key.
+ */
+function labEstimate(axis, opts) {
+    if (!axis || !isFinite(axis.score))
+        return null;
+    if (NO_TEST[axis.k])
+        return { k: axis.k, kind: 'none', test: 'No blood test', note: NO_TEST[axis.k] };
+    const spec = exports.LAB_SPECS[axis.k];
+    if (!spec)
+        return null;
+    if (opts.sex === 'female' && spec.female === 'none') {
+        return { k: axis.k, kind: 'none', test: spec.test, note: 'For women this level depends on the cycle phase, which ARK does not track, so it stays a 0–100 state rather than a number that would be wrong half the month.' };
+    }
+    const age = opts.age && opts.age > 12 && opts.age < 100 ? opts.age : AGE_REF;
+    const b = labSlope(axis.k), dir = spec.dir;
+    const ref = isFinite(axis.ref) ? axis.ref : 50;
+    const dev = axis.score - ref;
+    const typ = spec.median(age);
+    const ageEffect = typ / spec.median(AGE_REF) - 1;
+    const lifeLn = dir * b * dev;
+    // Person-to-person spread the logs cannot see, and the engine's own uncertainty.
+    const modelHw = b * Math.max(0, axis.hi - axis.lo) / 2;
+    let personHw = Z80 * spec.lnSd * Math.sqrt(1 - spec.r * spec.r);
+    let centreLn = Math.log(typ) + lifeLn;
+    let anchored = null;
+    const today = opts.today || new Date().toISOString().slice(0, 10);
+    const a = findAnchor(spec, opts.blood || [], today);
+    if (a) {
+        // Score on the day of the lab (or the average of the days we have), so only change since then moves it.
+        const hist = (axis.hist || []).filter(h => h && isFinite(h[1]));
+        const near = hist.filter(h => Math.abs(daysBetween(h[0], a.e.date)) <= 3).sort((x, y) => Math.abs(daysBetween(x[0], a.e.date)) - Math.abs(daysBetween(y[0], a.e.date)))[0];
+        const sAt = near ? near[1] : hist.length ? hist.reduce((s, h) => s + h[1], 0) / hist.length : axis.score;
+        const shift = dir * b * (axis.score - sAt);
+        centreLn = Math.log(a.v) + shift;
+        personHw = Z80 * Math.sqrt(spec.cv * spec.cv + Math.pow(spec.lnSd * Math.sqrt(1 - spec.r * spec.r) * Math.min(1, a.days / 365), 2));
+        anchored = { date: a.e.date, marker: a.e.marker, value: a.e.value, unit: a.e.unit, daysAgo: a.days, shift: Math.exp(shift) - 1 };
+    }
+    const hw = Math.sqrt(modelHw * modelHw + personHw * personHw);
+    const value = Math.exp(centreLn), lo = Math.exp(centreLn - hw), hi = Math.exp(centreLn + hw);
+    // Drivers: the engine's contributions are pre-compression; scale them so they add up to the net.
+    const ds = [...(axis.pos || []), ...(axis.neg || [])].filter(d => d && isFinite(d.c));
+    const sum = ds.reduce((s, d) => s + d.c, 0);
+    const scale = Math.abs(sum) < 1e-6 ? 0.5 : Math.sign(sum) === Math.sign(dev) ? Math.min(1, Math.max(0.25, Math.abs(dev) / Math.abs(sum))) : 0.5;
+    const drivers = ds.map(d => ({ label: d.label, pct: Math.exp(dir * b * d.c * scale) - 1 }));
+    // The printed range describes young men; it moves with the age curve.
+    const typLo = spec.range[0] * typ / spec.median(AGE_REF);
+    const typHi = spec.range[1] * typ / spec.median(AGE_REF);
+    const si = spec.si ? { unit: spec.si.unit, value: fix(value * spec.si.f, spec.si.step), lo: fix(lo * spec.si.f, spec.si.step), hi: fix(hi * spec.si.f, spec.si.step) } : null;
+    const insulin = axis.k === 'insulinSensitivity' ? { value: fix(value * 405 / 90, 0.5), lo: fix(lo * 405 / 90, 0.5), hi: fix(hi * 405 / 90, 0.5) } : null;
+    return {
+        k: axis.k, kind: axis.k === 'growthHormone' ? 'output' : 'blood',
+        test: spec.test, unit: spec.unit, digits: spec.step < 1 ? (String(spec.step).split('.')[1] || '').length : 0,
+        value: fix(value, spec.step), lo: fix(lo, spec.step), hi: fix(hi, spec.step), si, insulin,
+        typical: { value: fix(typ, spec.step), lo: fix(typLo, spec.step), hi: fix(typHi, spec.step), who: spec.rangeWho, age: Math.round(age) },
+        vsTypical: value / typ - 1, ageEffect, lifestyle: Math.exp(lifeLn) - 1, drivers,
+        better: spec.better, anchored, how: spec.how, sources: spec.sources,
+    };
+}
 
   },
   "./lifts": function (exports, module, require) {

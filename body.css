@@ -385,6 +385,21 @@ html[data-theme="light"] .br-cc{fill:rgba(40,44,90,.05);stroke:rgba(40,44,90,.18
 .hdrv .hdh{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin:6px 0 2px}
 .hdrv .hdh:first-child{margin-top:0}
 .hconf{display:flex;flex-direction:column;gap:2px;margin-top:14px;font-size:.84rem}
+.hdrv .hd:has(b){grid-template-columns:16px 1fr auto}
+.hdrv .hd b{font-size:.78rem;color:var(--t2);white-space:nowrap}
+/* estimated blood level (logic/labs.ts) */
+.hlb-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.hlb-top .tag{flex:none;background:color-mix(in srgb,var(--c) 14%,transparent)}
+.hlb-v{font-size:2rem;font-weight:800;line-height:1.1;margin:2px 0}
+.hlb-v small{font-size:.9rem;font-weight:700;color:var(--t2)}
+.hlb-scale{width:100%;height:auto;display:block;margin:10px 0 2px}
+.hlb-rows{display:flex;flex-direction:column;gap:2px;margin-top:4px}
+.hlb-row{display:flex;justify-content:space-between;gap:10px;font-size:.84rem;padding:3px 0;color:var(--t2)}
+.hlb-row b{color:var(--t1);white-space:nowrap}
+.hlb-how{margin:10px 0 0;font-size:.82rem;line-height:1.5;color:var(--t2)}
+.hlb-how b{color:var(--t1);margin-right:4px}
+.hlb-src{margin:8px 0 0;font-size:.72rem;line-height:1.6;color:var(--t3)}
+.hlb-src a{color:var(--t2);text-decoration:none;border-bottom:1px dotted var(--t3)}
 
 .lvls{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;padding:10px}
 .lvls>div{display:flex;flex-direction:column;align-items:center;text-align:center;gap:2px;padding:8px 2px;border-radius:10px;background:var(--fill-1)}
