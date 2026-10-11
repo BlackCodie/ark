@@ -526,8 +526,8 @@ const BASE_INPUT_TO_LATENT = [
     },
     // ── Adiposity ──
     {
-        from: 'bodyFatPercent', to: 'adiposity', effect: 0.60, shape: 'saturating', sd: 0.12,
-        mechanism: 'Body fat relative to the healthy point sets adipose-tissue metabolic load: free fatty acids, adipokines and ectopic fat.',
+        from: 'bodyFatPercent', to: 'adiposity', effect: 0.60, shape: 'excess', sd: 0.12,
+        mechanism: 'Body fat above the healthy range (men: up to ~18 %) sets adipose-tissue metabolic load: free fatty acids, adipokines and ectopic fat.',
         evidence: 'A', source: 'consensus-textbook',
     },
     // ── Protein supply (hepatic amino-acid availability) ──
@@ -2114,6 +2114,8 @@ function applyShape(shape, x) {
             return invertedU(x, 0, 0.55);
         case 'u-shaped':
             return uShaped(x, 0, 0.55);
+        case 'excess':
+            return clamp(x - 0.5, 0, 1);
         case 'overload':
             return x <= 0 ? 0 : (threshold(x, 0.45, 7) - threshold(0, 0.45, 7)) / (1 - threshold(0, 0.45, 7));
         default:

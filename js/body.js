@@ -812,7 +812,7 @@ function systemsNow(v) {
   if (sysFor === k) return sysCache;
   const t = today(), p = v.profile || {}, w = latestWeight(v) || (+p.weight || null), sp = L.specimen(Object.assign({}, p, w ? { weight: w } : {}));
   const inp = { today: t, bio: v.bio || {}, age: sp.age, sex: p.sex || null, height: +p.height || null, weight: w, bodyfat: p.bodyfat != null && p.bodyfat !== '' ? +p.bodyfat : null, vo2max: +p.vo2max || null };
-  sysCache = { rows: L.systemsReport({ ...inp, endo: v.endo || null, rebuild: rebuildNow(v), injuries: Object.keys(L.activeInjuries(v.injuries || [], t)).length, coverage: v.body.coverage ?? null }), age: L.bodyAge(inp) };
+  sysCache = { rows: L.systemsReport({ ...inp, endo: v.endo || null, rebuild: rebuildNow(v), injuries: Object.keys(L.activeInjuries(v.injuries || [], t)).length, coverage: v.body.coverage ?? null, coverage28: v.body.coverage28 ?? null }), age: L.bodyAge(inp) };
   sysFor = k; return sysCache;
 }
 const GRADE = { good: ['#30d158', 'Good'], watch: ['#ffd60a', 'Watch'], poor: ['#ff453a', 'Needs work'] };

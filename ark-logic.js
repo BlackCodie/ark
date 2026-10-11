@@ -197,7 +197,7 @@ function bodyState(input) {
     const muscles = {};
     let ready = 0, recovering = 0, fresh = 0, untouched = 0;
     let soreCount = 0, injuredCount = 0, loadSum = 0;
-    let strSum = 0, strN = 0, mobSum = 0, mobN = 0, touched7 = 0;
+    let strSum = 0, strN = 0, mobSum = 0, mobN = 0, touched7 = 0, touched28 = 0;
     for (const slug of slugs) {
         // Clean inputs (sanitize.ts): stored values can be strings, typos or missing.
         const t0 = training[slug] || { last: null, weekSets: 0, vol30: 0 };
@@ -219,7 +219,9 @@ function bodyState(input) {
             state = 'fresh';
         else if (hrs < win.hi)
             state = 'recovering';
-        else if (hrs < 24 * 10)
+        // Gains hold for about two weeks off and fade with longer breaks (Bosquet 2013, doi:10.1111/sms.12047):
+        // "detrained" from 14 days, the same line Bio-Regen draws.
+        else if (hrs < 24 * 14)
             state = 'ready';
         else
             state = 'detrained';
@@ -276,6 +278,8 @@ function bodyState(input) {
             ready++;
         if (hrs !== null && hrs < 24 * 7)
             touched7++;
+        if (hrs !== null && hrs < 24 * 28)
+            touched28++;
         if (sore >= 2)
             soreCount++;
         if (sore >= 3 || (inj && inj.sev >= 2))
@@ -315,6 +319,9 @@ function bodyState(input) {
         : null;
     const integrity = Math.round(100 - (loadSum / (n * 3) * 100));
     const coverage = Math.round(touched7 / n * 100);
+    // The index measures development, which does not vanish in a rest week: it counts muscles trained in
+    // the last 4 weeks. (On the 7-day figure, 9 days off cut the index by ~40 %.)
+    const coverage28 = Math.round(touched28 / n * 100);
     const avgStrength = strN ? strSum / strN : 0;
     const avgMobility = mobN ? mobSum / mobN : 0;
     // Composite index. Strength is derived, so this no longer rewards dragging a
@@ -325,7 +332,7 @@ function bodyState(input) {
     // left out and the rest is rescaled, instead of scoring the gap as a failure
     // (an unrated mobility used to cost 15 points, and a missing balance was
     // quietly awarded 12). `known` says which components the index rests on.
-    let score = avgStrength / 10 * 40 + coverage * 0.25 - (loadSum / (n * 3)) * 15;
+    let score = avgStrength / 10 * 40 + coverage28 * 0.25 - (loadSum / (n * 3)) * 15;
     let max = 65;
     if (balance !== null) {
         score += balance * 0.20;
@@ -341,7 +348,7 @@ function bodyState(input) {
     return {
         muscles, slugs, ranked,
         counts: { fresh, recovering, ready, untouched, touched7, sore: soreCount, injured: injuredCount },
-        coverage, balance, pairs, integrity, avgStrength, avgMobility, mobilityRated: mobN, index, known,
+        coverage, coverage28, balance, pairs, integrity, avgStrength, avgMobility, mobilityRated: mobN, index, known,
         systemic: sys, generated: now,
     };
 }
@@ -7903,6 +7910,7 @@ const avgScore = (parts) => {
     return { score: Math.round(parts.reduce((a, p) => a + p.s, 0) / parts.length), weakest: w.s < 70 ? w.label : null, action: w.s < 70 ? w.act : null };
 };
 function systemsReport(inp) {
+    var _a;
     const rows = [], T = inp.today;
     // heart & fitness
     {
@@ -8013,11 +8021,15 @@ function systemsReport(inp) {
     }
     // muscles & joints
     {
-        const cov = inp.coverage, inj = inp.injuries || 0;
-        if (cov != null) {
-            const s = Math.round(clamp(cov - inj * 15, 0, 100));
-            rows.push({ key: 'msk', name: 'Muscles & joints', icon: '🦴', grade: grade(s), score: s, line: cov + ' % of muscles worked this week' + (inj ? ' · ' + inj + ' injur' + (inj === 1 ? 'y' : 'ies') : ''),
-                weakest: s < 70 ? (inj ? 'an injury' : 'coverage') : null, action: s < 70 ? (inj ? 'Let the injury settle — train around it' : 'Some muscle groups had nothing this week') : null });
+        // Graded on the last 4 weeks: muscles and joints are not worse after one rest week (gains hold ~2 weeks,
+        // Bosquet 2013). It used to grade "this week" alone — 0 / "needs work" after 9 days off.
+        const cov = inp.coverage, cov28 = (_a = inp.coverage28) !== null && _a !== void 0 ? _a : null, base = cov28 !== null && cov28 !== void 0 ? cov28 : cov, inj = inp.injuries || 0;
+        if (base != null) {
+            const s = Math.round(clamp(base - inj * 15, 0, 100));
+            rows.push({ key: 'msk', name: 'Muscles & joints', icon: '🦴', grade: grade(s), score: s,
+                line: (cov28 != null ? cov28 + ' % of muscles worked in 4 weeks' + (cov != null ? ' · ' + cov + ' % this week' : '') : cov + ' % of muscles worked this week') + (inj ? ' · ' + inj + ' injur' + (inj === 1 ? 'y' : 'ies') : ''),
+                weakest: s < 70 ? (inj ? 'an injury' : 'coverage') : null,
+                action: s < 70 ? (inj ? 'Let the injury settle — train around it' : cov28 != null ? 'Some muscle groups had nothing in 4 weeks' : 'Some muscle groups had nothing this week') : null });
         }
         else
             rows.push({ key: 'msk', name: 'Muscles & joints', icon: '🦴', grade: null, score: null, line: 'not enough logged yet', weakest: null, action: null });
