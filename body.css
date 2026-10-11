@@ -371,7 +371,7 @@ html[data-theme="light"] .br-cc{fill:rgba(40,44,90,.05);stroke:rgba(40,44,90,.18
 .hspark{width:72px;height:24px;flex:none;opacity:.9}
 .hnow{display:flex;flex-direction:column;align-items:flex-end;min-width:38px;flex:none}
 .hnow b{font-size:1.15rem;line-height:1}
-.hnow small{font-size:.62rem;color:var(--t3);font-weight:600}
+.hnow small{font-size:.62rem;color:var(--t3);font-weight:600;white-space:nowrap}
 .ehdr.slim{margin-top:10px}
 .hhead{display:flex;align-items:center;gap:16px;margin:-4px 0 10px}
 .hbig{font-size:3rem;font-weight:800;line-height:1;color:var(--c)}

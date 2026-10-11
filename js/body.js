@@ -32,7 +32,7 @@ const STATE_LBL = {
   detrained: ['Detrained', '#ff6b5a'], untouched: ['Untouched', 'rgba(235,240,245,.5)'],
 };
 const SW_TYPE_COLORS = { push: '#f87171', pull: '#818cf8', legs: '#22c55e', core: '#a78bfa', full: '#22d3ee' };
-const REGEN_LBL = { dormant: ['Dormant', 'rgba(235,240,245,.45)'], charging: ['Charging', '#ffb340'], primed: ['Primed', '#30d158'], atrophy: ['Atrophy', '#ff6b5a'] };
+const REGEN_LBL = { dormant: ['Dormant', 'rgba(235,240,245,.45)'], charging: ['Charging', '#ffb340'], primed: ['Primed', '#30d158'], detraining: ['Detraining', '#ffb340'], atrophy: ['Losing', '#ff6b5a'] };
 const SORE_COLORS = ['rgba(34,197,94,.6)', 'rgba(234,179,8,.8)', 'rgba(249,115,22,.9)', 'rgba(239,68,68,.95)', '#dc2626'];
 const SORE_LBL = ['None', 'Mild', 'Sore', 'High', 'Injured'];
 
@@ -171,7 +171,8 @@ function secRecovery(v) {
   const dom = Object.keys(n).sort((a, b) => n[b] - n[a])[0];
   if (S.length >= 6 && n[dom] >= 4) {
     const col = (REGEN_LBL[dom] || REGEN_LBL.dormant)[1];
-    const txt = { dormant: 'dormant — never trained', charging: 'charging — inside the recovery window', primed: 'primed — recovered and ready', atrophy: 'in atrophy — past 7 days, retrain' }[dom];
+    // Gains hold for about two weeks off and fade with longer breaks (Bosquet 2013) — not "atrophy" after 7 days.
+    const txt = { dormant: 'dormant — never trained', charging: 'charging — inside the recovery window', primed: 'primed — recovered, gains intact', detraining: 'detraining — 2–4 weeks off, gains starting to fade', atrophy: 'losing — over 4 weeks off, size and strength fading' }[dom];
     H += `<div class="uni frost" style="--uc:${col}"><span class="dot"></span><span><b>${n[dom]} of 6 groups</b> ${txt}</span></div>`;
   }
   H += `<div class="grp2">${S.map(s => {
@@ -392,7 +393,7 @@ function secMicros(v) {
 /* ── endocrine: a clean list; each hormone opens its day and 21-day charts (js/hormones.js) ── */
 function secEndo(v) {
   const E = v.endo;
-  let H = `<div class="sim slim"><span>ⓘ</span><div>Estimates on a 0–100 scale from ARK's hormone model, computed on your PC — <b>not blood levels</b>. Tap a hormone for its day, hour by hour, and the last 3 weeks.</div></div>
+  let H = `<div class="sim slim"><span>ⓘ</span><div>Estimated from ARK's hormone model on your PC, shown in the units each blood test uses — <b>estimates, not lab results</b>. Tap a hormone for its likely range, its day hour by hour, and the last 3 weeks.</div></div>
     <button class="btn btn-tint block" style="--accent:#bf5af2;margin:0 0 12px" data-act="whatif-open">⟳ What if… — simulate a change</button>`;
   if (!E) return H + card(`<div class="empty">Nothing estimated yet. Log sleep, stress, intake or a workout and your PC's engine begins estimating.</div>`) + bloodCard(v);
   const cc = E.confidence >= 0.55 ? '#30d158' : E.confidence >= 0.3 ? '#ffb340' : '#ff6b5a';
@@ -422,7 +423,7 @@ function labLine(labs, axis) {
 function bloodCard(v) {
   const M = L.bloodMarkers(v.bloodwork || []);
   return `<div class="ba-h" style="margin-top:22px"><h2 style="font-size:1.05rem">🧪 Measured · bloodwork</h2><button class="link" data-act="blood-add">Add result</button></div>`
-    + card(`<p class="sub" style="margin:0 0 ${M.length ? 10 : 0}px;line-height:1.5">Your lab results exactly as reported. They sit beside the estimate and never change it — ARK does not interpret them. Ask your doctor what they mean.</p>
+    + card(`<p class="sub" style="margin:0 0 ${M.length ? 10 : 0}px;line-height:1.5">Your lab results exactly as reported. They never change the 0–100 score; a recent one anchors that hormone's estimated level to you. ARK does not interpret them — ask your doctor what they mean.</p>
       ${M.length ? `<div class="list">${M.map(m => {
         const L0 = m.latest, st = L.bloodStatus(L0);
         return `<div class="li" style="padding-left:0;padding-right:0"><span class="tx"><div class="tt">${esc(L0.marker)}</div>

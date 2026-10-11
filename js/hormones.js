@@ -29,13 +29,15 @@ export const HORMONE_INFO = {
 const PLAIN = {
   'circadian alignment': 'Body-clock alignment (regular sleep, morning light)',
   'recovery debt': 'Recovery debt (short sleep, heavy training)',
-  'inflammation load': 'Inflammation (illness, alcohol, poor sleep)',
+  'inflammation load': 'Inflammation (body fat, poor sleep, low fitness)',
   'stress adaptation': 'Stress resilience',
   'anabolic drive': 'Building signal (training, protein, energy)',
   'catabolic pressure': 'Breakdown pressure (calorie deficit, overreaching)',
   'energy availability': 'Energy available (food vs what you burn)',
   'autonomic balance': 'Rest-and-recover balance (HRV)',
-  'aromatase activity': 'Testosterone → estradiol conversion (body fat, alcohol)',
+  'aromatase activity': 'Testosterone → estradiol conversion (body fat)',
+  'body fat load': 'Body fat (from your profile or scale)',
+  'protein supply': 'Protein supply (protein you eat)',
   'thyroid cofactor status': 'Thyroid nutrients (iodine, selenium, zinc)',
 };
 function plain(label) {
@@ -67,7 +69,7 @@ export function hormoneDay() {
   }).filter(s => s.end >= day0 - 12 * H && s.start <= day0 + 24 * H);
   const beh = L.behaviourOn(t, v.habits, v.habitLog, v.dayRoutines || L.DEFAULT_DAY_ROUTINES, v.routineLog || {});
   const sp = L.specimen(v.profile || {}) || {};
-  cache = { day0, axes, out: L.hormoneHours({
+  cache = { day0, wake, axes, out: L.hormoneHours({
     day0, now: Date.now(), sleepOnset, wake, bedtime: bedtimeTonight(),
     scores: Object.fromEntries(axes.map(a => [a.k, a.score])), sessions, doses: v.doses || [],
     daylight: (b.daylight || 0) + beh.sunlight, stress: b.stress ?? null, age: sp.age ?? null, sex: (v.profile || {}).sex || 'male',
@@ -125,8 +127,35 @@ function histChart(a, color, band) {
   </svg>`;
 }
 
+/* The daily line in the test's units, on a log scale: men your age shaded, today's likely range as the bar. */
+function labHistChart(E, a, color) {
+  const ser = L.labSeries(E, a);
+  if (ser.length < 2) return '<div class="sub" style="padding:10px 0">The daily line starts once the PC has estimated two days.</div>';
+  const W = 340, h = 140, top = 10, bot = 20, left = 34;
+  const vals = ser.map(p => p.v).concat([E.typical.lo, E.typical.hi, E.lo, E.hi]);
+  const lo = Math.min(...vals) * 0.92, hi = Math.max(...vals) * 1.08;
+  const X = i => left + i / (ser.length - 1) * (W - left - 6), Y = v => top + (1 - (Math.log(v) - Math.log(lo)) / (Math.log(hi) - Math.log(lo))) * (h - top - bot);
+  const f = x => E.kind === 'output' ? Math.round(x) + '%' : Number(x).toFixed(E.digits);
+  const line = ser.map((p, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ',' + Y(p.v).toFixed(1)).join(' ');
+  const lab = i => fmtDay(ser[i].date, { day: 'numeric', month: 'short' });
+  const yl = (v, txt) => `<text x="${left - 4}" y="${(Y(v) + 3).toFixed(1)}" text-anchor="end" font-size="9.5" fill="rgba(235,240,245,.45)" font-family="system-ui">${txt}</text>`;
+  return `<svg class="hchart" viewBox="0 0 ${W} ${h}" role="img" aria-label="Daily estimate in ${esc(E.unit || 'HOMA-IR')}, last ${ser.length} days">
+    <rect x="${left}" y="${Y(E.typical.hi).toFixed(1)}" width="${W - left - 6}" height="${(Y(E.typical.lo) - Y(E.typical.hi)).toFixed(1)}" fill="rgba(255,255,255,.05)"/>
+    <line x1="${left}" x2="${W - 6}" y1="${Y(E.typical.value).toFixed(1)}" y2="${Y(E.typical.value).toFixed(1)}" stroke="rgba(255,255,255,.18)" stroke-dasharray="3 4"/>
+    ${yl(E.typical.hi, f(E.typical.hi))}${yl(E.typical.value, f(E.typical.value))}${yl(E.typical.lo, f(E.typical.lo))}
+    <line x1="${X(ser.length - 1)}" x2="${X(ser.length - 1)}" y1="${Y(E.hi).toFixed(1)}" y2="${Y(E.lo).toFixed(1)}" stroke="${color}" stroke-width="6" stroke-linecap="round" opacity=".3"/>
+    <path d="${line}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round"/>
+    ${ser.map((p, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(p.v).toFixed(1)}" r="${i === ser.length - 1 ? 3.5 : 1.8}" fill="${color}"/>`).join('')}
+    <text x="${left}" y="${h - 5}" font-size="10" fill="rgba(235,240,245,.45)" font-family="system-ui">${lab(0)}</text>
+    <text x="${W - 6}" y="${h - 5}" text-anchor="end" font-size="10" fill="rgba(235,240,245,.45)" font-family="system-ui">today</text>
+  </svg>`;
+}
+
 /* ── estimated blood level (logic/labs.ts) ── */
 const pctTxt = x => (x >= 0 ? '+' : '−') + Math.abs(Math.round(x * 100)) + '%';
+const unitOf = E => E.kind === 'output' ? '%' : E.unit || 'HOMA-IR';
+/* Cortisol and testosterone right now, from today's hourly curve (logic/labs.ts labAt); null for the steady ones. */
+function labNow(E, D, k, t = Date.now()) { return E && E.kind === 'blood' ? L.labAt(E, D.out.points[k], t, D.wake + H) : null; }
 export function labFor(v, a) {
   const sp = L.specimen(v.profile || {}) || {};
   return L.labEstimate({ k: a.k, score: a.score, lo: a.lo, hi: a.hi, ref: a.ref, pos: a.pos, neg: a.neg, hist: a.hist },
@@ -146,7 +175,7 @@ function labScale(E, color) {
     <text x="${X(E.typical.hi).toFixed(1)}" y="31" text-anchor="middle" font-size="10" fill="rgba(235,240,245,.5)" font-family="system-ui">${fmt(E.typical.hi)}</text>
   </svg>`;
 }
-function labCard(v, a) {
+function labCard(v, a, D) {
   const E = labFor(v, a);
   if (!E) return '';
   if (E.kind === 'none') return `<div class="grp-h">Blood level</div><section class="card frost tight hlb"><div class="eyebrow">${esc(E.test)}</div><p class="hlb-how" style="margin-top:6px">${esc(E.note)}</p></section>`;
@@ -169,6 +198,7 @@ function labCard(v, a) {
         <span class="tag" style="--c:${tcol};color:${tcol}">${tag}</span></div>
       ${labScale(E, a.c)}
       <div class="hlb-rows">
+        ${(() => { const n = labNow(E, D, a.k); return n == null ? '' : row(`Right now (${hm(Date.now())}) — it swings through the day`, '≈ ' + unitTxt(n)); })()}
         ${row(`Typical man your age (${E.typical.age})`, unitTxt(E.typical.value))}
         ${Math.abs(E.ageEffect) >= 0.01 ? row(`Age ${E.typical.age} vs 25`, pctTxt(E.ageEffect)) : ''}
         ${E.anchored ? row(`Your lab · ${fmtDay(E.anchored.date, { day: 'numeric', month: 'short' })}`, `${esc(String(E.anchored.value))} ${esc(E.anchored.unit || '')}`) + row('Change in your logs since', pctTxt(E.anchored.shift))
@@ -186,11 +216,15 @@ export function hormoneRows(v) {
   return `<section class="list frost hlist">${axes.map(a => {
     const info = HORMONE_INFO[a.k] || [a.name, ''], now = D.out.now[a.k];
     const tr = a.trend === 'rising' ? '↗' : a.trend === 'falling' ? '↘' : '→';
+    const E = labFor(v, a), n = labNow(E, D, a.k);
+    const big = E && E.kind !== 'none'
+      ? `<b class="num" style="color:${a.color}">≈${Number(n ?? E.value).toFixed(E.digits)}</b><small>${esc(unitOf(E))}${n != null ? ' now' : ''}</small>`
+      : `<b class="num" style="color:${a.color}">${isNaN(now) ? a.score : now}</b><small>now</small>`;
     return `<button class="li hrow" data-act="hormone" data-k="${a.k}" style="--c:${a.color}">
       <span class="ic" style="--c:${a.c}">${a.ic}</span>
-      <span class="tx"><div class="tt">${esc(info[0])}</div><div class="st"><span style="color:${a.color}">${esc(statusText(a.status))}</span> · today ${a.score} ${tr}</div></span>
+      <span class="tx"><div class="tt">${esc(info[0])}</div><div class="st"><span style="color:${a.color}">${esc(statusText(a.status))}</span> · score ${a.score} ${tr}</div></span>
       ${spark(D.out.points[a.k], a.c)}
-      <span class="hnow"><b class="num" style="color:${a.color}">${isNaN(now) ? a.score : now}</b><small>now</small></span></button>`;
+      <span class="hnow">${big}</span></button>`;
   }).join('')}</section>`;
 }
 
@@ -207,6 +241,7 @@ function hormoneSheet(k) {
       const cw = a.conf >= 0.55 ? ['Good', '#30d158'] : a.conf >= 0.3 ? ['Partial', '#ffb340'] : ['Low', '#ff6b5a'];
       const labs = L.bloodMarkers(v.bloodwork || []).find(m => m.axis === k);
       const E = labFor(v, a), dp = E && E.kind !== 'none' ? Object.fromEntries(E.drivers.map(d => [d.label, d.pct])) : {};
+      const uAt = t => { const x = labNow(E, D, k, t); return x == null ? '' : ` (≈ ${Number(x).toFixed(E.digits)} ${esc(unitOf(E))})`; };
       const dpTxt = l => dp[l] === undefined || Math.abs(dp[l]) < 0.005 ? '' : `<b class="num">≈ ${pctTxt(dp[l])}${E.k === 'insulinSensitivity' ? ' HOMA' : ''}</b>`;
       const drv = (list, title, col) => (list || []).length ? `<div class="hdh" style="color:${col}">${title}</div>` + list.map(x => `<div class="hd"><span style="color:${col}">●</span><span>${esc(plain(x.label))}</span>${dpTxt(x.label)}</div>`).join('') : '';
       return `<div class="hhead" style="--c:${a.color}">
@@ -215,17 +250,18 @@ function hormoneSheet(k) {
             <div class="sub">Today's level <b style="color:var(--t1)">${a.score}</b> (likely ${a.lo}–${a.hi})</div>
             <div class="sub">${a.trend === 'rising' ? '↗ rising' : a.trend === 'falling' ? '↘ falling' : '→ steady'} over recent days</div></div></div>
         <p class="hwhat">${esc(info[1])}</p>
-        ${labCard(v, a)}
+        ${labCard(v, a, D)}
         <div class="grp-h">Through the day</div>
         <div class="seg" style="margin:4px 0 10px">${[['today', 'Today by the hour'], ['days', 'Last 21 days']].map(([x, l]) => `<button class="${hSeg === x ? 'on' : ''}" data-act="h-seg" data-v="${x}">${l}</button>`).join('')}</div>
         <section class="card frost tight">${hSeg === 'today' ? dayChart(k, D, a.c, a.band)
-          + `<div class="row num sub" style="gap:14px;margin-top:6px;font-size:.78rem;flex-wrap:wrap">${pk ? `<span>Peak <b style="color:var(--t1)">${hm(pk.t)}</b> · ${pk.v}</span>` : ''}${lo ? `<span>Low <b style="color:var(--t1)">${hm(lo.t)}</b> · ${lo.v}</span>` : ''}<span>🌙 shaded = sleep</span></div>`
+          + `<div class="row num sub" style="gap:14px;margin-top:6px;font-size:.78rem;flex-wrap:wrap">${pk ? `<span>Peak <b style="color:var(--t1)">${hm(pk.t)}</b> · ${pk.v}${uAt(pk.t)}</span>` : ''}${lo ? `<span>Low <b style="color:var(--t1)">${hm(lo.t)}</b> · ${lo.v}${uAt(lo.t)}</span>` : ''}<span>🌙 shaded = sleep</span></div>`
+          : E && E.kind !== 'none' ? labHistChart(E, a, a.c) + `<div class="sub" style="font-size:.76rem;margin-top:6px">One point per day, in ${esc(unitOf(E))}. Shaded: typical for men your age (dashed line = their middle). The bar on today is its likely range.</div>`
           : histChart(a, a.c, a.band) + `<div class="sub" style="font-size:.76rem;margin-top:6px">One point per day: the engine's daily estimate. The bar on today is its likely range.</div>`}</section>
         ${(D.out.notes[k] || []).length ? `<div class="grp-h">Today</div><section class="card frost tight hnotes">${D.out.notes[k].map(n => `<p>${esc(n)}</p>`).join('')}</section>` : ''}
         ${(a.pos && a.pos.length) || (a.neg && a.neg.length) ? `<div class="grp-h">What moves your level</div><section class="card frost tight hdrv">
           ${drv(a.pos, 'Raising it', '#30d158')}${drv(a.neg, 'Lowering it', '#ff6b5a')}</section>` : ''}
         ${labs ? `<div class="grp-h">Your lab result</div><section class="card frost tight"><b>${esc(labs.latest.marker)} ${esc(String(labs.latest.value))} ${esc(labs.latest.unit || '')}</b>
-          <div class="sub">${fmtDay(labs.latest.date, { day: 'numeric', month: 'short', year: 'numeric' })} · shown beside the estimate, never mixed into it</div></section>` : ''}
+          <div class="sub">${fmtDay(labs.latest.date, { day: 'numeric', month: 'short', year: 'numeric' })} · ${E && E.anchored ? 'anchors the blood-level estimate above' : 'shown beside the estimate'}; it never changes the 0–100 score</div></section>` : ''}
         <div class="hconf"><span>Confidence <b style="color:${cw[1]}">${cw[0]}</b></span>${(a.missing || []).filter(x => !/^(alcohol|illness|nicotine)$/i.test(x)).length ? `<span class="sub">Log ${esc((a.missing || []).filter(x => !/^(alcohol|illness|nicotine)$/i.test(x)).slice(0, 3).join(', ').toLowerCase())} to sharpen it</span>` : ''}</div>
         <p class="sub" style="line-height:1.5;margin:10px 0 0">The 0–100 score is the engine's estimate of physiological state; the blood level places it on published ranges for men your age. Both are estimates from your logs, not measurements — only a blood test gives your actual number. The hourly shape uses typical body-clock rhythms and today's events.</p>`;
     },

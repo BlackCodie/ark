@@ -2434,9 +2434,12 @@ __exportStar(require("./labs"), exports);
   "./labs": function (exports, module, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.LAB_SPECS = void 0;
+exports.LAB_DIURNAL_SOURCES = exports.LAB_DIURNAL = exports.LAB_SPECS = void 0;
 exports.labSlope = labSlope;
 exports.labEstimate = labEstimate;
+exports.labAt = labAt;
+exports.labSeries = labSeries;
+exports.labVerdict = labVerdict;
 const AGE_REF = 25;
 const ENGINE_SD = 15;
 const Z80 = 1.2816;
@@ -2646,11 +2649,68 @@ function labEstimate(axis, opts) {
     return {
         k: axis.k, kind: axis.k === 'growthHormone' ? 'output' : 'blood',
         test: spec.test, unit: spec.unit, digits: spec.step < 1 ? (String(spec.step).split('.')[1] || '').length : 0,
-        value: fix(value, spec.step), lo: fix(lo, spec.step), hi: fix(hi, spec.step), si, insulin,
+        value: fix(value, spec.step), lo: fix(lo, spec.step), hi: fix(hi, spec.step), raw: value, si, insulin,
         typical: { value: fix(typ, spec.step), lo: fix(typLo, spec.step), hi: fix(typHi, spec.step), who: spec.rangeWho, age: Math.round(age) },
         vsTypical: value / typ - 1, ageEffect, lifestyle: Math.exp(lifeLn) - 1, drivers,
         better: spec.better, anchored, how: spec.how, sources: spec.sources,
     };
+}
+/* ── through the day ──────────────────────────────────────────────────────────
+ * The estimate above is what a morning test would read. Cortisol and testosterone
+ * swing a lot within a day, so a "right now" number needs the hourly shape
+ * (logic/hourly.ts). Log-change per hourly point, calibrated on hourly.ts's typical
+ * day (wake 07:00, asleep 23:00) against:
+ *   testosterone — 20–25 % lower at 16:00 than 08:00 in men 30–40, the swing
+ *     shrinking with age (Brambilla 2009, doi:10.1210/jc.2008-1902): 21 points at 35;
+ *   cortisol — ~400 nmol/L at 7 am vs ~120 at 7 pm (Lung 2018): 34 points.
+ * The other axes barely move within a day, or are only tested fasting (HOMA-IR), so
+ * they get no "now" number.
+ */
+exports.LAB_DIURNAL = {
+    testosterone: Math.log(1 / 0.775) / 21,
+    freeTestosterone: Math.log(1 / 0.775) / 21,
+    cortisol: Math.log(1 / 0.30) / 34,
+};
+exports.LAB_DIURNAL_SOURCES = [
+    { cite: 'Brambilla et al. 2009, J Clin Endocrinol Metab — testosterone 20–25 % lower at 4 pm than 8 am', doi: '10.1210/jc.2008-1902' },
+    SRC.lung,
+];
+/**
+ * The level at `t`, from the hourly curve. `tTest` is when a morning test would be drawn
+ * (about an hour after waking): the estimate's own value holds there.
+ */
+function labAt(E, pts, t, tTest) {
+    const kd = exports.LAB_DIURNAL[E.k], spec = exports.LAB_SPECS[E.k];
+    if (!kd || !spec || !pts || pts.length < 2)
+        return null;
+    const at = (x) => pts.reduce((a, p) => (Math.abs(p.t - x) < Math.abs(a.t - x) ? p : a), pts[0]).v;
+    return fix(E.raw * Math.exp(kd * (at(t) - at(tTest))), spec.step);
+}
+/** The daily line in the test's units: each day's engine score placed the same way as today's. */
+function labSeries(E, axis) {
+    const spec = exports.LAB_SPECS[E.k];
+    if (!spec)
+        return [];
+    const b = labSlope(E.k);
+    return (axis.hist || []).filter(h => h && isFinite(h[1]))
+        .map(h => ({ date: h[0], v: fix(E.raw * Math.exp(spec.dir * b * (h[1] - axis.score)), spec.step) }));
+}
+/**
+ * Where the estimate sits for someone this age, in words. Behaviour moves these levels
+ * inside the normal range, so the verdicts are "above / typical / below typical",
+ * never a diagnosis.
+ */
+function labVerdict(E) {
+    const v = E.vsTypical;
+    if (E.better === 'band') {
+        const a = Math.abs(v);
+        return a <= 0.15 ? { verdict: 'good', text: 'mid-range' } : a <= 0.3 ? { verdict: 'typical', text: v > 0 ? 'high side of typical' : 'low side of typical' }
+            : { verdict: 'watch', text: v > 0 ? 'above typical' : 'below typical' };
+    }
+    const up = E.better === 'higher' ? v : -v;
+    return up >= 0.05 ? { verdict: 'good', text: E.better === 'lower' ? 'better than typical' : 'above typical' }
+        : up >= -0.1 ? { verdict: 'typical', text: 'typical' }
+            : { verdict: 'watch', text: E.better === 'lower' ? 'worse than typical' : 'below typical' };
 }
 
   },
@@ -2936,7 +2996,13 @@ function relativeStrength(sessions, weights, today, opts = {}) {
         });
     });
     const lifts = [];
-    [...by.values()].filter(L => L.pts.size >= 3).sort((a, b) => b.pts.size - a.pts.size).slice(0, 4).forEach(L => {
+    // "× body weight" only means something for a free-weight compound lift: a machine's number depends on its
+    // leverage (a 150 kg pec deck is not 1.7× body weight of strength), and an isolation lift is not a strength
+    // measure. Use those when you have them; machines and isolation only when nothing else qualifies.
+    const freeCompound = (n) => { const x = (0, exercises_1.findExercise)(n); return !!x && x.mech === 'compound' && x.e !== 'machine' && x.e !== 'cable'; };
+    const enough = [...by.values()].filter(L => L.pts.size >= 3);
+    const pool = enough.some(L => freeCompound(L.n)) ? enough.filter(L => freeCompound(L.n)) : enough;
+    pool.sort((a, b) => b.pts.size - a.pts.size).slice(0, 4).forEach(L => {
         const series = [...L.pts.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, e]) => { const bw = bwOn(date); return bw ? { date, e1rm: Math.round(e * 10) / 10, bw, rel: Math.round(e / bw * 1000) / 1000 } : null; })
             .filter(Boolean);
         if (series.length < 3)
@@ -7734,6 +7800,7 @@ exports.sundayBodyLine = sundayBodyLine;
  * Each marker is capped, the result is a range, and it needs your age plus two markers. It is an estimate
  * to steer by, not a diagnosis — the markers overlap, so the sum overstates precision; the range says so.
  */
+const labs_1 = require("./labs");
 const series_1 = require("./series");
 const GOMPERTZ = 8;
 const yrs = (hr, units) => GOMPERTZ * Math.log2(hr) * units;
@@ -7883,14 +7950,23 @@ function systemsReport(inp) {
     }
     // hormones (ARK's estimate)
     {
+        // Each axis as its estimated blood level against men of the same age (logic/labs.ts).
+        // (This row used to count a score "in band" when it sat inside its own credible interval — always true.)
         const ax = ((inp.endo && inp.endo.axes) || []).filter(a => typeof a.score === 'number');
-        if (ax.length) {
-            const inBand = (a) => a.lo == null || a.hi == null || (a.score >= a.lo && a.score <= a.hi);
-            const off = ax.filter(a => !inBand(a)).sort((a, b) => Math.abs(b.score - ((b.lo + b.hi) / 2)) - Math.abs(a.score - ((a.lo + a.hi) / 2)));
-            const s = Math.round(ax.filter(inBand).length / ax.length * 100);
-            const w = off[0];
-            rows.push({ key: 'hormones', name: 'Hormones', icon: '⚗️', grade: grade(s), score: s, line: ax.filter(inBand).length + ' of ' + ax.length + ' in their band (estimate, not blood)',
-                weakest: w ? w.name + ' ' + (w.score < (w.lo || 0) ? 'low' : 'high') : null, action: w && w.neg && w.neg[0] ? 'Biggest drag: ' + w.neg[0].label : w ? 'Open Endocrine for what moves it' : null });
+        const est = ax.map(a => { var _a, _b, _c; return ({ a, E: (0, labs_1.labEstimate)({ k: a.k, score: a.score, lo: (_a = a.lo) !== null && _a !== void 0 ? _a : a.score, hi: (_b = a.hi) !== null && _b !== void 0 ? _b : a.score, ref: a.ref, pos: a.pos, neg: a.neg }, { age: (_c = inp.age) !== null && _c !== void 0 ? _c : null, sex: inp.sex || 'male', today: T }) }); })
+            .filter((x) => !!x.E && x.E.kind !== 'none');
+        if (est.length) {
+            const vs = est.map(x => ({ ...x, V: (0, labs_1.labVerdict)(x.E) }));
+            const s = Math.round(vs.reduce((t, x) => t + (x.V.verdict === 'good' ? 100 : x.V.verdict === 'typical' ? 72 : 35), 0) / vs.length);
+            const pick = (k) => vs.find(x => x.a.k === k);
+            const nf = (E) => E.value.toFixed(E.digits) + (E.unit ? ' ' + E.unit : '');
+            const key = ['testosterone', 'cortisol', 'igf1'].map(pick).filter(Boolean).map(x => ({ testosterone: 'T', cortisol: 'cortisol', igf1: 'IGF-1' }[x.a.k] + ' ≈ ' + nf(x.E)));
+            const watch = vs.filter(x => x.V.verdict === 'watch').sort((p, q) => Math.abs(q.E.vsTypical) - Math.abs(p.E.vsTypical));
+            const w = watch[0];
+            rows.push({ key: 'hormones', name: 'Hormones', icon: '⚗️', grade: grade(s), score: s,
+                line: key.join(' · ') + ' — ' + (watch.length ? watch.length + ' below typical for ' + (inp.age ? 'age ' + Math.round(inp.age) : 'your age') : 'typical or better for ' + (inp.age ? 'age ' + Math.round(inp.age) : 'your age')) + ' (estimates, not blood)',
+                weakest: w ? w.a.name + ' ' + w.V.text : null,
+                action: w && w.a.neg && w.a.neg[0] ? 'Biggest drag: ' + w.a.neg[0].label : w ? 'Open Endocrine for what moves it' : null });
         }
         else
             rows.push({ key: 'hormones', name: 'Hormones', icon: '⚗️', grade: null, score: null, line: 'not estimated yet — needs a few logged days on the PC', weakest: null, action: null });

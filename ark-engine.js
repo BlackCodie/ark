@@ -105,6 +105,10 @@ exports.LATENT_HALF_LIFE_DAYS = {
     aromataseActivity: 12.0,
     /** Tissue stores of iodine, selenium, iron and zinc refill slowly. */
     thyroidSubstrate: 20.0,
+    /** Amino-acid supply to the liver follows intake within days. */
+    proteinSupply: 3.0,
+    /** Fat mass and its metabolic effects change over weeks. */
+    adiposity: 12.0,
 };
 /**
  * REFERENCE PHYSIOLOGY — what "typical" looks like, used to normalise inputs.
@@ -415,7 +419,7 @@ const BASE_INPUT_TO_LATENT = [
     },
     // ── Recovery debt ──
     {
-        from: 'sleepDuration', to: 'recoveryDebt', effect: -0.50, shape: 'threshold', sd: 0.14,
+        from: 'sleepDuration', to: 'recoveryDebt', effect: -0.80, shape: 'threshold', sd: 0.14,
         mechanism: 'Sleep is the primary anabolic and glymphatic recovery window; restriction accrues measurable debt.',
         evidence: 'A', source: 'consensus-textbook',
     },
@@ -519,6 +523,18 @@ const BASE_INPUT_TO_LATENT = [
         from: 'stress', to: 'autonomicBalance', effect: -0.30, shape: 'linear', sd: 0.18,
         mechanism: 'Psychological stress shifts autonomic balance toward sympathetic dominance.',
         evidence: 'A', source: 'consensus-textbook',
+    },
+    // ── Adiposity ──
+    {
+        from: 'bodyFatPercent', to: 'adiposity', effect: 0.60, shape: 'saturating', sd: 0.12,
+        mechanism: 'Body fat relative to the healthy point sets adipose-tissue metabolic load: free fatty acids, adipokines and ectopic fat.',
+        evidence: 'A', source: 'consensus-textbook',
+    },
+    // ── Protein supply (hepatic amino-acid availability) ──
+    {
+        from: 'proteinIntake', to: 'proteinSupply', effect: 0.60, shape: 'saturating', sd: 0.15,
+        mechanism: 'Dietary protein sets amino-acid supply to the liver, which gates IGF-1 synthesis independently of energy.',
+        evidence: 'B', source: 'consistent-rct',
     },
     // ── Anabolic drive ──
     {
@@ -691,9 +707,9 @@ const TIMING_INPUT_EDGES = [
         evidence: 'B', source: 'meta-analysis',
     },
     {
-        from: 'ashwagandha', to: 'stressAdaptation', effect: 0.2, shape: 'saturating', sd: 0.3,
-        mechanism: 'Withanolides blunt HPA-axis reactivity; randomised trials show a modest serum cortisol reduction after 6–8 weeks.',
-        evidence: 'B', source: 'meta-analysis', note: 'Effect on perceived stress is less consistent than on cortisol.',
+        from: 'ashwagandha', to: 'stressAdaptation', effect: 0.80, shape: 'linear', sd: 0.3,
+        mechanism: 'Withanolides blunt HPA-axis reactivity; pooled trials show serum cortisol about 1.2 µg/dL lower after 6–8 weeks.',
+        evidence: 'B', source: 'meta-analysis', note: 'Albalawi 2025, doi:10.1177/02601060251363647. Effect on perceived stress is not significant; trials are small.',
     },
 ];
 exports.INPUT_TO_LATENT = [...BASE_INPUT_TO_LATENT, ...TIMING_INPUT_EDGES];
@@ -766,7 +782,7 @@ exports.LATENT_TO_HORMONE = [
         evidence: 'A', source: 'consensus-textbook',
     },
     {
-        from: 'stressAdaptation', to: 'cortisol', effect: -0.28, shape: 'linear', sd: 0.18,
+        from: 'stressAdaptation', to: 'cortisol', effect: -0.50, shape: 'linear', sd: 0.18,
         mechanism: 'Adapted individuals mount a smaller cortisol response to an equivalent stressor.',
         evidence: 'B', source: 'meta-analysis',
     },
@@ -828,9 +844,14 @@ exports.LATENT_TO_HORMONE = [
         evidence: 'A', source: 'consensus-textbook',
     },
     {
-        from: 'energyAvailability', to: 'igf1', effect: 0.40, shape: 'threshold', sd: 0.14,
-        mechanism: 'IGF-1 is strongly nutrition-dependent and falls early in energy restriction, making it a sensitive deficit marker.',
-        evidence: 'A', source: 'consensus-textbook',
+        from: 'proteinSupply', to: 'igf1', effect: 0.95, shape: 'saturating', sd: 0.16,
+        mechanism: 'Protein intake is a key determinant of circulating IGF-1 in humans: 1.67 → 0.95 g/kg for three weeks lowered it from 194 to 152 ng/mL.',
+        evidence: 'B', source: 'consistent-rct', note: 'Fontana et al. 2008, Aging Cell, doi:10.1111/j.1474-9726.2008.00417.x',
+    },
+    {
+        from: 'energyAvailability', to: 'igf1', effect: 0.15, shape: 'threshold', sd: 0.14,
+        mechanism: 'Fasting and severe deficits lower IGF-1, but calorie restriction with adequate protein does not — in humans, unlike rodents.',
+        evidence: 'A', source: 'consistent-rct', note: 'CALERIE 2-year trial: no change in IGF-1 (Fontana 2016, doi:10.1111/acel.12400). Threshold shape keeps only severe deficits.',
     },
     {
         from: 'inflammationLoad', to: 'igf1', effect: -0.22, shape: 'saturating', sd: 0.20,
@@ -854,9 +875,19 @@ exports.LATENT_TO_HORMONE = [
         evidence: 'A', source: 'consensus-textbook',
     },
     {
-        from: 'recoveryDebt', to: 'insulinSensitivity', effect: -0.30, shape: 'threshold', sd: 0.16,
-        mechanism: 'A single week of sleep restriction measurably reduces whole-body insulin sensitivity.',
-        evidence: 'A', source: 'consistent-rct',
+        from: 'recoveryDebt', to: 'insulinSensitivity', effect: -1.00, shape: 'linear', sd: 0.16,
+        mechanism: 'Four nights of 4.5 h in bed reduce whole-body and fat-cell insulin sensitivity (~16 % and ~30 %).',
+        evidence: 'A', source: 'consistent-rct', note: 'Broussard et al. 2012, Ann Intern Med, doi:10.7326/0003-4819-157-8-201210160-00005',
+    },
+    {
+        from: 'adiposity', to: 'insulinSensitivity', effect: -0.80, shape: 'saturating', sd: 0.14,
+        mechanism: 'Excess adipose tissue — visceral and ectopic fat especially — is the strongest determinant of insulin resistance; leanness improves sensitivity.',
+        evidence: 'A', source: 'consensus-textbook',
+    },
+    {
+        from: 'adiposity', to: 'testosterone', effect: -0.35, shape: 'overload', sd: 0.18,
+        mechanism: 'Excess fat suppresses LH pulsatility through leptin, inflammation and estradiol feedback; leanness beyond the healthy point adds nothing.',
+        evidence: 'B', source: 'observational', note: 'Wu et al. 2008, doi:10.1210/jc.2007-1972',
     },
     {
         from: 'circadianAlignment', to: 'insulinSensitivity', effect: 0.25, shape: 'linear', sd: 0.18,
@@ -997,6 +1028,11 @@ exports.HORMONE_TO_HORMONE = [
         mechanism: 'Insulin resistance and hyperinsulinaemia suppress hepatic SHBG, which raises the free fraction while total testosterone falls.',
         evidence: 'A', source: 'consensus-textbook',
         note: 'Modelled on the free fraction only; the total-T pathway carries the opposing metabolic effect.',
+    },
+    {
+        from: 'insulinSensitivity', to: 'testosterone', effect: 0.30, shape: 'linear', sd: 0.18,
+        mechanism: 'Insulin resistance suppresses hepatic SHBG, and with less binding protein total testosterone falls — the main reason it is lower with excess body fat.',
+        evidence: 'A', source: 'observational', note: 'Overweight men: total T ~2.3 nmol/L lower, obese ~5.1 (Wu et al. 2008, doi:10.1210/jc.2007-1972).',
     },
     {
         from: 'thyroid', to: 'insulinSensitivity', effect: 0.15, shape: 'linear', sd: 0.22,
@@ -2608,8 +2644,10 @@ function classifyAdaptation(l, h, trainingVolume, strengthProgression) {
     const regressing = (strengthProgression ?? 50) < 45;
     const lowVolume = trainingVolume !== undefined
         && trainingVolume < constants_1.REFERENCE.trainingVolumeSets * 0.4;
-    if (lowVolume && anabolic < 0.45)
-        return 'detraining';
+    // Not training this week is never "adapting": a short break holds adaptations (Bosquet 2013 —
+    // losses grow with the length of the break), a long one with a falling anabolic state loses them.
+    if (lowVolume)
+        return anabolic < 0.45 ? 'detraining' : 'maintaining';
     if (debt > 0.62) {
         // High debt with falling performance and a suppressed anabolic profile is
         // the non-functional pattern; high debt with intact performance is not.
@@ -3059,8 +3097,10 @@ exports.SUBSYSTEM_ORDER = [
     // feeds them, and the axes they gate depend on them being settled.
     'thyroidSubstrate',
     'aromataseActivity',
+    'adiposity',
     'circadianAlignment',
     'energyAvailability',
+    'proteinSupply',
     'autonomicBalance',
     'recoveryDebt',
     'inflammationLoad',
@@ -3137,6 +3177,8 @@ exports.LATENT_LABELS = {
     autonomicBalance: 'Autonomic balance',
     aromataseActivity: 'Aromatase activity',
     thyroidSubstrate: 'Thyroid cofactor status',
+    proteinSupply: 'Protein supply',
+    adiposity: 'Body fat load',
 };
 
   },
