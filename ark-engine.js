@@ -66,9 +66,9 @@ exports.HALF_LIFE_DAYS = {
     /** Tracks total T plus SHBG, and SHBG itself moves slowly. */
     freeTestosterone: 5.0,
     /** Hepatic output integrating GH and nutrition over one to two weeks. */
-    igf1: 7.0,
+    igf1: 3.0,
     /** Slowest axis modelled; deiodinase and TSH set-point shift over weeks. */
-    thyroid: 14.0,
+    thyroid: 1.5,
 };
 /**
  * LATENT STATE HALF-LIVES, in days.
@@ -99,7 +99,7 @@ exports.LATENT_HALF_LIFE_DAYS = {
     stressAdaptation: 10.0,
     anabolicDrive: 3.0,
     catabolicPressure: 1.5,
-    energyAvailability: 2.0,
+    energyAvailability: 1.0,
     autonomicBalance: 2.0,
     /** Tracks adipose mass, which changes over weeks, not days. */
     aromataseActivity: 12.0,
@@ -488,7 +488,7 @@ const BASE_INPUT_TO_LATENT = [
     },
     // ── Energy availability ──
     {
-        from: 'calorieIntake', to: 'energyAvailability', effect: 0.55, shape: 'threshold', sd: 0.12,
+        from: 'calorieIntake', to: 'energyAvailability', effect: 0.55, shape: 'linear', sd: 0.12,
         mechanism: 'Energy availability is intake minus exercise expenditure relative to lean mass; it gates the entire endocrine system.',
         evidence: 'A', source: 'clinical-guideline',
         note: 'Interpreted against calorieMaintenance when supplied; otherwise against an age/sex prior.',
@@ -562,6 +562,11 @@ const BASE_INPUT_TO_LATENT = [
         from: 'stress', to: 'catabolicPressure', effect: 0.35, shape: 'linear', sd: 0.16,
         mechanism: 'Sustained glucocorticoid exposure promotes proteolysis and opposes anabolic signalling.',
         evidence: 'A', source: 'consensus-textbook',
+    },
+    {
+        from: 'fastingHours', to: 'energyAvailability', effect: -0.90, shape: 'excess', sd: 0.2,
+        mechanism: 'A fast beyond ~18 h is a total energy deficit the daily calorie ratio cannot express (it clamps at ~30 % below maintenance): T3 falls ~20 % within 30 h and IGF-1 within days. Daily 16:8 windows cost nothing here.',
+        evidence: 'B', source: 'consistent-rct', note: 'Hugues 1984 doi:10.1530/acta.0.1050194; Palmblad 1977 doi:10.1111/j.0954-6820.1977.tb15648.x; Clemmons 1981 doi:10.1210/jcem-53-6-1247',
     },
     {
         from: 'fastingHours', to: 'catabolicPressure', effect: 0.15, shape: 'threshold', sd: 0.28,
@@ -896,7 +901,7 @@ exports.LATENT_TO_HORMONE = [
     },
     // ── Thyroid ──
     {
-        from: 'energyAvailability', to: 'thyroid', effect: 0.50, shape: 'threshold', sd: 0.13,
+        from: 'energyAvailability', to: 'thyroid', effect: 1.80, shape: 'linear', sd: 0.13,
         mechanism: 'Peripheral T4→T3 conversion falls during energy restriction to conserve energy — the dominant lever on this axis.',
         evidence: 'A', source: 'consensus-textbook',
     },
@@ -1424,8 +1429,9 @@ function normaliseInputs(inputs) {
     else {
         const maint = inputs.calorieMaintenance ?? maintenancePrior(sex, inputs.age);
         const ratio = inputs.calorieIntake / Math.max(1, maint);
-        // A 20% deficit (ratio 0.8) is one full unit of negative drive.
-        put(mk('calorieIntake', (0, transfer_1.deviation)(ratio, 1.0, 0.2)));
+        // Graded: a 40 % deficit (ratio 0.6) is one full unit of negative drive, a total fast saturates.
+        // (At 0.2 a modest 16 % deficit already read as near-starvation — the same energy state as a 10-day fast.)
+        put(mk('calorieIntake', (0, transfer_1.deviation)(ratio, 1.0, 0.4)));
     }
     // Body fat is a signed deviation from a sex-specific optimum. Both directions
     // matter: too high drives aromatisation and inflammation, too low suppresses

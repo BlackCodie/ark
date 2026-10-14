@@ -187,7 +187,7 @@ function secRecovery(v) {
   // Strength imprint per group (no training pick — TRAIN NEXT was removed from Body Arch, 2026-10-04).
   const byImp = S.slice().sort((a, b) => b.imprint - a.imprint);
   H += card(`<div class="radar-row"><div>${radarSvg(S)}</div><div class="np">
-    <div class="hl">Strength imprint</div><div class="why">How strong each group is against your best — further out is stronger.</div>
+    <div class="hl">Strength imprint</div><div class="why">How strong each group is for your body weight — your best lifts against population standards. Further out is stronger.</div>
     ${byImp.map(s => `<div class="pick">${esc(s.name.charAt(0) + s.name.slice(1).toLowerCase())}<span class="tag" style="--c:${s.imprint >= 50 ? '#30d158' : s.imprint >= 20 ? '#ffb340' : 'rgba(235,240,245,.45)'}">${s.imprint}%</span></div>`).join('')}
   </div></div>`, 'tight').replace('card frost tight', 'card frost tight" style="margin-top:10px');
   return H;

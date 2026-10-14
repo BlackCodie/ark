@@ -181,12 +181,20 @@ function derivedStrength(vol30, slug) {
     const ref = setTarget(slug) * 4 * 8 * 40;
     return Math.round(10 * vol30 / (vol30 + ref) * 10) / 10;
 }
-function strengthFor(slug, metric, training) {
+/**
+ * Strength per muscle, 0–10. A manual rating wins; then your lifts — the best estimated 1RM of the muscle's
+ * prime movers against population standards for your body weight, held ~3 weeks without training and fading
+ * slowly after (tissue.ts; Mujika & Padilla 2000, Bosquet 2013); tonnage only when no lift covers the muscle.
+ * Tonnage measured training volume, not strength: it read a 120 kg bencher as 2/10 and fell to zero a month
+ * after the last session, while real strength holds for weeks (2026-10-14).
+ */
+function strengthFor(slug, metric, training, lift) {
     const manual = (0, sanitize_1.numOr)(metric.strength, 0, 10, 0);
     const derived = derivedStrength(training.vol30, slug);
-    return manual > 0
-        ? { value: manual, manual: true, derived }
-        : { value: derived, manual: false, derived };
+    if (manual > 0)
+        return { value: manual, manual: true, derived };
+    const fromLift = lift != null && isFinite(lift) && lift > 0 ? Math.round(Math.min(10, lift / 10) * 10) / 10 : null;
+    return fromLift != null ? { value: fromLift, manual: false, derived } : { value: derived, manual: false, derived };
 }
 exports.NEUTRAL_SYSTEMIC = { factor: 1, reason: null, confidence: 0 };
 function bodyState(input) {
@@ -232,7 +240,7 @@ function bodyState(input) {
             state = 'recovering';
         const target = setTarget(slug);
         const deficit = Math.max(0, target - t.weekSets);
-        const str = strengthFor(slug, md, t);
+        const str = strengthFor(slug, md, t, input.liftStrength ? input.liftStrength[slug] : null);
         const mob = md.mobility;
         // Priority: what to train next.
         //   readiness  0 while repairing, 1 once past the window
@@ -2546,7 +2554,7 @@ exports.LAB_SPECS = {
         range: [76, 190], rangeWho: 'adults (routine lab range)', cv: 0.08, female: 'same',
         lab: { re: /^(total\s*)?t3$|^triiodothyronine$|^total triiodothyronine$/i, not: /free|ft3|reverse|rt3|uptake/i,
             units: [{ re: /^ng\/?dl$/i, f: 1 }, { re: /^nmol\/?l$/i, f: 65.1 }] },
-        how: 'Total T3 on a routine thyroid panel (usually with TSH and free T4). It is the thyroid number that drops when food runs short for weeks.',
+        how: 'Total T3 on a routine thyroid panel (usually with TSH and free T4). It is the thyroid number that drops when food runs short — by about a fifth within a day and a half of fasting.',
         sources: [SRC.jun, SRC.weiss],
     },
 };
@@ -3969,8 +3977,8 @@ function mind(inp0) {
         return { v: r0(clamp(base + parts.reduce((a, [, d]) => a + d, 0))), drivers };
     };
     const stressPts = ck.stress != null ? (Number(ck.stress) - 4) * 6 : 0;
+    // Sleep debt is already inside alertNow (process S carries the short nights), so it is not taken off twice.
     const focus = build(alertNow * 0.85 + 8, [
-        ['Sleep debt', -debt * 5],
         ['Stress', ck.stress != null ? -Math.max(0, Number(ck.stress) - 5) * 2.5 : 0],
         ['Illness', inp.sick ? -10 : 0],
     ]);
@@ -5043,17 +5051,11 @@ function readiness(d0, goals0, tagDefs = [], base0 = null) {
     let score = 0, max = 0, factors = 0;
     const add = (q, w) => { score += q * w; max += w; factors++; };
     if (d.sleep)
-        add(Math.min(1, d.sleep / 8), 22);
-    if (d.prot)
-        add(Math.min(1, d.prot / goals.prot), 18);
-    if (d.water)
-        add(Math.min(1, d.water / goals.water), 13);
+        add(d.sleep >= 7 ? 1 : Math.max(0, (d.sleep - 3) / 4), 22);
     if (set(d.energy))
         add(d.energy / 10, 22);
     if (set(d.mood))
         add(d.mood / 5, 13);
-    if (d.steps)
-        add(Math.min(1, d.steps / goals.steps), 8);
     // HRV and resting HR against YOUR normal — the best-established overnight recovery markers (Plews 2013;
     // Buchheit 2014). A raw number means nothing across people, so without a baseline they are left out,
     // never scored. At your normal they read as a decent 0.75; ~20 % above normal HRV (or ~10 % below normal
@@ -5064,13 +5066,13 @@ function readiness(d0, goals0, tagDefs = [], base0 = null) {
         add(Math.max(0, Math.min(1, 0.75 - (d.rhr / base.rhr - 1) * 2.5)), 10);
     if (set(d.stress))
         add((10 - d.stress) / 10, 12);
-    if (d.cal) {
-        const cp = d.cal / goals.cal;
-        add(cp >= 0.7 && cp <= 1.3 ? Math.min(1, 1 - Math.abs(cp - 1) * 0.5) : 0.3, 7);
-    }
+    void goals; // kept in the signature: callers pass them, today's intake no longer scores readiness
     if (!factors || max <= 0)
         return null;
-    const pct = Math.max(0, Math.min(100, (score / max) * 100 + tagDelta(d, tagDefs)));
+    // Shrink toward a typical 70 with the weight of about half a marker: one perfect night alone is "good"
+    // (~89), not "elite" — certainty grows as more markers agree (2026-10-14).
+    const PRIOR = 0.7, PRIOR_W = 12;
+    const pct = Math.max(0, Math.min(100, ((score + PRIOR * PRIOR_W) / (max + PRIOR_W)) * 100 + tagDelta(d, tagDefs)));
     return Math.round(pct);
 }
 
@@ -5118,6 +5120,7 @@ const series_1 = require("./series");
 const strong_1 = require("./strong");
 const lifts_1 = require("./lifts");
 const fuel_1 = require("./fuel");
+const labs_1 = require("./labs");
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 const r1 = (x) => Math.round(x * 10) / 10;
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
@@ -5279,13 +5282,20 @@ function rebuildModel(inp) {
     const tA = ax.find(a => a.k === 'testosterone'), cA = ax.find(a => a.k === 'cortisol');
     let hPen = null, hTxt = 'not estimated yet';
     if (tA || cA) {
-        const tLow = tA && tA.lo != null && tA.score < tA.lo ? Math.min(0.1, (tA.lo - tA.score) / Math.max(1, tA.lo) * 0.25) : 0;
-        const cHigh = cA && cA.hi != null && cA.score > cA.hi ? Math.min(0.05, (cA.score - cA.hi) / Math.max(1, 100 - cA.hi) * 0.15) : 0;
+        // Judged on the estimated blood level against men of your age (labs.ts) — the band used to be the score's own
+        // credible interval, which the score always sits inside, so this brake never applied. Low testosterone slows
+        // muscle gain (Bhasin 2001); inside the normal range levels do not predict it (Morton 2016).
+        const est = (a) => { var _a, _b, _c; return a ? (0, labs_1.labEstimate)({ k: a.k, score: a.score, lo: (_a = a.lo) !== null && _a !== void 0 ? _a : a.score, hi: (_b = a.hi) !== null && _b !== void 0 ? _b : a.score, ref: a.ref }, { age: (_c = inp.age) !== null && _c !== void 0 ? _c : null, sex: inp.sex || 'male', today: T }) : null; };
+        const tE = est(tA), cE = est(cA);
+        const tOk = tE && tE.kind === 'blood' ? tE : null, cOk = cE && cE.kind === 'blood' ? cE : null;
+        const tLow = tOk && tOk.value < tOk.typical.lo ? Math.min(0.1, (tOk.typical.lo - tOk.value) / tOk.typical.lo * 0.5) : 0;
+        const cHigh = cOk && cOk.value > cOk.typical.hi ? Math.min(0.05, (cOk.value - cOk.typical.hi) / cOk.typical.hi * 0.3) : 0;
         hPen = Math.min(0.12, tLow + cHigh);
-        hTxt = [tA ? 'testosterone ' + Math.round(tA.score) + (tLow ? ' (below band)' : '') : null, cA ? 'cortisol ' + Math.round(cA.score) + (cHigh ? ' (above band)' : '') : null].filter(Boolean).join(' · ');
+        hTxt = [tOk ? 'testosterone ≈ ' + tOk.value + ' ' + tOk.unit + (tLow ? ' (below typical)' : '') : tA ? 'testosterone ' + Math.round(tA.score) : null,
+            cOk ? 'cortisol ≈ ' + cOk.value.toFixed(cOk.digits) + ' ' + cOk.unit + (cHigh ? ' (above typical)' : '') : cA ? 'cortisol ' + Math.round(cA.score) : null].filter(Boolean).join(' · ');
     }
     factors.push({ key: 'hormones', name: 'Hormones', known: hPen != null, value: hTxt + (hPen != null ? ' · ARK estimate' : ''),
-        effect: -(hPen || 0), note: hPen == null ? 'Needs the endocrine estimate from your PC.' : hPen > 0.005 ? 'Outside its band — the estimate follows sleep and energy, so those move it.' : 'Inside the normal band, where hormone levels do not predict muscle gain.',
+        effect: hPen ? -hPen : 0, note: hPen == null ? 'Needs the endocrine estimate from your PC.' : hPen > 0.005 ? 'Outside the typical range for your age — the estimate follows sleep, energy and body fat, so those move it.' : 'Inside the typical range for your age, where hormone levels do not predict muscle gain.',
         source: 'Morton 2016, J Appl Physiol · Bhasin 2001, Am J Physiol · Leproult 2011, JAMA' });
     // 3 · energy — from the weight trend (≥4 weigh-ins over ≥10 of the last 21 days)
     const W = inp.weights || {};
@@ -6131,8 +6141,10 @@ function startOfWeek(d) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PLATEAU_HOURS = exports.CLEAR_HOURS = void 0;
 exports.decaySoreness = decaySoreness;
-/** Hours until each severity clears completely. Worse DOMS lasts longer. */
-exports.CLEAR_HOURS = { 1: 48, 2: 72, 3: 96 };
+/** Hours until each severity clears completely. Worse DOMS lasts longer: it peaks at 24–72 h and severe
+ *  soreness takes 5–7 days to subside (Cheung, Hume & Maxwell 2003, doi:10.2165/00007256-200333020-00005).
+ *  4 = "injured": a strain, not DOMS — two weeks (a grade-I strain heals in 1–3), unless you rate it again. */
+exports.CLEAR_HOURS = { 1: 48, 2: 96, 3: 168, 4: 336 };
 /** Soreness holds at full value through the peak, then fades. */
 exports.PLATEAU_HOURS = 24;
 function decaySoreness(raw, ts, now = Date.now()) {
@@ -6765,6 +6777,7 @@ exports.prLabel = prLabel;
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.survivability = survivability;
+const systems_1 = require("./systems");
 const clamp = (n, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, n));
 /** Saturating 0-100 map: `at` is the value that should score `target`. */
 function curve(value, at, target = 70) {
@@ -6775,6 +6788,7 @@ function curve(value, at, target = 70) {
     return clamp(Math.round(100 * value / (value + k)));
 }
 function survivability(input) {
+    var _a;
     const b = input.body || null;
     const e = input.endo || null;
     const d = (e && e.derived) || {};
@@ -6789,8 +6803,10 @@ function survivability(input) {
     {
         const vo2 = input.vo2max || 0;
         const mins = input.cardioMinutes || 0;
-        // A measured VO2max is worth far more than an inferred one.
-        const score = vo2 > 0 ? curve(vo2, 42, 70) : curve(mins, 150, 62);
+        // A measured VO2max is worth far more than an inferred one. It is judged against the FRIEND registry median
+        // for your age and sex (Kaminsky 2015) — 42 ml/kg/min is below average at 25 and well above it at 60.
+        const med = input.age != null ? (0, systems_1.vo2Median)(input.age, input.sex || null) : null;
+        const score = vo2 > 0 ? curve(vo2, med ? med * 0.95 : 42, 70) : curve(mins, 150, 62);
         const conf = vo2 > 0 ? 0.9 : (mins > 0 ? 0.45 : 0);
         domains.push({
             key: 'engine', label: 'ENGINE', icon: '🫁', score, confidence: conf,
@@ -6805,15 +6821,15 @@ function survivability(input) {
     }
     /* ── FRAME ── */
     {
-        const str = b ? b.avgStrength : 0; // 0-10 derived from tonnage
-        const cov = b ? b.coverage : 0; // % of muscles trained this week
+        const str = b ? b.avgStrength : 0; // 0-10: your lifts against standards (tonnage only as a fallback)
+        const cov = b ? ((_a = b.coverage28) !== null && _a !== void 0 ? _a : b.coverage) : 0; // % of muscles trained in the last 4 weeks
         const score = clamp(Math.round(str / 10 * 70 + cov * 0.30));
         const conf = b ? (str > 0 ? 0.75 : 0.2) : 0;
         domains.push({
             key: 'frame', label: 'FRAME', icon: '🦾', score, confidence: conf,
             what: 'Strength and muscle mass — the reserve that survives a bad day.',
             why: str > 0
-                ? `Imprint ${str.toFixed(1)}/10 across ${cov}% weekly coverage.`
+                ? `Strength ${str.toFixed(1)}/10 across ${cov}% of muscles trained in 4 weeks.`
                 : 'No logged tonnage to derive strength from.',
             fix: score < 55
                 ? 'Cover every muscle group weekly; breadth matters more than any single lift.'
@@ -8300,7 +8316,7 @@ function tissue(inp0, days = 240) {
             const rel = now / bw, ratio = rel / std;
             const lv = levelOf(ratio);
             const machine = ex.e === 'machine' || ex.e === 'cable';
-            cands.push({ score: lv.score, level: lv.level, rel, ratio, w: share, faded: 1 - retention(age), machine,
+            cands.push({ score: lv.score, level: lv.level, rel, ratio, w: share, faded: 1 - retention(age), machine, iso: ex.mech === 'isolation',
                 basis: ex.n + ' · est. 1RM ' + Math.round(now) + ' kg' + (L.bw ? ' incl. body' : '') + ' = ' + (Math.round(rel * 100) / 100) + '× body weight' + (machine ? ' (machine — rough, machines differ)' : '') });
         });
         if (!cands.length)
@@ -8310,6 +8326,11 @@ function tissue(inp0, days = 240) {
         const free = cands.filter(c => !c.machine);
         if (free.length)
             cands.splice(0, cands.length, ...free);
+        // Compound lifts before isolation: a lateral raise or curl 1RM is a poor strength marker (form, momentum,
+        // and whether one or both dumbbells were logged), and read a normal lifter as "elite" (2026-10-14).
+        const compound = cands.filter(c => !c.iso);
+        if (compound.length)
+            cands.splice(0, cands.length, ...compound);
         cands.sort((x, y) => y.score - x.score);
         const top = cands.slice(0, 2);
         const score = top.length === 2 ? top[0].score * 0.7 + top[1].score * 0.3 : top[0].score;
