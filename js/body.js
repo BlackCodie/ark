@@ -180,7 +180,7 @@ function secRecovery(v) {
     return `<div class="gc frost" style="--gcc:${s.color}"><div class="top"><span>${s.icon}</span>${esc(s.name.charAt(0) + s.name.slice(1).toLowerCase())}<span class="tag" style="--c:${st[1]}">${st[0].toUpperCase()}</span></div>
       <div class="rb"><i style="width:${s.fillPct}%;background:${s.fillCol}"></i></div>
       <div class="rm"><span>Recovery ${esc(s.pctTxt)}</span><span>${esc(String(s.lastTxt).replace('last: ', ''))}</span></div>
-      <div class="mini"><span>IMPRINT</span><span class="t"><i style="width:${s.imprint}%;background:#30d158"></i></span><b>${s.imprint}%</b>
+      <div class="mini"><span>IMPRINT</span><span class="t"><i style="width:${s.imprint}%;background:#30d158"></i></span><b>${s.imprint ? s.imprint + '%' : '—'}</b>
         <span>MOBILITY</span><span class="t"><i style="width:${s.mobPct}%;background:#40c8e0"></i></span><b>${s.mobPct ? s.mobPct + '%' : '—'}</b>
         <span>VOL/WK</span><span class="t"><i style="width:${s.volPct}%;background:#ffb340"></i></span><b>${s.wk}/10</b></div></div>`;
   }).join('')}</div>`;
@@ -382,7 +382,7 @@ function secMicros(v) {
             <span class="amt">${slim ? (last[m.k] ? 'last ' + fmtDay(last[m.k], { day: 'numeric', month: 'short' }) + ' · ' : '') + 'goal ' + fmtN(m.goal || 0) + ' ' + esc(m.unit)
               : m.limit ? (a ? fmtN(a) + ' ' + esc(m.unit) + ' today' : 'none today') + ' · keep at ' + fmtN(m.goal || 0) : fmtN(a) + ' / ' + fmtN(m.goal) + ' ' + esc(m.unit)}</span>
             ${est ? `<span class="est">${esc(est)}</span>` : ''}
-            ${saf && !m.limit && a > 0 ? `<span class="warn ${saf.level}">⚠ ${saf.level === 'over' ? 'Over upper limit' : 'Nearing upper limit'} · ${fmtN(saf.ul)} ${esc(saf.unit)}</span>` : ''}</span></button>
+            ${saf && !m.limit && a > 0 ? `<span class="warn ${saf.level}">⚠ ${esc(L.safetyLabel(saf))} · ${fmtN(saf.ul)} ${esc(saf.unit)}</span>` : ''}</span></button>
         ${step ? `<button class="mic2-add" data-act="dose-quick" data-k="${m.k}" data-v="${step}" aria-label="Log ${fmtN(step)} ${esc(m.unit)} of ${esc(m.name)} now">+${fmtN(step)}</button>` : ''}</div>`;
   };
   // One list: what you take (full rows, most recent first), then everything else as slim rows.
@@ -432,7 +432,7 @@ function bloodCard(v) {
           <button class="circle sm" data-act="blood-del" data-id="${esc(L0.id)}" aria-label="Delete this ${esc(L0.marker)} result">${icon('trash', 15)}</button></div>`;
       }).join('')}</div>` : ''}`);
 }
-const BLOOD_COMMON = ['Total testosterone', 'Free testosterone', 'Estradiol', 'SHBG', 'Cortisol (morning)', 'IGF-1', 'TSH', 'Free T3', 'Free T4',
+const BLOOD_COMMON = ['Total testosterone', 'Free testosterone', 'Estradiol', 'SHBG', 'Albumin', 'Cortisol (morning)', 'IGF-1', 'TSH', 'Total T3', 'Free T3', 'Free T4',
   'Fasting glucose', 'HbA1c', 'Fasting insulin', 'Vitamin D (25-OH)', 'Ferritin', 'Hemoglobin', 'LDL', 'HDL', 'Triglycerides', 'CRP (hs)'];
 function bloodSheet() {
   openSheet({
@@ -661,9 +661,9 @@ function muscleSheet(slug) {
         <p>A verdict newer than your last workout overrides the recovery colours — mark None to say it has recovered.</p></div>
       ${moves.length ? `<div class="grp-h">Best exercises for it</div><div class="chips">${moves.map(x => `<button class="chip" data-act="ex-hist" data-n="${esc(x.n)}">${logged.has(x.n) ? '★ ' : ''}${esc(x.n)}</button>`).join('')}</div>` : ''}
       <details class="adj"><summary>Adjust ratings</summary>
-        <div class="blk"><div class="blk-h"><span class="eyebrow">Strength rating</span><span class="val">${met.strength ? met.strength + '/10' : 'derived'}</span></div>
+        <div class="blk"><div class="blk-h"><span class="eyebrow">Strength rating</span><span class="val">${met.strength ? met.strength + '/10' : tm && tm.strength ? 'from your lifts' : 'not measured'}</span></div>
           ${rate('strength', '#30d158', met.strength || 0)}
-          <p>Derived from 30-day tonnage (${Math.round(vol).toLocaleString()} kg): ${fmt1(m.strengthDerived || 0)}/10. A rating here overrides it; – goes back to derived.</p></div>
+          <p>${tm && tm.strength ? `Your lifts put it at ${tm.strength.score}/100 (the Strength tile above). A rating here overrides that; – goes back to your lifts.` : `No standard lift covers this muscle yet, so its strength is not measured (30-day tonnage: ${Math.round(vol).toLocaleString()} kg). A rating here sets it; – clears it.`}</p></div>
         <div class="blk"><div class="blk-h"><span class="eyebrow">Mobility</span><span class="val">${met.mobility ? met.mobility + '/10' : 'not rated'}</span></div>
           ${rate('mobility', '#40c8e0', met.mobility || 0)}
           <div class="row" style="margin-top:10px"><button class="btn sm btn-tint" style="--accent:#40c8e0" data-act="ms-stretch" data-slug="${slug}" ${met.mobility ? '' : 'disabled'}>${icon('clock', 15)} Log stretch reading</button>
@@ -697,7 +697,7 @@ function whySheet(slug, kind) {
           <div style="flex:1"><b style="font-size:1.1rem">${esc(s.level)}</b><div class="sub">${s.rel}× body weight on your best lift for it</div></div></div>
           <div class="grp-h">From your lifts</div><section class="list frost">${s.drivers.map(x => `<div class="li"><span class="tx"><div class="tt" style="white-space:normal">${esc(x.label)}</div></span></div>`).join('')}</section>
           <div class="grp-h">The scale</div><section class="card frost tight lvls">${[['Beginner', '0.5×'], ['Novice', '0.75×'], ['Intermediate', '1×'], ['Advanced', '1.4×'], ['Elite', '1.8×']].map(([l, r]) => `<div class="${l === s.level ? 'on' : ''}"><b>${l}</b><span>${r} the standard</span></div>`).join('')}</section>
-          <p class="sub" style="line-height:1.5;margin-top:12px">Your best estimated 1-rep max (Epley, from sets of up to 20 reps) divided by body weight, compared with population lifting standards for that movement — e.g. an intermediate man benches about his body weight, squats 1.5× and deadlifts about 1.9×; women's standards are ~72 % (upper body) and ~82 % (lower body) of those. Strength holds for ~3 weeks without training, then fades slowly. Dumbbells count per hand.</p>`;
+          <p class="sub" style="line-height:1.5;margin-top:12px">Your best estimated 1-rep max (Brzycki up to 10 reps, Epley above, from sets of up to 20 reps) divided by body weight, compared with population lifting standards for that movement — e.g. an intermediate man benches about his body weight, squats 1.5× and deadlifts about 1.9×; women's standards are ~72 % (upper body) and ~82 % (lower body) of those. Strength holds for ~3 weeks without training, then fades slowly. Dumbbells count per hand.</p>`;
       }
       const ts = m.tendons.map(k => T.tendons[k]).filter(Boolean);
       if (!ts.length) return '<div class="empty">No tendon is mapped to this muscle.</div>';

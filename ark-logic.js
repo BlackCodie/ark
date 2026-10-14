@@ -188,13 +188,19 @@ function derivedStrength(vol30, slug) {
  * Tonnage measured training volume, not strength: it read a 120 kg bencher as 2/10 and fell to zero a month
  * after the last session, while real strength holds for weeks (2026-10-14).
  */
-function strengthFor(slug, metric, training, lift) {
+function strengthFor(slug, metric, training, lift, liftsKnown = false) {
     const manual = (0, sanitize_1.numOr)(metric.strength, 0, 10, 0);
     const derived = derivedStrength(training.vol30, slug);
     if (manual > 0)
-        return { value: manual, manual: true, derived };
+        return { value: manual, manual: true, derived, from: 'manual' };
     const fromLift = lift != null && isFinite(lift) && lift > 0 ? Math.round(Math.min(10, lift / 10) * 10) / 10 : null;
-    return fromLift != null ? { value: fromLift, manual: false, derived } : { value: derived, manual: false, derived };
+    // Once your lifts give standards-based scores, a muscle no standard lift covers is "not measured" (0), not its
+    // tonnage: the two scales do not mix, and a lower back worked only by rows read 2/10 and pulled the back
+    // group and the physique index down (2026-10-14).
+    if (fromLift != null)
+        return { value: fromLift, manual: false, derived, from: 'lifts' };
+    const v = liftsKnown ? 0 : derived;
+    return { value: v, manual: false, derived, from: v > 0 ? 'tonnage' : 'none' };
 }
 exports.NEUTRAL_SYSTEMIC = { factor: 1, reason: null, confidence: 0 };
 function bodyState(input) {
@@ -205,6 +211,7 @@ function bodyState(input) {
     const muscles = {};
     let ready = 0, recovering = 0, fresh = 0, untouched = 0;
     let soreCount = 0, injuredCount = 0, loadSum = 0;
+    const liftsKnown = !!input.liftStrength && Object.values(input.liftStrength).some(x => Number(x) > 0);
     let strSum = 0, strN = 0, mobSum = 0, mobN = 0, touched7 = 0, touched28 = 0;
     for (const slug of slugs) {
         // Clean inputs (sanitize.ts): stored values can be strings, typos or missing.
@@ -240,7 +247,7 @@ function bodyState(input) {
             state = 'recovering';
         const target = setTarget(slug);
         const deficit = Math.max(0, target - t.weekSets);
-        const str = strengthFor(slug, md, t, input.liftStrength ? input.liftStrength[slug] : null);
+        const str = strengthFor(slug, md, t, input.liftStrength ? input.liftStrength[slug] : null, liftsKnown);
         const mob = md.mobility;
         // Priority: what to train next.
         //   readiness  0 while repairing, 1 once past the window
@@ -273,7 +280,7 @@ function bodyState(input) {
             last: t.last, hoursSince: hrs, recWindow: win, state,
             weekSets: t.weekSets, vol30: t.vol30, target, deficit,
             soreness: sore, strength: str.value, strengthManual: str.manual,
-            strengthDerived: str.derived, mobility: mob, priority,
+            strengthDerived: str.derived, strengthFrom: str.from, mobility: mob, priority,
             cat: cats[slug] || null, vol, injury: inj,
         };
         if (state === 'fresh')
@@ -2450,6 +2457,7 @@ __exportStar(require("./labs"), exports);
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LAB_DIURNAL_SOURCES = exports.LAB_DIURNAL = exports.LAB_SPECS = void 0;
+exports.vermeulenFreeT = vermeulenFreeT;
 exports.labSlope = labSlope;
 exports.labEstimate = labEstimate;
 exports.labAt = labAt;
@@ -2475,7 +2483,20 @@ const SRC = {
     gayoso: { cite: 'Gayoso-Diz et al. 2013, BMC Endocr Disord — HOMA-IR cut-offs by age and sex', doi: '10.1186/1472-6823-13-47' },
     jun: { cite: 'Jun et al. 2024, Sci Rep — routine T3 reference range 76–190 ng/dL', doi: '10.1038/s41598-024-66096-9' },
     weiss: { cite: 'Weiss et al. 2008, Rejuvenation Res — calorie restriction lowers T3 (−9.8 ng/dL over 12 months)', doi: '10.1089/rej.2007.0622' },
+    vermeulen: { cite: 'Vermeulen et al. 1999, J Clin Endocrinol Metab — free T calculated from total T and SHBG matches equilibrium dialysis', doi: '10.1210/jcem.84.10.6079' },
 };
+/**
+ * Free testosterone (pg/mL) from total T and SHBG in nmol/L and albumin in g/L (43 when not measured) — the
+ * Vermeulen 1999 mass-action calculation, which most labs print as "calculated free T" and which matched
+ * equilibrium dialysis in that paper (except in pregnancy). Ka albumin 3.6×10⁴ L/mol, Kt SHBG 10⁹ L/mol.
+ */
+function vermeulenFreeT(ttNmol, shbgNmol, albuminGL = 43) {
+    if (!(ttNmol > 0) || !(shbgNmol > 0) || !(albuminGL > 10 && albuminGL < 80))
+        return null;
+    const N = 1 + 3.6e4 * (albuminGL / 69000), Kt = 1e9, T = ttNmol * 1e-9, S = shbgNmol * 1e-9;
+    const a = N * Kt, b = N + Kt * (S - T);
+    return (-b + Math.sqrt(b * b + 4 * a * T)) / (2 * a) * 1e9 * 288.4;
+}
 /** Flat to `onset`, then compounding change per year. */
 const ageCurve = (m, onset, perYear) => (age) => age <= onset ? m : m * Math.pow(1 + perYear, age - onset);
 exports.LAB_SPECS = {
@@ -2496,8 +2517,8 @@ exports.LAB_SPECS = {
         range: [70, 255], rangeWho: 'healthy young men', cv: 0.14, female: 'none',
         lab: { re: /free\s*t(estosterone)?\b|free testosterone/i, not: /t3|t4|thyrox|triiodo|bioavail|saliva/i,
             units: [{ re: /^pg\/?ml$/i, f: 1 }, { re: /^pmol\/?l$/i, f: 1 / 3.467 }, { re: /^ng\/?dl$/i, f: 10 }, { re: /^nmol\/?l$/i, f: 288.4 }] },
-        how: 'Calculated from total testosterone, SHBG and albumin on the same morning draw — or measured directly by equilibrium dialysis.',
-        sources: [SRC.bhasin, SRC.feldman],
+        how: 'Calculated from total testosterone, SHBG and albumin on the same morning draw — or measured directly by equilibrium dialysis. Log total T and SHBG from one report and ARK calculates it the same way (Vermeulen).',
+        sources: [SRC.bhasin, SRC.feldman, SRC.vermeulen],
     },
     estradiol: {
         test: 'Estradiol (E2)', unit: 'pg/mL', si: { unit: 'pmol/L', f: 3.671, step: 5 }, step: 1,
@@ -2594,21 +2615,53 @@ function labValue(spec, e, all) {
 function findAnchor(spec, blood, today) {
     if (!spec.lab || !blood.length)
         return null;
+    const m = spec.median(AGE_REF);
+    // A unit we misread would put it 10–100× off: refuse anything implausible.
+    const sane = (v) => v !== null && v > m / 15 && v < m * 15;
+    const inYear = (d) => { const n = daysBetween(d, today); return n >= 0 && n <= 365 ? n : null; };
     const hits = blood
         .filter(e => spec.lab.re.test(e.marker) && !(spec.lab.not && spec.lab.not.test(e.marker)) && isFinite(e.value) && e.value > 0)
         .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    let direct = null;
     for (const e of hits) {
-        const days = daysBetween(e.date, today);
-        if (days < 0 || days > 365)
+        const days = inYear(e.date);
+        if (days === null)
             continue;
         const v = labValue(spec, e, blood);
-        // A unit we misread would put it 10–100× off: refuse anything implausible.
-        const m = spec.median(AGE_REF);
-        if (v === null || !(v > m / 15 && v < m * 15))
-            continue;
-        return { e, v, days };
+        if (sane(v)) {
+            direct = { e, v: v, days, extra: 0 };
+            break;
+        }
     }
-    return null;
+    if (spec !== exports.LAB_SPECS.freeTestosterone)
+        return direct;
+    // Most reports give total T and SHBG, not free T: calculate it (Vermeulen 1999) from a same-day pair. The
+    // calculation adds ~10 % of its own uncertainty; a measured free T on the same or a later day wins.
+    const T = exports.LAB_SPECS.testosterone;
+    const same = (re, d) => blood.find(x => x.date === d && re.test(x.marker) && isFinite(x.value) && x.value > 0);
+    const dates = [...new Set(blood.filter(e => /shbg|sex hormone.?binding/i.test(e.marker)).map(e => e.date))].sort().reverse();
+    for (const d of dates) {
+        const days = inYear(d);
+        if (days === null)
+            continue;
+        if (direct && direct.e.date >= d)
+            break;
+        const tt = blood.find(x => x.date === d && T.lab.re.test(x.marker) && !T.lab.not.test(x.marker) && isFinite(x.value) && x.value > 0);
+        const sh = same(/shbg|sex hormone.?binding/i, d), al = same(/^(serum\s*)?albumin$/i, d);
+        if (!tt || !sh || !/^nmol\/?l$/i.test(String(sh.unit || '').replace(/\s+/g, '')))
+            continue;
+        const ttNg = labValue(T, tt, blood);
+        if (ttNg === null)
+            continue;
+        const alU = al ? String(al.unit || '').replace(/\s+/g, '') : '';
+        const alb = al ? (/^g\/?dl$/i.test(alU) ? al.value * 10 : /^g\/?l$/i.test(alU) ? al.value : undefined) : undefined;
+        const v = vermeulenFreeT(ttNg / 28.84, sh.value, alb);
+        if (!sane(v))
+            continue;
+        const e = { id: 'calc-ft-' + d, date: d, marker: 'Free T calculated from total T ' + tt.value + ' ' + tt.unit + ' + SHBG ' + sh.value + ' nmol/L' + (alb ? '' : ' (albumin taken as 43 g/L)'), value: Math.round(v), unit: 'pg/mL' };
+        return { e, v: v, days, extra: 0.1 };
+    }
+    return direct;
 }
 /**
  * The estimate for one axis. `age` is required (it sets the reference); `blood` is the
@@ -2646,7 +2699,7 @@ function labEstimate(axis, opts) {
         const sAt = near ? near[1] : hist.length ? hist.reduce((s, h) => s + h[1], 0) / hist.length : axis.score;
         const shift = dir * b * (axis.score - sAt);
         centreLn = Math.log(a.v) + shift;
-        personHw = Z80 * Math.sqrt(spec.cv * spec.cv + Math.pow(spec.lnSd * Math.sqrt(1 - spec.r * spec.r) * Math.min(1, a.days / 365), 2));
+        personHw = Z80 * Math.sqrt(spec.cv * spec.cv + a.extra * a.extra + Math.pow(spec.lnSd * Math.sqrt(1 - spec.r * spec.r) * Math.min(1, a.days / 365), 2));
         anchored = { date: a.e.date, marker: a.e.marker, value: a.e.value, unit: a.e.unit, daysAgo: a.days, shift: Math.exp(shift) - 1 };
     }
     const hw = Math.sqrt(modelHw * modelHw + personHw * personHw);
@@ -3755,10 +3808,11 @@ function mergeStores(here, other) {
   "./micros": function (exports, module, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.INTERACTIONS = exports.UPPER_LIMITS = exports.KINETICS = void 0;
+exports.INTERACTIONS = exports.UL_FOOD = exports.UPPER_LIMITS = exports.KINETICS = void 0;
 exports.kineticsFor = kineticsFor;
 exports.microLevel = microLevel;
 exports.microSafety = microSafety;
+exports.safetyLabel = safetyLabel;
 exports.microAdherence = microAdherence;
 exports.KINETICS = {
     vitd: { kind: 'stock', tau: 21 }, iron: { kind: 'stock', tau: 60 },
@@ -3817,16 +3871,29 @@ exports.UPPER_LIMITS = {
     creatine: { ul: 25, unit: 'g', note: 'Loading uses ~20 g/day for a week; beyond that there is no added benefit. 10 g/day is well tolerated by healthy adults.' },
     melatonin: { ul: 5, unit: 'mg', note: 'More is not better — 0.3–1 mg works as well for most people.' },
 };
+/**
+ * Typical intake from food (about the adult goal) for nutrients whose UL counts every source. A logged amount is a
+ * supplement on top of it — the assumption the hormone engine makes too (ENDO_MICRO_DIET). Magnesium's UL covers
+ * supplements only, caffeine is logged from every source, creatine and melatonin have no food share worth counting.
+ * Without it, 30 mg of zinc read as safe while zinc from food took the day over its 40 mg limit (2026-10-14).
+ */
+exports.UL_FOOD = { zinc: 11, sel: 55, iod: 150, iron: 12, calc: 1000, vitc: 90, vitd: 200 };
+/** Over only ABOVE the limit (400 mg of caffeine is at the safe daily amount, not past it); near from 80 %. */
 function microSafety(key, amount) {
     const lim = exports.UPPER_LIMITS[key];
-    if (!lim || !amount)
+    if (!lim || !(Number(amount) > 0))
         return null;
-    const pct = amount / lim.ul;
-    if (pct >= 1)
-        return { level: 'over', pct, ul: lim.ul, unit: lim.unit, note: lim.note };
+    const food = exports.UL_FOOD[key] || 0, pct = (Number(amount) + food) / lim.ul;
+    const note = lim.note + (food ? ' Counts ~' + food + ' ' + lim.unit + ' from a typical diet on top of what you log.' : '');
+    if (pct > 1.0001)
+        return { level: 'over', pct, ul: lim.ul, unit: lim.unit, note, food };
     if (pct >= 0.8)
-        return { level: 'near', pct, ul: lim.ul, unit: lim.unit, note: lim.note };
+        return { level: 'near', pct, ul: lim.ul, unit: lim.unit, note, food };
     return null;
+}
+/** The words for a safety flag: "Over upper limit (with food)", "At the upper limit", "Nearing upper limit". */
+function safetyLabel(s) {
+    return s.level === 'over' ? 'Over upper limit' + (s.food ? ' with food' : '') : s.pct >= 0.995 ? 'At the upper limit' : 'Nearing upper limit';
 }
 exports.INTERACTIONS = {
     iron: { cofactor: ['vitc'], conflicts: ['calc'],
@@ -6169,6 +6236,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SORENESS_STROKES = exports.SORENESS_COLORS = exports.SORENESS_LABELS = exports.ACTIVITY_LABELS = exports.ACTIVITY_FACTORS = void 0;
 exports.ageFrom = ageFrom;
 exports.bfCategory = bfCategory;
+exports.calorieGoal = calorieGoal;
 exports.specimen = specimen;
 exports.thermal = thermal;
 exports.muscleFill = muscleFill;
@@ -6212,6 +6280,25 @@ function bfCategory(bf, sex) {
         return ['Average', '#f59e0b'];
     return ['High', '#f87171'];
 }
+/**
+ * The calorie goal that matches the goal weight. Gaining: ~10 % over maintenance — Iraki 2019 gives 10–20 % for
+ * novice/intermediate lifters and less for advanced ones, aiming at 0.25–0.5 % of body weight a week. Losing: the
+ * middle of Helms 2014's 0.5–1 % of body weight a week (7,700 kcal per kg). Within 1 kg of the goal: maintenance.
+ * It inherits the activity level's error, so the reason names it.
+ */
+function calorieGoal(tdee, weight, goalWeight, activity) {
+    if (!(tdee > 0))
+        return { kcal: 0, dir: null, why: '' };
+    const lvl = exports.ACTIVITY_LABELS[activity || ''] || 'Moderate';
+    const base = 'maintenance ' + tdee.toLocaleString('en-US') + ' kcal (' + lvl + ')';
+    const g = Number(goalWeight);
+    if (!(g > 30) || !(weight > 30) || Math.abs(g - weight) <= 1)
+        return { kcal: Math.round(tdee / 50) * 50, dir: g > 30 && weight > 30 ? 'hold' : null, why: base };
+    if (g > weight)
+        return { kcal: Math.round(tdee * 1.1 / 50) * 50, dir: 'gain', why: base + ' + 10 % to gain ~0.25–0.5 % a week (Iraki 2019)' };
+    const cut = Math.round(weight * 0.0075 * 7700 / 7);
+    return { kcal: Math.round(Math.max(tdee * 0.7, tdee - cut) / 50) * 50, dir: 'lose', why: base + ' − ' + cut + ' kcal to lose ~0.75 % a week (Helms 2014)' };
+}
 /** Everything the Composition and Energy tiles show. Zero where an input is missing. */
 function specimen(p, now = new Date()) {
     const hM = (p.height || 0) / 100;
@@ -6222,6 +6309,7 @@ function specimen(p, now = new Date()) {
     const ffmi = hM ? lean / (hM * hM) + 6.1 * (1.8 - hM) : 0;
     const bmr = lean > 0 ? Math.round(370 + 21.6 * lean) : 0; // Katch-McArdle (lean mass)
     const tdee = bmr ? Math.round(bmr * (exports.ACTIVITY_FACTORS[p.activity || ''] || 1.55)) : 0;
+    const cg = calorieGoal(tdee, w, p.goalWeight, p.activity);
     return {
         age: ageFrom(p.birthday, now), bmi,
         bmiNote: bmi < 18.5 ? 'lean' : bmi < 25 ? 'normal' : bmi < 27 ? 'athletic' : bmi < 30 ? 'muscular' : 'heavy',
@@ -6232,6 +6320,7 @@ function specimen(p, now = new Date()) {
         protein: w ? Math.round(w * 2.2) : 0, // 2.2 g/kg
         water: w ? w * 0.035 : 0, // 35 ml/kg
         idealLo: hM ? 20 * hM * hM : 0, idealHi: hM ? 25 * hM * hM : 0,
+        calGoal: cg.kcal, goalDir: cg.dir, calWhy: cg.why,
     };
 }
 /* ────────────────────────── figure colours ────────────────────────── */
@@ -7819,6 +7908,7 @@ exports.sundayBodyLine = sundayBodyLine;
  *   BMI         — HR 1.31 per 5 kg/m² above 25 (Global BMI Mortality Collaboration 2016); ignored when your
  *                 body fat says the weight is muscle
  *   sleep       — HR 1.12 for habitual nights under 6 h (Cappuccio 2010), scaled between 6 and 7 h
+ *   regularity  — HR 1.19 per hour of night-to-night SD in bedtime, 1.17 in sleep length (Bai 2026, NHANES)
  *   steps       — HR 0.85 per 1,000 steps a day around 8,000 (Paluch 2022, Lancet Public Health)
  * Each marker is capped, the result is a range, and it needs your age plus two markers. It is an estimate
  * to steer by, not a diagnosis — the markers overlap, so the sum overstates precision; the range says so.
@@ -7898,6 +7988,23 @@ function bodyAge(inp) {
     }
     else
         missing.push('Sleep (logged or from Apple Health)');
+    // Regularity — same hours every night. Bai 2026 (NHANES accelerometry, 7,604 adults): HR 1.19 per hour of
+    // night-to-night SD in sleep onset and 1.17 per hour in total sleep time; survivors averaged 1.58 h and 1.61 h.
+    // Windred 2024 (UK Biobank): regularity predicted mortality better than duration. Bed times (Apple Health) when
+    // there are 7+, else the logged hours. Hand-logged hours are rounded to the half hour, which hides some of the
+    // spread, so the credit stops at −0.5 years. Same log as the sleep marker, so it does not count toward the two.
+    const beds = recent(inp.bio, inp.today, 'bed', 28, -1).filter(b => b <= 24).map(b => (b < 12 ? b + 24 : b));
+    const lens = recent(inp.bio, inp.today, 'sleep', 28, 2);
+    const byBed = beds.length >= 7, xs = byBed ? beds : lens;
+    if (xs.length >= 7) {
+        const m = xs.reduce((a, b) => a + b, 0) / xs.length;
+        const sd = Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / (xs.length - 1));
+        const ref = byBed ? 1.58 : 1.61, y = clamp(yrs(byBed ? 1.19 : 1.17, sd - ref), -0.5, 3);
+        M.push({ key: 'sleepReg', label: 'Sleep regularity', value: (byBed ? 'bedtime' : 'sleep length') + ' varies ±' + Math.round(sd * 60) + ' min night to night', years: r1(y),
+            ref: 'vs ±' + Math.round(ref * 60) + ' min typical', source: 'Bai 2026 · Windred 2024' });
+        if (y > 0.3)
+            consider('Sleep regularity', 'The same bedtime and wake-up time every day, weekends included', y);
+    }
     const steps = mean(recent(inp.bio, inp.today, 'steps', 14, 0));
     if (steps != null) {
         const y = clamp(yrs(0.85, (Math.min(steps, 10000) - 8000) / 1000), -1.5, 6);
@@ -7909,7 +8016,7 @@ function bodyAge(inp) {
         missing.push('Steps (Apple Health)');
     if (inp.age == null)
         return { known: false, why: 'Add your birthday in More › Body profile — body age is measured against it.', age: null, bodyAge: null, low: null, high: null, markers: M, missing, lever };
-    if (M.length < 2)
+    if (M.filter(x => x.key !== 'sleepReg').length < 2)
         return { known: false, why: 'Needs two or more markers — ' + missing.slice(0, 2).join(', ') + '.', age: inp.age, bodyAge: null, low: null, high: null, markers: M, missing, lever };
     const sum = M.reduce((a, m) => a + m.years, 0), spread = 1.5 + 0.6 * M.length;
     const est = inp.age + sum;
