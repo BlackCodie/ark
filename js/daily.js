@@ -23,7 +23,7 @@ export function fuelCard(v = view()) {
   const t = today(), goals = ((v.bioDefs || {}).goals) || {};
   const F = L.fuelDay((v.bio || {})[t], { prot: goals.prot, cal: goals.cal });
   const meals = L.mealsByUse(v.meals || [], v.bio || {});
-  const bar = (lbl, val, goal, unit, col) => `<div class="fu-row"><div class="fu-l"><b>${lbl}</b><span class="num">${val}${goal ? ' / ' + goal : ''} ${unit}${goal && val < goal ? ' · ' + (goal - val) + ' to go' : goal ? ' ✓' : ''}</span></div>
+  const bar = (lbl, val, goal, unit, col) => `<div class="fu-row"><div class="fu-l"><b>${lbl}</b><span class="num">${(+val).toLocaleString('en-US')}${goal ? ' / ' + (+goal).toLocaleString('en-US') : ''} ${unit}${goal && val < goal ? ' · ' + (goal - val).toLocaleString('en-US') + ' to go' : goal ? ' ✓' : ''}</span></div>
     <div class="fu-t"><i style="width:${goal ? Math.min(100, Math.round(val / goal * 100)) : 0}%;background:${col}"></i></div></div>`;
   return `<section class="card frost fuel"><div class="q-h"><span>🍽</span><b>Fuel</b>${meals.length ? '<button class="link" data-act="meal-manage">Edit</button>' : ''}<button class="link" data-act="meal-new">${icon('plus', 14)} Meal</button></div>
     ${bar('Protein', F.prot, F.protGoal, 'g', '#30d158')}${bar('Calories', F.cal, F.calGoal, 'kcal', '#ff9f0a')}

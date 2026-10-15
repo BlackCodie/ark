@@ -921,7 +921,7 @@ function experimentReport(e, data, today) {
             if (v !== null)
                 A.push(v);
         }
-        const out = { key, label: M.label, unit: M.unit, before: B.length ? r2(mean(B)) : null, after: A.length ? r2(mean(A)) : null,
+        const out = { key, label: M.label, unit: M.unit, before: B.length ? Math.round(mean(B) * 10) / 10 : null, after: A.length ? Math.round(mean(A) * 10) / 10 : null,
             nBefore: B.length, nAfter: A.length, diff: null, d: null, t: null, verdict: 'collecting', text: '' };
         if (B.length < MIN_BEFORE || A.length < MIN_AFTER) {
             out.text = B.length < MIN_BEFORE ? 'Not enough before the start (' + B.length + '/' + MIN_BEFORE + ' days logged)' : (MIN_AFTER - A.length) + ' more logged day' + (MIN_AFTER - A.length === 1 ? '' : 's') + ' to judge';
@@ -1091,7 +1091,7 @@ function fatigueRadar(inp) {
             S.push({ key: 'effort', label: 'Effort (RPE)', physio: false, on: null, detail: 'log RPE on sets to track' });
     }
     S.push(inp.acwr != null
-        ? { key: 'load', label: 'Load spike', physio: false, on: inp.acwr > 1.5, detail: 'this week ' + inp.acwr + '× your 4-week average' }
+        ? { key: 'load', label: 'Load spike', physio: false, on: inp.acwr > 1.5, detail: inp.acwr > 0 ? 'this week ' + inp.acwr + '× your 4-week average' : 'no training this week — nothing to spike' }
         : { key: 'load', label: 'Load spike', physio: false, on: null, detail: 'needs 3 weeks of training history' });
     if (inp.sore != null)
         S.push({ key: 'sore', label: 'Soreness', physio: false, on: inp.sore >= 3, detail: inp.sore + ' muscle' + (inp.sore === 1 ? '' : 's') + ' rated sore' });
@@ -5684,6 +5684,12 @@ const LEVER_TEXT = {
     'high stress load': 'Bring stress down — it is the biggest drag',
     'low stress adaptation': 'Build stress resilience: daylight, training, breathing work',
     'low autonomic balance': 'Recover: easy cardio, sleep, fewer late nights',
+    // Latents added later (2026-10-11) had no wording, so the order read "Fix: low protein supply".
+    'low protein supply': 'Protein: about 1.6 g per kg of body weight on most days',
+    'high body fat load': 'Bring body fat toward the healthy range — it lowers testosterone and insulin sensitivity',
+    'low thyroid cofactor status': 'Iodine, selenium and zinc: fish, eggs, dairy, iodised salt',
+    'high aromatase activity': 'Body fat drives aromatase — bring it toward the healthy range',
+    'high energy availability': 'Keep any surplus modest (~10 % over maintenance) — a large one costs insulin sensitivity',
 };
 function systemReport(r, x = {}) {
     const L = [];
@@ -5709,7 +5715,9 @@ function systemReport(r, x = {}) {
         const a = ax[0], down = /down|fall|declin/i.test(a.trend || '');
         const why = down ? (a.neg || [])[0] : (a.pos || [])[0];
         const good = BAND.has(a.k) ? null : LOWER_BETTER.has(a.k) ? down : !down;
-        L.push({ ic: '🧬', text: a.name.charAt(0) + a.name.slice(1).toLowerCase() + ' estimate trending ' + (down ? 'down' : 'up') + (why ? ' — mostly ' + why.label.toLowerCase() : ''), tone: good === null ? '' : good ? 'good' : 'warn' });
+        // Acronyms keep their case ("IGF-1", not "Igf-1").
+        const nm = (a.name.charAt(0) + a.name.slice(1).toLowerCase()).replace(/\bigf-1\b/i, 'IGF-1').replace(/\bgh\b/i, 'GH').replace(/\bt3\b/i, 'T3');
+        L.push({ ic: '🧬', text: nm + ' estimate trending ' + (down ? 'down' : 'up') + (why ? ' — mostly ' + why.label.toLowerCase() : ''), tone: good === null ? '' : good ? 'good' : 'warn' });
     }
     const under = (x.muscles || []).filter(m => BIG.includes(m.slug) && m.vol && (m.vol.zone === 'under' || m.vol.zone === 'none'));
     if ((x.muscles || []).length && under.length)
@@ -8540,22 +8548,31 @@ function strengthProgression(sessions, now = Date.now()) {
     if (!sessions || !sessions.length)
         return undefined;
     const weeks = [0, 0, 0, 0], counts = [0, 0, 0, 0];
+    let older = false;
     for (const s of sessions) {
         const t = new Date(s.ts || s.date || 0).getTime();
         if (isNaN(t) || t > now)
             continue; // ignore anything after the scrub point
         const age = (now - t) / 864e5;
-        if (age >= 28)
+        if (age >= 28) {
+            older = true;
             continue;
+        }
         const idx = 3 - Math.floor(age / 7); // 0 = oldest of the four weeks
         if (idx < 0 || idx > 3)
             continue;
         weeks[idx] += sessionVolume(s);
         counts[idx]++;
     }
+    // A week with no session is a week of zero tonnage once you were already training — skipping it read one
+    // light session 25 days ago and one big one 13 days ago (nothing since) as +180 %/week, the maximum (2026-10-15).
+    // New users start from their first week here.
+    const first = older ? 0 : counts.findIndex(c => c > 0);
+    if (first < 0 || (!older && counts.filter(c => c > 0).length < 2))
+        return undefined; // one session is a level
     const pts = [];
-    weeks.forEach((w, i) => { if (counts[i] > 0)
-        pts.push([i, w]); });
+    for (let i = first; i < 4; i++)
+        pts.push([i, weeks[i]]);
     if (pts.length < 2)
         return undefined; // no trend to read yet
     const n = pts.length;

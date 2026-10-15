@@ -494,9 +494,10 @@ const BASE_INPUT_TO_LATENT = [
         note: 'Interpreted against calorieMaintenance when supplied; otherwise against an age/sex prior.',
     },
     {
-        from: 'trainingVolume', to: 'energyAvailability', effect: -0.20, shape: 'linear', sd: 0.20,
+        from: 'trainingVolume', to: 'energyAvailability', effect: -0.20, shape: 'overload', sd: 0.20,
         mechanism: 'Exercise energy expenditure is subtracted before energy availability is computed.',
         evidence: 'A', source: 'clinical-guideline',
+        note: 'One-sided (2026-10-15): maintenance already includes your usual training (activity level), and people eat to need, so only volume well past the reference drains energy further. Linear, a week off training read as a calorie surplus: energy availability 0.47 → 0.63, thyroid +9 points and a "fix: high energy availability" order.',
     },
     {
         from: 'bodyFatPercent', to: 'energyAvailability', effect: 0.15, shape: 'threshold', sd: 0.25,
