@@ -1446,8 +1446,12 @@ function normaliseInputs(inputs) {
         put(mk('bodyFatPercent', (0, transfer_1.deviation)(inputs.bodyFatPercent, optimum, 8)));
     }
     // ── Exposures ──
+    // Measured against your own habit when known (tolerance, Lovallo 2005) — 80 % of the way, since the response is
+    // "reduced, but not eliminated". A fixed 200 mg reference read a daily 400 mg coffee drinker as stressed every day.
+    const cafHab = inputs.caffeineHabitual, cafRef = cafHab !== undefined && cafHab > constants_1.REFERENCE.caffeineToleranceMg
+        ? 0.8 * cafHab + 0.2 * constants_1.REFERENCE.caffeineToleranceMg : constants_1.REFERENCE.caffeineToleranceMg;
     put(mk('caffeine', inputs.caffeine === undefined ? null
-        : (0, transfer_1.deviation)(inputs.caffeine, constants_1.REFERENCE.caffeineToleranceMg, 200)));
+        : (0, transfer_1.deviation)(inputs.caffeine, cafRef, 200)));
     // ── Psychological / behavioural ──
     put(mk('stress', fromPercent(inputs.stress)));
     put(mk('meditation', inputs.meditation === undefined ? null
@@ -1523,6 +1527,7 @@ exports.INPUT_LABELS = {
     strengthProgression: 'Strength progression',
     calorieIntake: 'Calorie intake',
     calorieMaintenance: 'Maintenance calories',
+    caffeineHabitual: 'Usual caffeine',
     proteinIntake: 'Protein intake',
     bodyWeight: 'Body weight',
     fastingHours: 'Fasting window',
@@ -1556,7 +1561,7 @@ exports.INPUT_LABELS = {
  */
 const PLAUSIBLE = {
     sleepDuration: [0, 16], sleepConsistency: [0, 100], deepSleep: [0, 100], hrv: [0, 100], restingHeartRate: [25, 200],
-    trainingVolume: [0, 200], trainingIntensity: [0, 100], strengthProgression: [0, 100], calorieIntake: [0, 15000], calorieMaintenance: [800, 8000],
+    trainingVolume: [0, 200], trainingIntensity: [0, 100], strengthProgression: [0, 100], calorieIntake: [0, 15000], calorieMaintenance: [800, 8000], caffeineHabitual: [0, 3000],
     proteinIntake: [0, 800], bodyWeight: [30, 300], bodyFatPercent: [2, 70], hydration: [0, 15], caffeine: [0, 3000], stress: [0, 100],
     meditation: [0, 1440], sunlight: [0, 1440], coldExposure: [0, 600], illness: [0, 100], recovery: [0, 100], zinc: [0, 500], magnesium: [0, 500],
     vitaminD: [0, 500], omega3: [0, 500], iodine: [0, 500], selenium: [0, 500], iron: [0, 500], dailySteps: [0, 150000], vo2max: [10, 100],

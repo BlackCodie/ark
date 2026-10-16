@@ -183,7 +183,7 @@ function derivedStrength(vol30, slug) {
 }
 /**
  * Strength per muscle, 0–10. A manual rating wins; then your lifts — the best estimated 1RM of the muscle's
- * prime movers against population standards for your body weight, held ~3 weeks without training and fading
+ * prime movers against population standards for your body weight, held ~4 weeks without training and fading
  * slowly after (tissue.ts; Mujika & Padilla 2000, Bosquet 2013); tonnage only when no lift covers the muscle.
  * Tonnage measured training volume, not strength: it read a 120 kg bencher as 2/10 and fell to zero a month
  * after the last session, while real strength holds for weeks (2026-10-14).
@@ -394,15 +394,15 @@ function systemicRecoveryFactor(report) {
         ? keys.reduce((a, k) => a + hormones[k].confidence.value, 0) / keys.length
         : 0;
     let factor = 1 + delta * Math.max(0.25, conf);
-    factor = Math.max(0.6, Math.min(1.4, factor));
+    // One-sided (2026-10-16): the textbook windows come from rested, healthy people, so a good estimate does not
+    // make you recover faster than them; sleep loss, stress and low energy slow repair (Lamon 2021; Areta 2014).
+    // It used to shorten windows down to 0.6× and raise volume ceilings on "recovery faster than usual".
+    factor = Math.max(1, Math.min(1.4, factor));
     let reason = null;
     if (factor > 1.06) {
         reason = stress > 60 ? 'high stress load'
             : energy < 40 ? 'low energy availability'
                 : cap < 45 ? 'low recovery capacity' : 'systemic load';
-    }
-    else if (factor < 0.94) {
-        reason = anab > 60 ? 'strong anabolic balance' : 'high recovery capacity';
     }
     return { factor, reason, confidence: conf, capacity: cap, stress, anabolic: anab, energy };
 }
@@ -2169,10 +2169,10 @@ const sanitize_1 = require("./sanitize");
  *    Hard exercise raises it for about an hour; caffeine acutely (Lovallo 2005).
  *  · Testosterone: highest around waking, ~20–25 % above the evening low in young men, the swing
  *    shrinking with age (Brambilla 2009; Bremner 1983); the rise needs sleep (Luboshitzky 2001).
- *    Heavy resistance work lifts it briefly for 15–60 min (Kraemer & Ratamess 2005). Alcohol lowers it.
+ *    Heavy resistance work lifts it briefly for 15–60 min (Kraemer & Ratamess 2005).
  *  · Growth hormone: the largest pulse comes with the first slow-wave sleep, ~1 h after falling
- *    asleep, and is most of the day's secretion in young men (Van Cauter 2000). Alcohol at sleep
- *    blunts it (Prinz 1980), as does caffeine reducing deep sleep. Exercise above the lactate
+ *    asleep, and is most of the day's secretion in young men (Van Cauter 2000).
+ *    Caffeine that cuts deep sleep blunts it. Exercise above the lactate
  *    threshold adds a pulse peaking near its end (Pritzlaff 1999).
  *  · IGF-1: bound to carrier proteins, nearly flat across the day.
  *  · Insulin sensitivity: better in the morning than the evening (Van Cauter 1997), higher for hours
@@ -3814,9 +3814,11 @@ exports.microLevel = microLevel;
 exports.microSafety = microSafety;
 exports.safetyLabel = safetyLabel;
 exports.microAdherence = microAdherence;
+const pk_1 = require("./pk");
 exports.KINETICS = {
-    vitd: { kind: 'stock', tau: 21 }, iron: { kind: 'stock', tau: 60 },
-    b12: { kind: 'stock', tau: 90 }, omega: { kind: 'stock', tau: 30 },
+    // vitamin D and omega-3 read pk.ts so the two models cannot drift apart again (they had 21 vs 29 and 30 vs 40 days)
+    vitd: { kind: 'stock', tau: pk_1.PK.vitd.storeTau }, iron: { kind: 'stock', tau: 60 },
+    b12: { kind: 'stock', tau: 90 }, omega: { kind: 'stock', tau: pk_1.PK.omega.storeTau },
     sel: { kind: 'stock', tau: 30 }, zinc: { kind: 'stock', tau: 14 },
     calc: { kind: 'stock', tau: 30 }, iod: { kind: 'stock', tau: 14 },
     creatine: { kind: 'stock', tau: 21 },
@@ -4436,8 +4438,8 @@ exports.PK = {
         note: 'Plasma holds ~26 mg; absorption falls with dose (≈85 % of 100 mg, ≈50 % of 1 g) and the kidneys clear the excess within hours — it is not stored.',
         timing: '~50 mg with collagen 30–60 min before tendon work supports collagen synthesis. Split large doses.',
         src: 'Levine et al. 1996 (PNAS) vitamin C PK; Shaw et al. 2017 (AJCN)' },
-    vitd: { name: 'Vitamin D3', unit: 'IU', toMass: 0.025, mass: 'µg', F: () => 0.7, tAbs: 4, tElim: 24, plasmaShare: 1, baseline: null, where: 'blood', storeTau: 29,
-        note: 'The dose becomes 25(OH)D over days; that circulating form has a ~2–3-week half-life, so it tracks your average intake over the last ~6 weeks. ~100 IU/day ≈ +1 ng/mL at steady state.',
+    vitd: { name: 'Vitamin D3', unit: 'IU', toMass: 0.025, mass: 'µg', F: () => 0.7, tAbs: 4, tElim: 24, plasmaShare: 1, baseline: null, where: 'blood', storeTau: 22,
+        note: 'The dose becomes 25(OH)D over days; that circulating form has a ~15-day half-life, so it tracks your average intake over the last ~6 weeks. ~100 IU/day ≈ +0.7 ng/mL at steady state.',
         timing: 'With a meal that has fat. Daily or weekly works — the store smooths it out.',
         src: 'Heaney et al. 2003 (AJCN) dose-response; Jones 2008 25(OH)D half-life' },
     b12: { name: 'Vitamin B12', unit: 'mcg', toMass: 1, mass: 'µg', F: d => Math.min(1, (Math.min(d, 1.5) + 0.01 * Math.max(0, d - 1.5)) / Math.max(d, 1e-9)), tAbs: 3, tElim: 144, plasmaShare: 0.2, baseline: 1.2, where: 'blood', storeTau: 90,
@@ -4450,8 +4452,8 @@ exports.PK = {
         note: 'Almost fully absorbed; the thyroid takes what it needs and the kidneys clear the rest within a day or two.',
         timing: 'Any time; excess can itself upset the thyroid.', src: 'Zimmermann 2009 iodine physiology' },
     creatine: { name: 'Creatine', unit: 'g', toMass: 1000, mass: 'mg', F: () => 0.99, tAbs: 0.4, tElim: 1.5, plasmaShare: 0.11, baseline: 20, where: 'blood',
-        note: 'Blood creatine peaks ~1 h after a dose and is pulled into muscle within hours; what matters is the muscle store, which fills over days to weeks.',
-        timing: 'Timing barely matters; consistency does. 3–5 g/day fills stores in ~4 weeks, 20 g/day in ~6 days; 10 g/day in ~2 weeks.',
+        note: 'Blood creatine peaks ~1 h after a dose and is pulled into muscle within hours; what matters is the muscle store, which fills over days to weeks and is back to baseline about a month after you stop.',
+        timing: 'Timing barely matters; consistency does. 3 g/day fills stores in ~4 weeks, 20 g/day in ~6 days, 10 g/day in ~10 days; 2 g/day keeps them full.',
         src: 'Harris et al. 1992; Hultman et al. 1996 (J Appl Physiol) loading vs 3 g/day' },
     collagen: { name: 'Collagen', unit: 'g', toMass: 1000, mass: 'mg', F: () => 0.9, tAbs: 0.4, tElim: 1.5, plasmaShare: 0.15, baseline: null, where: 'blood',
         note: 'Collagen peptides and their amino acids (glycine, proline, hydroxyproline) peak in blood ~1 h after a dose.',
@@ -4461,8 +4463,8 @@ exports.PK = {
         note: 'Withanolides clear within hours, but the cortisol-lowering effect seen in trials builds over 4–8 weeks of daily use.',
         timing: 'Daily, 300–600 mg root extract in trials. Pause if pregnant or on thyroid medication.',
         src: 'Meta-analyses of RCTs on serum cortisol (2021, 2025)' },
-    omega: { name: 'Omega-3 (EPA+DHA)', unit: 'g', toMass: 1000, mass: 'mg', F: () => 0.85, tAbs: 2.5, tElim: 48, plasmaShare: 0.3, baseline: null, where: 'blood', storeTau: 40,
-        note: 'EPA/DHA peak in blood 5–8 h after a meal-time dose, then build into red cell membranes over ~3–4 months (the omega-3 index).',
+    omega: { name: 'Omega-3 (EPA+DHA)', unit: 'g', toMass: 1000, mass: 'mg', F: () => 0.85, tAbs: 2.5, tElim: 48, plasmaShare: 0.3, baseline: null, where: 'blood', storeTau: 35,
+        note: 'EPA/DHA peak in blood 5–8 h after a meal-time dose, then build into red cell membranes over ~5 months (the omega-3 index): from ~4.3 %, 0.3 g/day adds ~2 points, 1.8 g/day ~5 (Flock 2013).',
         timing: 'With a meal. The index, not the daily peak, tracks the benefits.', src: 'Harris & Von Schacky 2004; Flock et al. 2013' },
     fiber: { name: 'Fiber', unit: 'g', toMass: 1000, mass: 'mg', F: () => 0, tAbs: 1, tElim: 1, plasmaShare: 0, baseline: null, where: 'gut',
         note: 'Not absorbed — it works in the gut, feeding the microbiome and slowing glucose absorption.', timing: 'Spread across meals.', src: 'Reynolds et al. 2019 (Lancet)' },
@@ -4593,16 +4595,24 @@ function dailyTotals(k, doses, today, days, dayKeyOf) {
  * — calibrated so 3 g/day saturates in ~4 weeks and 20 g/day in ~6 days
  * (Hultman 1996) — and washes out over ~4–6 weeks after stopping.
  */
+/**
+ * Muscle creatine store, 0–1 of saturation. Hultman et al. 1996 (J Appl Physiol, doi:10.1152/jappl.1996.81.1.232):
+ * 20 g/day for 6 days and 3 g/day for 28 days each raised muscle creatine ~20 % (full); 2 g/day held it there;
+ * 30 days after stopping it was back to baseline. Filling is limited by the dose (≈1.2 % of the store per gram a
+ * day, so 3 g/day rises about linearly to full by day ~26) and slows near full (half the remaining gap a day, so
+ * 20 g/day is ~97 % by day 6); washout is 10 % of the excess a day (≈ 4 % left after 30 days). It used to wash out
+ * with a ~5-week half-life and treat 2 g/day as two-thirds full.
+ */
 function creatineSaturation(dailyGrams) {
     dailyGrams = (dailyGrams || []).map(v => (0, sanitize_1.numOr)(v, 0, 1e5, 0));
     let x = 0;
     for (let i = dailyGrams.length - 1; i >= 0; i--) { // oldest → newest
         const I = Math.max(0, dailyGrams[i] || 0);
-        const target = Math.min(1, I / 3); // 3 g/day is enough to saturate eventually
+        const target = Math.min(1, I / 2); // 2 g/day maintains a full store
         if (target >= x)
-            x += (target - x) * (0.03 + 0.012 * Math.min(I, 25)); // filling: faster with bigger doses
+            x += Math.min(Math.min(I, 25) * 0.012, (target - x) * 0.5);
         else
-            x += (target - x) * 0.02; // washing out: half-life ≈ 5 weeks
+            x += (target - x) * 0.1;
     }
     return Math.max(0, Math.min(1, x));
 }
@@ -4614,29 +4624,43 @@ function creatineSaturation(dailyGrams) {
  */
 function vitaminDStatus(dailyIU, lab) {
     dailyIU = (dailyIU || []).map(v => (0, sanitize_1.numOr)(v, 0, 1e6, 0));
-    const tau = 29;
+    // 25(OH)D half-life ≈ 15 days (Jones 2008) → τ ≈ 22 d; steady state +0.70 nmol/L per µg/day = +0.7 ng/mL per
+    // 100 IU/day (Heaney 2003, doi:10.1093/ajcn/77.1.204). It used +1.0, which overstated a 5,000 IU habit by ~15 ng/mL.
+    const tau = exports.PK.vitd.storeTau || 22, PER_100IU = 0.7;
     let w = 0, s = 0;
     dailyIU.forEach((iu, i) => { const wt = Math.exp(-i / tau); w += wt; s += wt * iu; });
     const avgIU = w ? s / w : 0;
-    const fromIntake = avgIU / 100;
+    const fromIntake = avgIU / 100 * PER_100IU;
     if (lab && lab.value > 0) {
         // nmol/L → ng/mL
         const ng = /nmol/i.test(lab.unit) ? lab.value / 2.496 : lab.value;
         // intake before the lab was already in the lab value; only the change since counts
         let w2 = 0, s2 = 0;
         dailyIU.slice(lab.daysAgo).forEach((iu, i) => { const wt = Math.exp(-i / tau); w2 += wt; s2 += wt * iu; });
-        const before = w2 ? s2 / w2 / 100 : 0;
+        const before = w2 ? s2 / w2 / 100 * PER_100IU : 0;
         const drift = 1 - Math.exp(-lab.daysAgo / tau);
         return { level: Math.max(0, ng + (fromIntake - before) * drift), basis: 'lab', fromIntake };
     }
     return { level: 20 + fromIntake, basis: 'typical', fromIntake };
 }
 /** Estimated omega-3 index (% of red-cell fatty acids): ~4.5 % typical + ~2.5 points per g/day at steady state, τ ≈ 40 days. */
+/**
+ * Omega-3 index (EPA+DHA as % of red-cell fatty acids). Flock et al. 2013 (J Am Heart Assoc, doi:10.1161/JAHA.113.000513):
+ * from 4.3 %, 0.3 / 0.6 / 0.9 / 1.8 g/day for ~5 months added 1.9 / 2.5 / 3.2 / 5.2 points — concave, so the steady
+ * rise is 6.5 × (1 − e^(−g/1.1)). Each day's dose moves the index with a ~35-day time constant (red cells turn over
+ * in ~120 days; steady state by ~5 months). Days before the record count as no dose. It was linear (2.5 per gram),
+ * which under-read the small doses most people take by half.
+ */
 function omega3Index(dailyGrams) {
     dailyGrams = (dailyGrams || []).map(v => (0, sanitize_1.numOr)(v, 0, 1e5, 0));
+    const tau = exports.PK.omega.storeTau || 35, span = Math.max(dailyGrams.length, Math.ceil(tau * 5));
     let w = 0, s = 0;
-    dailyGrams.forEach((g, i) => { const wt = Math.exp(-i / 40); w += wt; s += wt * g; });
-    return 4.5 + 2.5 * (w ? s / w : 0) * (1 - Math.exp(-dailyGrams.filter(g => g > 0).length / 40));
+    for (let i = 0; i < span; i++) {
+        const wt = Math.exp(-i / tau);
+        w += wt;
+        s += wt * 6.5 * (1 - Math.exp(-(dailyGrams[i] || 0) / 1.1));
+    }
+    return Math.round((4.3 + (w ? s / w : 0)) * 10) / 10;
 }
 /** 0–1: how much of the effect seen in trials a daily supplement has built up (τ ≈ 21 days), e.g. ashwagandha. */
 function builtEffect(dailyAmounts, fullDose, tau = 21) {
@@ -6980,15 +7004,18 @@ function survivability(input) {
         const mob = input.mobility || 0; // 0-10
         const integrity = b ? b.integrity : 0; // 100 = no soreness load
         const balance = b && b.balance !== null ? b.balance : 0;
-        const parts = [mob > 0 ? clamp(mob * 10) : null, b ? clamp(integrity) : null, balance > 0 ? clamp(balance) : null]
+        // Tendon capacity from heavy loading over months (tissue.ts, 50 = untrained adult; Bohm 2015). "No soreness"
+        // alone used to score this domain 100 — it says nothing about what the tendons can take.
+        const tendon = input.tendonCapacity && input.tendonCapacity > 0 ? clamp(input.tendonCapacity) : 0;
+        const parts = [mob > 0 ? clamp(mob * 10) : null, b ? clamp(integrity) : null, balance > 0 ? clamp(balance) : null, tendon > 0 ? tendon : null]
             .filter(x => x !== null);
         const score = parts.length ? clamp(Math.round(parts.reduce((a, x) => a + x, 0) / parts.length)) : 0;
-        const conf = Math.min(1, (mob > 0 ? 0.35 : 0) + (b ? 0.35 : 0) + (balance > 0 ? 0.3 : 0));
+        const conf = Math.min(1, (mob > 0 ? 0.3 : 0) + (b ? 0.2 : 0) + (balance > 0 ? 0.2 : 0) + (tendon > 0 ? 0.3 : 0));
         domains.push({
             key: 'structure', label: 'STRUCTURE', icon: '🦴', score, confidence: conf,
             what: 'Joints, tendons and antagonist balance — resistance to being injured.',
             why: parts.length
-                ? `Integrity ${integrity}%${balance > 0 ? ', antagonist balance ' + balance + '%' : ''}${mob > 0 ? ', mobility ' + mob.toFixed(1) + '/10' : ''}.`
+                ? `Integrity ${integrity}%${tendon > 0 ? ', tendon capacity ' + tendon + ' (50 = untrained)' : ''}${balance > 0 ? ', antagonist balance ' + balance + '%' : ''}${mob > 0 ? ', mobility ' + mob.toFixed(1) + '/10' : ''}.`
                 : 'No mobility or soreness data logged.',
             fix: balance > 0 && balance < 60
                 ? 'Antagonist volume is lopsided — that asymmetry is where injuries start.'
@@ -8189,7 +8216,7 @@ function sundayBodyLine(rows, age, habits) {
   "./tissue": function (exports, module, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.tissueDayKey = exports.STRENGTH_STD = exports.AR_REGION = exports.MUSCLE_MASS = void 0;
+exports.tissueDayKey = exports.retention = exports.STRENGTH_STD = exports.AR_REGION = exports.MUSCLE_MASS = void 0;
 exports.volumeZone = volumeZone;
 exports.tissue = tissue;
 /**
@@ -8202,7 +8229,7 @@ exports.tissue = tissue;
  *    volume is judged against the dose-response evidence (Schoenfeld 2017:
  *    ≥10 hard sets / muscle / week grows more) and the usual MEV/MAV/MRV
  *    landmarks.
- *  • Strength is what you lifted: the best estimated 1-rep max per exercise (Epley), held for ~3 weeks
+ *  • Strength is what you lifted: the best estimated 1-rep max per exercise (Brzycki ≤10 reps, Epley above), held for ~4 weeks
  *    without training and then fading slowly (Mujika & Padilla 2000; McMaster 2013), relative to body
  *    weight and compared with population lifting standards for that movement (beginner → elite).
  *  • Tendon capacity (stiffness / load tolerance, 50 = untrained adult) rises with HIGH-STRAIN loading —
@@ -8291,8 +8318,14 @@ function levelOf(ratio) {
     }
     return { score: 100, level: 'Elite' };
 }
-/** Share of a best lift still there after `d` days without it: held ~3 weeks, then ~0.3 %/day, at most −25 %. */
-const retention = (d) => 1 - Math.min(0.25, Math.max(0, d - 21) * 0.003);
+/**
+ * Share of a best lift still there after `d` days without it. Strength "is readily maintained for up to 4 wk of
+ * inactivity" and then declines slowly (Mujika & Padilla 2001, doi:10.1097/00005768-200108000-00009; Bosquet 2013):
+ * held 28 days, then a slowing loss toward −25 % — about −6 % at 8 weeks, −11 % at 12, −20 % at 6 months. It used to
+ * fall in a straight line from day 21 (−19 % at 12 weeks).
+ */
+const retention = (d) => 1 - 0.25 * (1 - Math.exp(-Math.max(0, d - 28) / 100));
+exports.retention = retention;
 function tissue(inp0, days = 240) {
     var _a, _b, _c, _d, _e, _f;
     // Clean every input once (sanitize.ts): a stored "7,5" or a 1e6 typo must not turn the readout into NaN.
@@ -8333,7 +8366,7 @@ function tissue(inp0, days = 240) {
                     const load = bwShare !== undefined && inp.bodyweight ? (inp.bodyweight * bwShare + w) : w;
                     const e1l = (0, strong_1.e1rm)(load, r);
                     const cur = lifts.get(lib.n);
-                    if (e1l > 0 && (!cur || e1l * retention(Math.max(0, (keyToTime(inp.today) - keyToTime(s.date)) / dayMs)) > cur.e1 * retention(Math.max(0, (keyToTime(inp.today) - keyToTime(cur.day)) / dayMs))))
+                    if (e1l > 0 && (!cur || e1l * (0, exports.retention)(Math.max(0, (keyToTime(inp.today) - keyToTime(s.date)) / dayMs)) > cur.e1 * (0, exports.retention)(Math.max(0, (keyToTime(inp.today) - keyToTime(cur.day)) / dayMs))))
                         lifts.set(lib.n, { e1: e1l, day: s.date, ex: lib, bw: bwShare !== undefined });
                 }
                 // Intensity = the weight as a share of your best estimated 1RM on this exercise (%1RM). It used to be
@@ -8427,11 +8460,11 @@ function tissue(inp0, days = 240) {
                 return;
             const std = exports.STRENGTH_STD[ex.p] * (L.bw ? 1 : ((_a = EQUIP_FACTOR[ex.e]) !== null && _a !== void 0 ? _a : 1)) * (female ? (UPPER.has(m) ? 0.72 : 0.82) : 1);
             const age = Math.max(0, (keyToTime(inp.today) - keyToTime(L.day)) / dayMs);
-            const now = L.e1 * retention(age);
+            const now = L.e1 * (0, exports.retention)(age);
             const rel = now / bw, ratio = rel / std;
             const lv = levelOf(ratio);
             const machine = ex.e === 'machine' || ex.e === 'cable';
-            cands.push({ score: lv.score, level: lv.level, rel, ratio, w: share, faded: 1 - retention(age), machine, iso: ex.mech === 'isolation',
+            cands.push({ score: lv.score, level: lv.level, rel, ratio, w: share, faded: 1 - (0, exports.retention)(age), machine, iso: ex.mech === 'isolation',
                 basis: ex.n + ' · est. 1RM ' + Math.round(now) + ' kg' + (L.bw ? ' incl. body' : '') + ' = ' + (Math.round(rel * 100) / 100) + '× body weight' + (machine ? ' (machine — rough, machines differ)' : '') });
         });
         if (!cands.length)
@@ -8502,7 +8535,7 @@ function tissue(inp0, days = 240) {
     lifts.forEach(L => {
         if (L.ex && L.ex.p)
             liftList.push({ n: L.ex.n, p: L.ex.p, e: L.ex.e, bw: L.bw, day: L.day,
-                e1: Math.round(L.e1 * retention(Math.max(0, (keyToTime(inp.today) - keyToTime(L.day)) / dayMs)) * 10) / 10 });
+                e1: Math.round(L.e1 * (0, exports.retention)(Math.max(0, (keyToTime(inp.today) - keyToTime(L.day)) / dayMs)) * 10) / 10 });
     });
     return { lifts: liftList, muscles, tendons, arTotal: Math.round(arS / arW), acwr: tot.r === null ? null : Math.round(tot.r * 100) / 100, rpe7: avg(rpeRecent), rpePrev: avg(rpeEarlier) };
 }
