@@ -22,7 +22,7 @@ import { secMind } from './mind.js';
 import { standing, fmtAmt } from './doses.js';
 import { hormoneRows } from './hormones.js';
 import { rebuildNow } from './rebuild.js';
-import { fatigueCard, storyBlock, fatigueNow } from './system.js';
+import { fatigueCard, fatigueNow } from './system.js';
 
 const ui = { face: 'front', mode: 'status', tl: 0, sel: null, open: {} };
 const MODES = [['status', 'Status'], ['strength', 'Strength'], ['mobility', 'Mobility'], ['soreness', 'Soreness'], ['volume', 'Thermal'], ['range', 'Range']];
@@ -620,9 +620,6 @@ function muscleSheet(slug) {
       const t = today();
       const days = [6, 5, 4, 3, 2, 1, 0].map(i => shiftDay(t, -i));
       const hits = new Set(v.workouts.filter(w => (w.slugs || []).includes(slug)).map(w => w.date));
-      const log = ((v.body.mobLog || {})[slug] || []).slice(-10);
-      const rate = (field, c, cur) => `<div class="rate" style="--c:${c}">${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n =>
-        `<button class="${n === cur ? 'on' : n > 0 && n < cur ? 'lo' : ''}" data-act="ms-rate" data-slug="${slug}" data-f="${field}" data-v="${n}">${n === 0 ? '–' : n}</button>`).join('')}</div>`;
       const vol = m.vol30 || 0;
       const T = tissueNow(), tm = T.muscles[slug] || null;
       const tens = tm ? tm.tendons.map(k => T.tendons[k]).filter(Boolean) : [];
@@ -630,9 +627,6 @@ function muscleSheet(slug) {
       const zc = !tm || tm.weekSets < 6 ? '#ffb340' : tm.weekSets <= 20 ? '#30d158' : '#ff9f0a';
       const tile = (c, k, val, unit, sub, bar) => `<div class="mt" style="--c:${c}"><div class="k">${k}</div><div class="v num">${val}<small>${unit}</small></div>
         ${bar != null ? `<div class="b"><i style="width:${Math.max(0, Math.min(100, bar))}%"></i></div>` : ''}<div class="s">${sub}</div></div>`;
-      const logged = new Set(v.workouts.flatMap(w => (w.exercises || []).map(e => L.canonicalName(e.n))));
-      const moves = L.EXERCISES.filter(x => (x.load[slug] || 0) >= 0.8)
-        .sort((a, b) => (logged.has(b.n) ? 1 : 0) - (logged.has(a.n) ? 1 : 0)).slice(0, 5);
       const tCap = tens.length ? Math.min(...tens.map(x => x.capacity)) : null;
       return `${bio.lat ? `<div class="ms-lat">${esc(bio.lat)}</div>` : ''}
       <div class="ms-state"><span class="tag" style="--c:${st[1]}">${st[0].toUpperCase()}</span>
@@ -642,7 +636,7 @@ function muscleSheet(slug) {
         <button class="mt-btn" data-act="str-why" data-slug="${slug}" aria-label="How strength is estimated">${tm && tm.strength
           ? tile('#30d158', 'Strength', tm.strength.score, '/100', esc(tm.strength.level) + ' · ' + tm.strength.rel + '× body weight', tm.strength.score)
           : tile('#30d158', 'Strength', '—', '', 'log a main lift for an estimate', null)}</button>
-        ${tile('#40c8e0', 'Mobility', met.mobility ? met.mobility : '—', met.mobility ? '/10' : '', met.mobility ? (log.length ? log.length + ' stretch readings' : 'your rating') : 'not rated yet', met.mobility ? met.mobility * 10 : null)}
+        ${tile('#40c8e0', 'Mobility', m.mobility > 0 ? fmt1(m.mobility) : '—', m.mobility > 0 ? '/10' : '', 'estimated · training + mobility work', m.mobility > 0 ? m.mobility * 10 : null)}
         <button class="mt-btn" data-act="tendon-why" data-slug="${slug}" aria-label="How tendon capacity is estimated">${tile(tCap === null ? 'rgba(235,240,245,.5)' : tCap >= 65 ? '#30d158' : tCap >= 52 ? '#40c8e0' : '#ffb340', 'Tendon capacity', tCap === null ? '—' : tCap, tCap === null ? '' : '/100', tens.length ? (tCap <= 51 ? 'untrained baseline · ' : '') + esc(tens.map(x => x.name.replace(/ tendon$/i, '')).join(' · ')) : 'no tendon mapped', tCap)}</button>
         <button class="mt-btn" data-act="ar-why" data-slug="${slug}" aria-label="Why this androgen-receptor estimate">${tile('#bf5af2', 'AR sensitivity', tm ? tm.ar : '—', tm ? '/100' : '', tm && tm.arDrivers[0] ? (tm.arDrivers[0].d > 0 ? '▲ ' : '▼ ') + esc(tm.arDrivers[0].label) : 'estimate · tap for why', tm ? tm.ar : null)}</button>
         ${(() => { const V = volOf(v, slug, m); return tile(V.color, 'Weekly volume', fmt1(m.weekSets || 0), ' / ' + V.mavLo + '–' + V.mavHi, esc(V.label), V.mrv ? (m.weekSets || 0) / V.mrv * 100 : null); })()}
@@ -653,33 +647,53 @@ function muscleSheet(slug) {
         <div class="st"><span style="color:${TST[x.status][1]}">${TST[x.status][0]}</span>${x.acwr !== null ? ' · load ratio ' + x.acwr : ''}${x.collagenSessions ? ' · ' + x.collagenSessions + '× collagen + C' : ''}</div></span>
         <b class="num">${x.capacity}</b></div>`).join('')}</section>` : ''}
       ${injBlock(v, slug)}
-      ${storyBlock(v, slug)}
+      ${analysisBlock(v, slug, m)}
       ${liftsBlock(v, slug)}
       <div class="hist7" style="margin-top:14px">${days.map(k => `<span class="${hits.has(k) ? 'hit' : ''} ${k === t ? 't' : ''}"><i></i>${fmtDay(k, { weekday: 'narrow' })}</span>`).join('')}</div>
       <div class="blk"><div class="blk-h"><span class="eyebrow">Soreness</span><span class="val">${SORE_LBL[met.soreness || 0]}</span></div>
         <div class="sore">${SORE_LBL.map((l, i) => `<button class="${(met.soreness || 0) === i && (i > 0 || met.soreTs) ? 'on' : ''}" style="--sc:${SORE_COLORS[i]}" data-act="ms-sore" data-slug="${slug}" data-v="${i}">${l.toUpperCase()}</button>`).join('')}</div>
         <p>A verdict newer than your last workout overrides the recovery colours — mark None to say it has recovered.</p></div>
-      ${moves.length ? `<div class="grp-h">Best exercises for it</div><div class="chips">${moves.map(x => `<button class="chip" data-act="ex-hist" data-n="${esc(x.n)}">${logged.has(x.n) ? '★ ' : ''}${esc(x.n)}</button>`).join('')}</div>` : ''}
-      <details class="adj"><summary>Adjust ratings</summary>
-        <div class="blk"><div class="blk-h"><span class="eyebrow">Strength rating</span><span class="val">${met.strength ? met.strength + '/10' : tm && tm.strength ? 'from your lifts' : 'not measured'}</span></div>
-          ${rate('strength', '#30d158', met.strength || 0)}
-          <p>${tm && tm.strength ? `Your lifts put it at ${tm.strength.score}/100 (the Strength tile above). A rating here overrides that; – goes back to your lifts.` : `No standard lift covers this muscle yet, so its strength is not measured (30-day tonnage: ${Math.round(vol).toLocaleString()} kg). A rating here sets it; – clears it.`}</p></div>
-        <div class="blk"><div class="blk-h"><span class="eyebrow">Mobility</span><span class="val">${met.mobility ? met.mobility + '/10' : 'not rated'}</span></div>
-          ${rate('mobility', '#40c8e0', met.mobility || 0)}
-          <div class="row" style="margin-top:10px"><button class="btn sm btn-tint" style="--accent:#40c8e0" data-act="ms-stretch" data-slug="${slug}" ${met.mobility ? '' : 'disabled'}>${icon('clock', 15)} Log stretch reading</button>
-            <span class="sub">${log.length ? log.length + ' readings' : 'no readings yet'}</span></div>
-          ${log.length ? `<div class="moblog">${log.map(x => `<i style="height:${Math.max(3, x.v * 3.4)}px" title="${x.v}/10"></i>`).join('')}</div>` : ''}</div>
-      </details>
-      ${bio.act ? `<details class="adj"><summary>Anatomy</summary><dl class="anat">
+      ${bio.act ? `<div class="grp-h" style="margin-top:16px">Anatomy</div><section class="card frost tight">${bio.ft != null ? fibreBar(bio.ft) : ''}<dl class="anat">
         <dt>Action</dt><dd>${esc(bio.act)}</dd>${bio.org ? `<dt>Origin</dt><dd>${esc(bio.org)}</dd>` : ''}${bio.ins ? `<dt>Insertion</dt><dd>${esc(bio.ins)}</dd>` : ''}
-        ${bio.ant ? `<dt>Antagonist</dt><dd>${esc(bio.ant)}</dd>` : ''}${bio.ft != null ? `<dt>Fibre type</dt><dd>~${bio.ft}% fast-twitch</dd>` : ''}</dl>
-        ${bio.note ? `<p style="font-size:.8rem;color:var(--t2)">${esc(bio.note)}</p>` : ''}</details>` : ''}
+        ${bio.ant ? `<dt>Antagonist</dt><dd>${esc(bio.ant)}</dd>` : ''}</dl>
+        ${bio.note ? `<p style="font-size:.8rem;color:var(--t2)">${esc(bio.note)}</p>` : ''}</section>` : ''}
       <p class="sub" style="line-height:1.45;margin:12px 0 0">Tendon capacity and AR sensitivity are model estimates from the sets you logged and each exercise's loading, adjusted by sleep, protein and the hormone estimate — not measurements.</p>
       <div class="row" style="gap:8px;margin-top:14px">
         <button class="btn btn-prominent" style="flex:1;--accent:#ff9f0a" data-act="train-slug" data-slug="${slug}">${icon('dumbbell', 17)} Train ${esc(m.name || '')}</button>
         <button class="btn btn-glass" data-act="ms-pin" data-slug="${slug}">${pinned ? 'Unpin' : 'Pin'}</button></div>`;
     },
   });
+}
+
+/* ── Analysis: one muscle in charts (logic/muscle.ts + logic/charts.ts — the same charts the PC draws) ── */
+const CH_PAL = { fg: 'rgba(235,240,245,.92)', dim: 'rgba(235,240,245,.5)', grid: 'rgba(255,255,255,.08)', accent: '#40c8e0', band: 'rgba(48,209,88,.14)', warn: '#ff9f0a', good: '#30d158' };
+function analysisBlock(v, slug, m) {
+  const t = today(), p = v.profile || {}, w = latestWeight(v) || (+p.weight || null), age = L.specimen(p).age;
+  const A = L.muscleAnalytics({ sessions: v.workouts || [], slug, today: t, bodyweight: w, sex: p.sex, antagonists: L.ANTAGONISTS });
+  const V = m.vol || null, S = L.muscleStory(v.workouts || [], slug, t, v.injuries || [], 12, Number(w) || null);
+  const blk = (h, body, note) => body ? `<div class="ana frost"><div class="ana-h">${h}</div>${body}${note ? `<p class="sub ana-n">${note}</p>` : ''}</div>` : '';
+  let H = `<div class="grp-h" style="margin-top:16px">Analysis</div>`;
+  H += blk('Hard sets per week · 12 weeks', L.svgWeeklySets(A.weeks, V ? { mev: V.mev, mavLo: V.mavLo, mavHi: V.mavHi, mrv: V.mrv } : null, CH_PAL),
+    esc(S.lines.join(' ')) + ' Green band = where weekly sets grow it; dashed = the most you can recover from.');
+  A.lifts.forEach(lf => {
+    const lv = lf.levels.filter(x => lf.best && x.kg <= lf.best).pop();
+    H += blk(esc(lf.n) + ' · best est. 1RM per session', L.svgLiftTrend(lf, t, CH_PAL),
+      `Dashed lines = population standards for this lift at your ${w ? Math.round(w) + ' kg' : 'body weight'}${lf.bw ? ' (body weight included)' : ''}. Latest session ${lf.last || '—'} kg${lf.rel ? ' (' + lf.rel + '×)' : ''} · best in 6 months ${lf.best} kg${lv ? ' — ' + lv.label : ''}.`);
+  });
+  if (!A.lifts.length) H += blk('Strength', ' ', 'No standard lift for this muscle in the last 6 months — strength is not measured here.');
+  H += blk('What trained it · 8 weeks', L.svgBars(A.exercises.map(x => ({ label: x.n, v: x.sets })), CH_PAL, 320, ' sets'), 'Hard sets, weighted by how much each exercise works this muscle.');
+  if (A.balance && A.balance.mine + A.balance.theirs > 0) H += blk(esc(A.balance.name) + ' · 8 weeks', L.svgSplit({ label: 'this side', v: A.balance.mine }, { label: 'opposite', v: A.balance.theirs }, CH_PAL),
+    'Hard sets a week on each side. ' + (A.balance.ratio != null && (A.balance.ratio > 65 || A.balance.ratio < 35) ? 'Lopsided — the stronger side tends to pull joints out of line.' : 'Within a normal spread.'));
+  const ME = L.mobilityEstimate(L.setsPerWeekAll(v.workouts || [], t, 56)[slug] || 0, v.body.mobilityDays28 || 0, age);
+  H += blk('Mobility · estimated ' + ME.score + ' / 10', `<div class="ana-rows"><div><span>Untrained adult</span><b class="num">5.0</b></div>${ME.parts.map(x => `<div><span>${esc(x.label)}</span><b class="num">${x.d > 0 ? '+' : ''}${x.d}</b></div>`).join('')}</div>`,
+    'Strength training through a full range improved range of motion as much as stretching (Afonso 2021) — an exposure estimate, not a measured angle.');
+  return H;
+}
+function fibreBar(ft) {
+  const st = 100 - ft;
+  return `<div class="ana-h" style="margin:2px 0 6px">Fibre type · ${ft >= 58 ? 'fast-twitch bias' : ft <= 42 ? 'slow-twitch bias' : 'mixed'}</div>
+    <div class="fibre"><i style="width:${st}%;background:#40c8e0"></i><i style="width:${ft}%;background:#ff9f0a"></i></div>
+    <div class="row" style="justify-content:space-between;font-size:.72rem;color:var(--t2);margin:4px 0 8px"><span>slow ${st} %</span><span>${ft} % fast</span></div>`;
 }
 
 /** How a muscle's strength or its tendons' capacity was estimated (logic/tissue.ts). */
@@ -812,6 +826,8 @@ function systemsNow(v) {
   if (sysFor === k) return sysCache;
   const t = today(), p = v.profile || {}, w = latestWeight(v) || (+p.weight || null), sp = L.specimen(Object.assign({}, p, w ? { weight: w } : {}));
   const inp = { today: t, bio: v.bio || {}, age: sp.age, sex: p.sex || null, height: +p.height || null, weight: w, bodyfat: p.bodyfat != null && p.bodyfat !== '' ? +p.bodyfat : null, vo2max: +p.vo2max || null };
+  // Muscular strength (bench ÷ body weight vs age norms) or, without a bench, strength-training time (logic/systems.ts).
+  try { inp.pressRatio = L.strengthForAge(tissueNow().lifts, w); inp.msaMinutes = L.trainingMinutes(v.workouts || [], t); } catch (e) { /* body age still works without them */ }
   sysCache = { rows: L.systemsReport({ ...inp, endo: v.endo || null, rebuild: rebuildNow(v), injuries: Object.keys(L.activeInjuries(v.injuries || [], t)).length, coverage: v.body.coverage ?? null, coverage28: v.body.coverage28 ?? null }), age: L.bodyAge(inp) };
   sysFor = k; return sysCache;
 }

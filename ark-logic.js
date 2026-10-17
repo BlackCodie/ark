@@ -189,10 +189,9 @@ function derivedStrength(vol30, slug) {
  * after the last session, while real strength holds for weeks (2026-10-14).
  */
 function strengthFor(slug, metric, training, lift, liftsKnown = false) {
-    const manual = (0, sanitize_1.numOr)(metric.strength, 0, 10, 0);
+    // Automatic (2026-10-17): your lifts decide; a stored manual rating no longer overrides them (it is kept, unused).
+    void metric;
     const derived = derivedStrength(training.vol30, slug);
-    if (manual > 0)
-        return { value: manual, manual: true, derived, from: 'manual' };
     const fromLift = lift != null && isFinite(lift) && lift > 0 ? Math.round(Math.min(10, lift / 10) * 10) / 10 : null;
     // Once your lifts give standards-based scores, a muscle no standard lift covers is "not measured" (0), not its
     // tonnage: the two scales do not mix, and a lower back worked only by rows read 2/10 and pulled the back
@@ -248,7 +247,9 @@ function bodyState(input) {
         const target = setTarget(slug);
         const deficit = Math.max(0, target - t.weekSets);
         const str = strengthFor(slug, md, t, input.liftStrength ? input.liftStrength[slug] : null, liftsKnown);
-        const mob = md.mobility;
+        // Automatic when the estimate is supplied (muscle.ts mobilityEstimate); a stored manual rating otherwise.
+        const auto = input.mobilityAuto ? (0, sanitize_1.numIn)(input.mobilityAuto[slug], 0, 10) : null;
+        const mob = auto !== null ? auto : md.mobility;
         // Priority: what to train next.
         //   readiness  0 while repairing, 1 once past the window
         //   deficit    how far below the weekly target
@@ -342,7 +343,7 @@ function bodyState(input) {
     // Composite index. Strength is derived, so this no longer rewards dragging a
     // slider; balance is a real antagonist ratio, so it can be weighted honestly.
     //
-    // Unknown is not zero. Mobility is only ever self-rated and balance needs
+    // Unknown is not zero. Mobility comes from the estimate (muscle.ts) or a stored rating, and balance needs
     // volume on both sides of a pair; when either is absent the component is
     // left out and the rest is rescaled, instead of scoring the gap as a failure
     // (an unrated mobility used to cost 15 points, and a missing balance was
@@ -405,6 +406,106 @@ function systemicRecoveryFactor(report) {
                 : cap < 45 ? 'low recovery capacity' : 'systemic load';
     }
     return { factor, reason, confidence: conf, capacity: cap, stress, anabolic: anab, energy };
+}
+
+  },
+  "./charts": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.svgWeeklySets = svgWeeklySets;
+exports.svgLiftTrend = svgLiftTrend;
+exports.svgBars = svgBars;
+exports.svgSplit = svgSplit;
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const f = (x) => (isFinite(x) ? Math.round(x * 10) / 10 : 0);
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const short = (k) => { const [, m, d] = k.split('-').map(Number); return (d || 1) + ' ' + (MON[(m || 1) - 1] || ''); };
+const font = (p, size, col, extra = '') => `font-family="${p.font || 'system-ui, -apple-system, sans-serif'}" font-size="${size}" fill="${col}"${extra}`;
+const t = (k) => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d).getTime(); };
+/** A round tick step for a span: 1, 2, 2.5, 5 × 10^n. */
+const niceStep = (span, n = 3) => { const raw = Math.max(1e-6, span / n), p = Math.pow(10, Math.floor(Math.log10(raw))); return [1, 2, 2.5, 5, 10].map(x => x * p).find(x => x >= raw) || 10 * p; };
+/** Weekly hard sets as bars over the productive band (MAV) and the recoverable ceiling (MRV). */
+function svgWeeklySets(weeks, plan, p, W = 320, H = 132) {
+    const n = Math.max(1, weeks.length), L = 24, R = 8, T = 10, B = 20, cw = W - L - R, ch = H - T - B;
+    const peak = Math.max(4, plan ? plan.mrv * 1.08 : 0, ...weeks.map(w => w.sets * 1.08)), st = niceStep(peak, 3);
+    const top = st * Math.ceil(peak / st);
+    const y = (v) => T + ch - Math.max(0, Math.min(1, v / top)) * ch, bw = cw / n;
+    let g = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Hard sets per week, last ${n} weeks" style="display:block">`;
+    Array.from({ length: Math.round(top / st) + 1 }, (_, i) => i * st).forEach(v => { g += `<line x1="${L}" x2="${W - R}" y1="${f(y(v))}" y2="${f(y(v))}" stroke="${p.grid}"/><text x="${L - 4}" y="${f(y(v) + 3)}" text-anchor="end" ${font(p, 8, p.dim)}>${Math.round(v)}</text>`; });
+    if (plan) {
+        g += `<rect x="${L}" y="${f(y(plan.mavHi))}" width="${cw}" height="${f(Math.max(1, y(plan.mavLo) - y(plan.mavHi)))}" fill="${p.band}"/>`;
+        g += `<line x1="${L}" x2="${W - R}" y1="${f(y(plan.mrv))}" y2="${f(y(plan.mrv))}" stroke="${p.warn}" stroke-dasharray="3 3" stroke-width="1"/>`;
+        g += `<text x="${W - R}" y="${f(y(plan.mrv) - 3)}" text-anchor="end" ${font(p, 8, p.warn)}>ceiling ${plan.mrv}</text>`;
+        g += `<text x="${W - R}" y="${f(y(plan.mavHi) + 9)}" text-anchor="end" ${font(p, 8, p.good)}>grows ${plan.mavLo}–${plan.mavHi}</text>`;
+    }
+    weeks.forEach((w, i) => {
+        const h = Math.max(w.sets > 0 ? 2 : 0, y(0) - y(w.sets)), x = L + i * bw + bw * 0.18, col = !plan ? p.accent : w.sets > plan.mrv ? p.warn : w.sets >= plan.mavLo ? p.good : p.accent;
+        g += `<rect x="${f(x)}" y="${f(y(0) - h)}" width="${f(bw * 0.64)}" height="${f(h)}" rx="1.5" fill="${col}" opacity="${i === n - 1 ? 1 : 0.8}"><title>${esc(short(w.start))}: ${w.sets} sets</title></rect>`;
+        if (i % 3 === 0 || i === n - 1)
+            g += `<text x="${f(L + i * bw + bw / 2)}" y="${H - 6}" text-anchor="middle" ${font(p, 8, i === n - 1 ? p.fg : p.dim)}>${i === n - 1 ? 'this wk' : esc(short(w.start))}</text>`;
+    });
+    return g + '</svg>';
+}
+/** Best estimated 1RM per session over time, with the standards for your body weight as dashed levels. */
+function svgLiftTrend(lift, today, p, W = 320, H = 150) {
+    const pts = (lift.pts || []).filter(q => isFinite(q.e1) && q.e1 > 0);
+    if (!pts.length)
+        return '';
+    const L = 30, R = 78, T = 18, B = 20, cw = W - L - R, ch = H - T - B;
+    const x0 = Math.min(t(pts[0].d), t(today) - 182 * 864e5), x1 = t(today);
+    const vals = pts.map(q => q.e1);
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    const lv = (lift.levels || []).filter(l => isFinite(l.kg) && l.kg > 0);
+    // the level just below and just above the line, so you can see where you sit
+    const below = lv.filter(l => l.kg <= lo).slice(-1), above = lv.filter(l => l.kg >= hi).slice(0, 1);
+    [...below, ...above].forEach(l => { lo = Math.min(lo, l.kg); hi = Math.max(hi, l.kg); });
+    const step = niceStep(Math.max(8, hi - lo) * 1.15, 4);
+    lo = Math.max(0, Math.floor((lo - step * 0.3) / step) * step);
+    hi = Math.ceil((hi + step * 0.3) / step) * step;
+    const X = (k) => L + (t(k) - x0) / Math.max(1, x1 - x0) * cw, Y = (v) => T + ch - (v - lo) / Math.max(1, hi - lo) * ch;
+    let g = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${esc(lift.n)} estimated one-rep max over time" style="display:block">`;
+    const ticks = [];
+    for (let v = lo; v <= hi + 1e-6; v += step)
+        ticks.push(v);
+    ticks.forEach(v => { g += `<line x1="${L}" x2="${L + cw}" y1="${f(Y(v))}" y2="${f(Y(v))}" stroke="${p.grid}"/><text x="${L - 4}" y="${f(Y(v) + 3)}" text-anchor="end" ${font(p, 8, p.dim)}>${Math.round(v)}</text>`; });
+    lv.filter(l => l.kg >= lo && l.kg <= hi).forEach(l => {
+        g += `<line x1="${L}" x2="${L + cw}" y1="${f(Y(l.kg))}" y2="${f(Y(l.kg))}" stroke="${p.dim}" stroke-dasharray="2 3"/>`;
+        g += `<text x="${L + cw + 4}" y="${f(Y(l.kg) + 3)}" ${font(p, 8, p.dim)}>${esc(l.label)} ${l.kg}</text>`;
+    });
+    const path = pts.map((q, i) => (i ? 'L' : 'M') + f(X(q.d)) + ' ' + f(Y(q.e1))).join(' ');
+    g += `<path d="${path}" fill="none" stroke="${p.accent}" stroke-width="2" stroke-linejoin="round"/>`;
+    pts.forEach(q => { g += `<circle cx="${f(X(q.d))}" cy="${f(Y(q.e1))}" r="2.6" fill="${p.accent}"><title>${esc(short(q.d))}: ${q.e1} kg</title></circle>`; });
+    const last = pts[pts.length - 1];
+    g += `<circle cx="${f(X(last.d))}" cy="${f(Y(last.e1))}" r="4.2" fill="none" stroke="${p.fg}" stroke-width="1.4"/>`;
+    g += `<text x="${L + 2}" y="${T - 2}" ${font(p, 9, p.fg, ' font-weight="700"')}>latest ${last.e1} kg${lift.rel ? ' · ' + lift.rel + '× body weight' : ''}</text>`;
+    g += `<text x="${L}" y="${H - 6}" ${font(p, 8, p.dim)}>${esc(short(new Date(x0).getFullYear() + '-' + String(new Date(x0).getMonth() + 1).padStart(2, '0') + '-' + String(new Date(x0).getDate()).padStart(2, '0')))}</text><text x="${L + cw}" y="${H - 6}" text-anchor="end" ${font(p, 8, p.dim)}>today</text>`;
+    return g + '</svg>';
+}
+/** Horizontal bars: label, bar, value. */
+function svgBars(rows, p, W = 320, unit = '') {
+    const R = rows.filter(r => isFinite(r.v) && r.v > 0);
+    if (!R.length)
+        return '';
+    const rowH = 18, H = R.length * rowH + 4, lw = Math.round(W * 0.46), max = Math.max(...R.map(r => r.v));
+    let g = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Bar chart" style="display:block">`;
+    R.forEach((r, i) => {
+        const yy = 2 + i * rowH, bwid = Math.max(2, (W - lw - 40) * r.v / max);
+        const lab = r.label.length > 30 ? r.label.slice(0, 29) + '…' : r.label;
+        g += `<text x="0" y="${yy + 12}" ${font(p, 9.5, p.fg)}>${esc(lab)}</text>`;
+        g += `<rect x="${lw}" y="${yy + 4}" width="${f(bwid)}" height="10" rx="2" fill="${p.accent}" opacity="${f(1 - i * 0.1)}"/>`;
+        g += `<text x="${f(lw + bwid + 4)}" y="${yy + 12}" ${font(p, 9, p.dim)}>${r.v}${unit}</text>`;
+    });
+    return g + '</svg>';
+}
+/** Two sides of a pair as one split bar (this muscle vs its antagonist), with the share in the middle. */
+function svgSplit(a, b, p, W = 320) {
+    const tot = (a.v || 0) + (b.v || 0);
+    if (!(tot > 0))
+        return '';
+    const wa = Math.max(2, (W - 2) * a.v / tot);
+    return `<svg viewBox="0 0 ${W} 34" width="100%" role="img" aria-label="Balance" style="display:block">`
+        + `<rect x="0" y="4" width="${f(wa)}" height="12" rx="3" fill="${p.accent}"/><rect x="${f(wa + 2)}" y="4" width="${f(Math.max(0, W - wa - 2))}" height="12" rx="3" fill="${p.dim}" opacity=".55"/>`
+        + `<text x="0" y="30" ${font(p, 9, p.fg)}>${esc(a.label)} ${a.v}</text><text x="${W}" y="30" text-anchor="end" ${font(p, 9, p.dim)}>${esc(b.label)} ${b.v}</text></svg>`;
 }
 
   },
@@ -2451,6 +2552,8 @@ __exportStar(require("./habitimport"), exports);
 __exportStar(require("./backup"), exports);
 __exportStar(require("./rebuild"), exports);
 __exportStar(require("./labs"), exports);
+__exportStar(require("./muscle"), exports);
+__exportStar(require("./charts"), exports);
 
   },
   "./labs": function (exports, module, require) {
@@ -4118,6 +4221,155 @@ exports.REGIONS = {
     scn: { name: 'Suprachiasmatic nucleus', role: 'The master body clock, set by morning light and regular sleep.', state: 'Clock alignment' },
     brainstem: { name: 'Brainstem (locus coeruleus)', role: 'Noradrenaline and arousal — caffeine, cold and stress turn it up.', state: 'Arousal' },
 };
+
+  },
+  "./muscle": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.STANDARD_LEVELS = void 0;
+exports.weeklySets = weeklySets;
+exports.setsPerWeekAll = setsPerWeekAll;
+exports.muscleAnalytics = muscleAnalytics;
+exports.mobilityEstimate = mobilityEstimate;
+exports.mobilityByMuscle = mobilityByMuscle;
+/**
+ * ONE MUSCLE, ANALYSED — everything the muscle panel charts, from your own sets.
+ *
+ *  · Weekly hard sets for 12 weeks against this muscle's volume landmarks (physique.ts).
+ *  · Strength over time: the best estimated 1RM per session on the lifts that train it most, with the
+ *    population standards for that movement drawn at YOUR body weight (Beginner 0.5× → Elite 1.8× of the
+ *    standard; tissue.ts STRENGTH_STD), so the line reads as "where I am for my size", not just kilograms.
+ *  · What trained it: hard sets per exercise, share-weighted (a bench set counts fully for chest, ~0.5 for
+ *    triceps), last 8 weeks.
+ *  · Balance against its antagonist over the same 8 weeks.
+ *  · Mobility, estimated automatically (no slider): resistance training through a full range improved range of
+ *    motion as much as stretching did (Afonso 2021 meta-analysis), so hard sets on the muscle count, and so do
+ *    days of mobility work (a mobility habit or one marked as mobility). 5/10 = an untrained adult; it is an
+ *    exposure estimate, not a measured angle, and the panel says so.
+ */
+const exercises_1 = require("./exercises");
+const strong_1 = require("./strong");
+const tissue_1 = require("./tissue");
+const sanitize_1 = require("./sanitize");
+const dayMs = 864e5;
+const t0 = (k) => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d).getTime(); };
+const dk = (k, n) => { const d = new Date(t0(k) + n * dayMs + 12 * 3600e3); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+const r1 = (x) => Math.round(x * 10) / 10;
+const hardShare = (st) => (st.warm ? 0 : !(Number(st.r) > 0) ? 0 : st.rpe != null && Number(st.rpe) > 0 && Number(st.rpe) < 6 ? 0.5 : 1);
+exports.STANDARD_LEVELS = [['Beginner', 0.5], ['Novice', 0.75], ['Intermediate', 1.0], ['Advanced', 1.4], ['Elite', 1.8]];
+/** Hard sets per Monday-week for `weeks` weeks (oldest first), share-weighted. */
+function weeklySets(sessions, slug, today, weeks = 12) {
+    const dow = (new Date(t0(today)).getDay() + 6) % 7, mon = dk(today, -dow);
+    const W = Array.from({ length: weeks }, (_, i) => ({ start: dk(mon, -7 * (weeks - 1 - i)), sets: 0 }));
+    (sessions || []).forEach(s => {
+        if (!s || !s.date || s.date > today || s.date < W[0].start)
+            return;
+        let i = W.length - 1;
+        while (i > 0 && s.date < W[i].start)
+            i--;
+        (s.exercises || []).forEach(e => { const share = (0, exercises_1.loadingOf)(e).load[slug] || 0; if (share > 0)
+            (e.sets || []).forEach(st => { W[i].sets += share * hardShare(st); }); });
+    });
+    W.forEach(w => { w.sets = r1(w.sets); });
+    return W;
+}
+/** Hard sets per day-window, all muscles at once: { slug: sets/week averaged over `days` }. */
+function setsPerWeekAll(sessions, today, days = 56) {
+    const from = dk(today, -(days - 1)), out = {};
+    (sessions || []).forEach(s => {
+        if (!s || !s.date || s.date > today || s.date < from)
+            return;
+        (s.exercises || []).forEach(e => { const L = (0, exercises_1.loadingOf)(e).load; Object.keys(L).forEach(m => (e.sets || []).forEach(st => { out[m] = (out[m] || 0) + L[m] * hardShare(st); })); });
+    });
+    Object.keys(out).forEach(m => { out[m] = r1(out[m] / (days / 7)); });
+    return out;
+}
+function muscleAnalytics(inp) {
+    const { slug, today } = inp, sessions = inp.sessions || [];
+    const bw = (0, sanitize_1.numIn)(inp.bodyweight, 30, 300);
+    const female = /^f/i.test(String(inp.sex || ''));
+    const from26 = dk(today, -182), from56 = dk(today, -55);
+    // Lifts that train this muscle as a prime mover, one line each (aliases merged).
+    const by = new Map();
+    const exSets = new Map();
+    sessions.forEach(s => {
+        if (!s || !s.date || s.date > today)
+            return;
+        (s.exercises || []).forEach(e => {
+            const share = (0, exercises_1.loadingOf)(e).load[slug] || 0;
+            if (share <= 0)
+                return;
+            const lib = (0, exercises_1.findExercise)(e.n), name = lib ? lib.n : e.n;
+            if (s.date >= from56)
+                exSets.set(name, (exSets.get(name) || 0) + share * (e.sets || []).reduce((a, st) => a + hardShare(st), 0));
+            if (share < 0.8 || !lib || !lib.p || !tissue_1.STRENGTH_STD[lib.p] || s.date < from26)
+                return;
+            const bwMove = tissue_1.BW_SHARE[lib.p] !== undefined && lib.e === 'bodyweight';
+            let top = 0;
+            (e.sets || []).forEach(st => {
+                const r = Number(st.r) || 0, w = Number(st.w) || 0;
+                if (st.warm || !(r > 0) || r > 20)
+                    return;
+                const load = bwMove ? (bw ? bw * tissue_1.BW_SHARE[lib.p] + w : 0) : w;
+                if (load > 0)
+                    top = Math.max(top, (0, strong_1.e1rm)(load, r));
+            });
+            if (!(top > 0))
+                return;
+            const cur = by.get(name) || { n: name, e: lib.e, pattern: lib.p, bw: bwMove, pts: [], best: 0, last: null, levels: [], rel: null, sessions: 0,
+                machine: lib.e === 'machine' || lib.e === 'cable', iso: lib.mech === 'isolation' };
+            const prev = cur.pts.find(p => p.d === s.date);
+            if (prev)
+                prev.e1 = Math.max(prev.e1, Math.round(top));
+            else {
+                cur.pts.push({ d: s.date, e1: Math.round(top) });
+                cur.sessions++;
+            }
+            by.set(name, cur);
+        });
+    });
+    // Same ranking as tissue.ts: free weights before machines, compounds before isolation, then how often.
+    const ranked = [...by.values()].sort((a, b) => (+a.machine - +b.machine) || (+a.iso - +b.iso) || (b.sessions - a.sessions));
+    const lifts = ranked.slice(0, 2).map(L => {
+        var _a;
+        L.pts.sort((a, b) => a.d.localeCompare(b.d));
+        const std = tissue_1.STRENGTH_STD[L.pattern] * (L.bw ? 1 : ((_a = tissue_1.EQUIP_FACTOR[L.e]) !== null && _a !== void 0 ? _a : 1)) * (female ? (tissue_1.UPPER.has(slug) ? 0.72 : 0.82) : 1);
+        const last = L.pts.length ? L.pts[L.pts.length - 1].e1 : null;
+        return { n: L.n, e: L.e, pattern: L.pattern, bw: L.bw, pts: L.pts, best: Math.max(...L.pts.map(p => p.e1)), last,
+            levels: bw ? exports.STANDARD_LEVELS.map(([label, f]) => ({ label, kg: Math.round(std * f * bw) })) : [],
+            rel: bw && last ? Math.round(last / bw * 100) / 100 : null };
+    });
+    const exercises = [...exSets.entries()].map(([n, v]) => ({ n, sets: r1(v) })).filter(x => x.sets >= 0.5).sort((a, b) => b.sets - a.sets).slice(0, 6);
+    let balance = null;
+    const pair = (inp.antagonists || []).find(p => p.a.includes(slug) || p.b.includes(slug));
+    if (pair) {
+        const per = setsPerWeekAll(sessions, today, 56);
+        const mineSide = pair.a.includes(slug) ? pair.a : pair.b, other = pair.a.includes(slug) ? pair.b : pair.a;
+        const sum = (xs) => r1(xs.reduce((a, m) => a + (per[m] || 0), 0));
+        const mine = sum(mineSide), theirs = sum(other);
+        balance = { name: pair.name, mine, theirs, ratio: mine + theirs >= 1 ? Math.round(mine / Math.max(0.1, mine + theirs) * 100) : null };
+    }
+    return { slug, weeks: weeklySets(sessions, slug, today, 12), lifts, exercises, balance };
+}
+function mobilityEstimate(setsPerWeek, mobilityDays28, age) {
+    const s = Math.max(0, Number(setsPerWeek) || 0), n = Math.max(0, Math.min(28, Number(mobilityDays28) || 0)), a = (0, sanitize_1.numIn)(age, 10, 110);
+    const parts = [];
+    const tr = 1.8 * (1 - Math.exp(-s / 8));
+    if (tr >= 0.05)
+        parts.push({ label: r1(s) + ' hard sets a week through range (8 weeks)', d: r1(tr) });
+    const mw = 1.5 * (1 - Math.exp(-n / 8));
+    if (mw >= 0.05)
+        parts.push({ label: n + ' day' + (n === 1 ? '' : 's') + ' of mobility work (4 weeks)', d: r1(mw) });
+    const ag = a !== null && a > 30 ? -Math.min(1.5, 0.03 * (a - 30)) : 0;
+    if (ag <= -0.05)
+        parts.push({ label: 'Age', d: r1(ag) });
+    return { score: r1(Math.max(0, Math.min(10, 5 + tr + mw + ag))), parts };
+}
+function mobilityByMuscle(sessions, slugs, today, mobilityDays28, age) {
+    const per = setsPerWeekAll(sessions, today, 56), out = {};
+    (slugs || []).forEach(s => { out[s] = mobilityEstimate(per[s] || 0, mobilityDays28, age); });
+    return out;
+}
 
   },
   "./physique": function (exports, module, require) {
@@ -7929,6 +8181,9 @@ function daysSinceCapture(s, today) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.vo2Median = vo2Median;
+exports.benchMedian = benchMedian;
+exports.strengthForAge = strengthForAge;
+exports.trainingMinutes = trainingMinutes;
 exports.bodyAge = bodyAge;
 exports.systemsReport = systemsReport;
 exports.sundayBodyLine = sundayBodyLine;
@@ -7945,6 +8200,11 @@ exports.sundayBodyLine = sundayBodyLine;
  *   sleep       — HR 1.12 for habitual nights under 6 h (Cappuccio 2010), scaled between 6 and 7 h
  *   regularity  — HR 1.19 per hour of night-to-night SD in bedtime, 1.17 in sleep length (Bai 2026, NHANES)
  *   steps       — HR 0.85 per 1,000 steps a day around 8,000 (Paluch 2022, Lancet Public Health)
+ *   strength    — bench-press 1RM ÷ body weight against age norms (ACSM/Cooper Institute medians); the top third
+ *                 of men had HR 0.77 and the middle 0.72 vs the bottom (Ruiz 2008, BMJ, bench + leg press), and
+ *                 high vs low strength HR 0.69 in men (García-Hermoso 2018 meta-analysis) — ±2.1 years at the ends
+ *   training    — only without a bench: muscle-strengthening time, J-shaped, ~15 % lower all-cause mortality at
+ *                 30–60 min a week (Momma 2022, BJSM meta-analysis), less certain above ~2 h
  * Each marker is capped, the result is a range, and it needs your age plus two markers. It is an estimate
  * to steer by, not a diagnosis — the markers overlap, so the sum overstates precision; the range says so.
  */
@@ -7980,6 +8240,38 @@ function vo2Median(age, sex) {
         return null;
     const t = FRIEND[s], x = clamp((age - 25) / 10, 0, t.length - 1), i = Math.floor(x), f = x - i;
     return r1(i + 1 < t.length ? t[i] + (t[i + 1] - t[i]) * f : t[i]);
+}
+/** Median bench-press 1RM ÷ body weight by age decade (ACSM / Cooper Institute norms): men, then women. */
+const BENCH_MEDIAN = { male: [1.06, 0.93, 0.84, 0.75, 0.69], female: [0.59, 0.53, 0.5, 0.44, 0.43] };
+function benchMedian(age, sex) {
+    const s = /^f/i.test(sex || '') ? 'female' : /^m/i.test(sex || '') ? 'male' : null;
+    if (!s || !(age >= 18))
+        return null;
+    return BENCH_MEDIAN[s][Math.max(0, Math.min(4, Math.floor((age - 20) / 10)))];
+}
+/** Best horizontal press, as a barbell 1RM, ÷ body weight — from the tissue model's lifts (already held/faded for time off). */
+function strengthForAge(lifts, weight) {
+    const w = Number(weight);
+    if (!(w > 30))
+        return null;
+    const conv = { barbell: 1, smith: 1 / 1.05, dumbbell: 1 / 0.42 };
+    let best = 0;
+    (lifts || []).forEach(L => { if (L && L.p === 'hpress' && L.e && conv[L.e] && isFinite(L.e1))
+        best = Math.max(best, L.e1 * conv[L.e]); });
+    return best > 0 ? Math.round(best / w * 100) / 100 : null;
+}
+/** Muscle-strengthening minutes a week over the last 8 weeks (session duration in seconds; ~3 min a set without one). */
+function trainingMinutes(sessions, today) {
+    const from = (0, series_1.shiftDayKey)(today, -55);
+    let min = 0, n = 0;
+    (sessions || []).forEach(s => {
+        if (!s || !s.date || s.date < from || s.date > today)
+            return;
+        const d = Number(s.duration) > 0 ? Number(s.duration) / 60 : (s.exercises || []).reduce((a, e) => a + ((e && e.sets) || []).length * 3, 0);
+        min += Math.min(240, d);
+        n++;
+    });
+    return n ? Math.round(min / 8) : 0;
 }
 function bodyAge(inp) {
     const M = [], missing = [];
@@ -8040,6 +8332,25 @@ function bodyAge(inp) {
         if (y > 0.3)
             consider('Sleep regularity', 'The same bedtime and wake-up time every day, weekends included', y);
     }
+    // Muscle: measured strength when there is a bench press; otherwise the time spent strength training.
+    const bm = inp.age != null ? benchMedian(inp.age, inp.sex || null) : null;
+    if (inp.pressRatio && inp.pressRatio > 0 && bm) {
+        const rel = inp.pressRatio / bm, y = clamp(-2.1 * (rel - 1) / 0.11, -2.1, 2.1);
+        M.push({ key: 'strength', label: 'Muscular strength', value: 'bench ' + inp.pressRatio + '× body weight', years: r1(y),
+            ref: 'vs ' + bm + '× typical for your age', source: 'Ruiz 2008 · García-Hermoso 2018' });
+        if (y > 0.3)
+            consider('Muscular strength', 'Strength in the top third for your age is worth about 2 years — progressive lifting, 2–3 days a week', y + 2.1);
+    }
+    else if (inp.msaMinutes != null) {
+        const m = Math.max(0, inp.msaMinutes);
+        const hr = m <= 0 ? 1 : m < 30 ? 1 - 0.15 * m / 30 : m <= 60 ? 0.85 : m <= 150 ? 0.85 + 0.08 * (m - 60) / 90 : 0.93;
+        const y = yrs(hr, 1);
+        M.push({ key: 'training', label: 'Strength training', value: m + ' min a week', years: r1(y), ref: 'none = typical', source: 'Momma 2022' });
+        if (m < 30)
+            consider('Strength training', '30–60 minutes of strength training a week is worth about ' + r1(-yrs(0.85, 1)) + ' years', -yrs(0.85, 1) + y);
+    }
+    else
+        missing.push('Strength (log a bench press, or any strength session)');
     const steps = mean(recent(inp.bio, inp.today, 'steps', 14, 0));
     if (steps != null) {
         const y = clamp(yrs(0.85, (Math.min(steps, 10000) - 8000) / 1000), -1.5, 6);
@@ -8054,8 +8365,9 @@ function bodyAge(inp) {
     if (M.filter(x => x.key !== 'sleepReg').length < 2)
         return { known: false, why: 'Needs two or more markers — ' + missing.slice(0, 2).join(', ') + '.', age: inp.age, bodyAge: null, low: null, high: null, markers: M, missing, lever };
     const sum = M.reduce((a, m) => a + m.years, 0), spread = 1.5 + 0.6 * M.length;
-    const est = inp.age + sum;
-    return { known: true, age: inp.age, bodyAge: Math.round(est), low: Math.round(est - spread), high: Math.round(est + spread), markers: M, missing, lever };
+    // The years come from adult mortality (Gompertz doubling from ~30 on); below 18 they mean nothing.
+    const est = Math.max(18, inp.age + sum);
+    return { known: true, age: inp.age, bodyAge: Math.round(est), low: Math.round(Math.max(18, est - spread)), high: Math.round(est + spread), markers: M, missing, lever };
 }
 /** " · 1 of 4 markers" when a grade rests on part of what it could — the score is surer with more. */
 const of = (n, all) => (n > 0 && n < all ? ' · ' + n + ' of ' + all + ' markers' : '');
@@ -8216,7 +8528,7 @@ function sundayBodyLine(rows, age, habits) {
   "./tissue": function (exports, module, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.tissueDayKey = exports.retention = exports.STRENGTH_STD = exports.AR_REGION = exports.MUSCLE_MASS = void 0;
+exports.tissueDayKey = exports.retention = exports.UPPER = exports.BW_SHARE = exports.EQUIP_FACTOR = exports.STRENGTH_STD = exports.AR_REGION = exports.MUSCLE_MASS = void 0;
 exports.volumeZone = volumeZone;
 exports.tissue = tissue;
 /**
@@ -8303,10 +8615,10 @@ exports.STRENGTH_STD = {
     legext: 1.0, hinge: 1.9, rdl: 1.4, legcurl: 0.7, hipthrust: 1.8, abduct: 1.0, adduct: 1.0, calf: 1.5, curl: 0.55, hammer: 0.6,
     triext: 0.6, ohtri: 0.5, wrist: 0.45, oly: 0.9, thruster: 0.75, swing: 0.5,
 };
-const EQUIP_FACTOR = { barbell: 1, smith: 1.05, ez: 0.95, trap: 1.08, machine: 1, cable: 0.75, dumbbell: 0.42, kettlebell: 0.42, plate: 0.4 };
+exports.EQUIP_FACTOR = { barbell: 1, smith: 1.05, ez: 0.95, trap: 1.08, machine: 1, cable: 0.75, dumbbell: 0.42, kettlebell: 0.42, plate: 0.4 };
 /** Bodyweight movements are scored on total load: pull-ups and dips lift the whole body, push-ups ~64 % of it. */
-const BW_SHARE = { vpull: 1, dip: 1, pushup: 0.64 };
-const UPPER = new Set(['chest', 'deltoids', 'triceps', 'biceps', 'forearm', 'upper-back', 'trapezius']);
+exports.BW_SHARE = { vpull: 1, dip: 1, pushup: 0.64 };
+exports.UPPER = new Set(['chest', 'deltoids', 'triceps', 'biceps', 'forearm', 'upper-back', 'trapezius']);
 const LEVELS = [[0, 0, 'Beginner'], [0.5, 20, 'Beginner'], [0.75, 35, 'Novice'], [1.0, 55, 'Intermediate'], [1.4, 75, 'Advanced'], [1.8, 92, 'Elite'], [2.3, 100, 'Elite']];
 function levelOf(ratio) {
     for (let i = 1; i < LEVELS.length; i++) {
@@ -8358,7 +8670,7 @@ function tissue(inp0, days = 240) {
             const { load, tis } = (0, exercises_1.loadingOf)(ex);
             const prevBest = best.get(ex.n) || 0;
             const lib = (0, exercises_1.findExercise)(ex.n);
-            const bwShare = lib && lib.e === 'bodyweight' && lib.p ? BW_SHARE[lib.p] : undefined;
+            const bwShare = lib && lib.e === 'bodyweight' && lib.p ? exports.BW_SHARE[lib.p] : undefined;
             (ex.sets || []).forEach(st => {
                 const w = Number(st.w) || 0, r = Number(st.r) || 0, e1 = (0, strong_1.e1rm)(w, r);
                 // strength: best e1RM per exercise (bodyweight moves count the body they lift)
@@ -8458,7 +8770,7 @@ function tissue(inp0, days = 240) {
             const share = ex.load[m] || 0;
             if (share < 0.8)
                 return;
-            const std = exports.STRENGTH_STD[ex.p] * (L.bw ? 1 : ((_a = EQUIP_FACTOR[ex.e]) !== null && _a !== void 0 ? _a : 1)) * (female ? (UPPER.has(m) ? 0.72 : 0.82) : 1);
+            const std = exports.STRENGTH_STD[ex.p] * (L.bw ? 1 : ((_a = exports.EQUIP_FACTOR[ex.e]) !== null && _a !== void 0 ? _a : 1)) * (female ? (exports.UPPER.has(m) ? 0.72 : 0.82) : 1);
             const age = Math.max(0, (keyToTime(inp.today) - keyToTime(L.day)) / dayMs);
             const now = L.e1 * (0, exports.retention)(age);
             const rel = now / bw, ratio = rel / std;
