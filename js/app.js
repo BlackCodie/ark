@@ -257,7 +257,20 @@ window.addEventListener('online', () => scheduleSync(300));
 if ('serviceWorker' in navigator && /[?&]sim=/.test(location.search)) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister())).catch(() => {});
 } else if ('serviceWorker' in navigator && window.isSecureContext) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Updates used to appear only on the launch AFTER the next one (the page had already opened from the old cache),
+  // so a new version could look "not done" (2026-10-17). Check on every return to the app, and when a new version
+  // takes over, reload into it once — now if nothing is open, otherwise the next time the app comes to the front.
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  }).catch(() => {});
+  let swReloaded = false;
+  const swReload = () => { if (!swReloaded && !state.workout) { swReloaded = true; location.reload(); } };
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) return;                       // the first install, not an update
+    if (!topSheet() && !state.workout) swReload();
+    else document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') swReload(); });
+  });
 }
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 

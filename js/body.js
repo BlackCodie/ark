@@ -92,7 +92,7 @@ function paint() {
   figEl.querySelectorAll('g.mus').forEach(g => {
     const s = g.dataset.slug, m = by[s] || {};
     const last = tlE ? ((tlE.muscles || {})[s] || {}).last : m.last;
-    const p = L.muscleFill(ui.mode, m.metric || {}, last || null, m.vol30 || 0, v.body.peak || 1, now, s === ui.sel, volOf(v, s, m).zone);
+    const p = L.muscleFill(ui.mode, { strength: m.strength || 0, mobility: m.mobility || 0, soreness: soreOf(v, s).level, soreTs: 0 }, last || null, m.vol30 || 0, v.body.peak || 1, now, s === ui.sel, volOf(v, s, m).zone);
     g.style.fill = p ? p.fill : '';
     g.style.stroke = p ? p.stroke : '';
     g.classList.toggle('sel', s === ui.sel);
@@ -640,7 +640,7 @@ function muscleSheet(slug) {
         <button class="mt-btn" data-act="tendon-why" data-slug="${slug}" aria-label="How tendon capacity is estimated">${tile(tCap === null ? 'rgba(235,240,245,.5)' : tCap >= 65 ? '#30d158' : tCap >= 52 ? '#40c8e0' : '#ffb340', 'Tendon capacity', tCap === null ? '—' : tCap, tCap === null ? '' : '/100', tens.length ? (tCap <= 51 ? 'untrained baseline · ' : '') + esc(tens.map(x => x.name.replace(/ tendon$/i, '')).join(' · ')) : 'no tendon mapped', tCap)}</button>
         <button class="mt-btn" data-act="ar-why" data-slug="${slug}" aria-label="Why this androgen-receptor estimate">${tile('#bf5af2', 'AR sensitivity', tm ? tm.ar : '—', tm ? '/100' : '', tm && tm.arDrivers[0] ? (tm.arDrivers[0].d > 0 ? '▲ ' : '▼ ') + esc(tm.arDrivers[0].label) : 'estimate · tap for why', tm ? tm.ar : null)}</button>
         ${(() => { const V = volOf(v, slug, m); return tile(V.color, 'Weekly volume', fmt1(m.weekSets || 0), ' / ' + V.mavLo + '–' + V.mavHi, esc(V.label), V.mrv ? (m.weekSets || 0) / V.mrv * 100 : null); })()}
-        ${tile(st[1], 'Recovery', m.hoursSince == null ? '—' : ago(m.hoursSince).replace(' ago', ''), '', 'since last trained · ' + st[0].toLowerCase(), null)}
+        ${(() => { const R = recOf(v, slug, m); return R && R.recNow != null ? tile(st[1], 'Recovery', Math.round(R.recNow), '%', R.readyIn ? 'fully back in ~' + R.readyIn + ' h' : 'fully back · ' + ago(m.hoursSince || 0), R.recNow) : tile(st[1], 'Recovery', m.hoursSince == null ? '—' : ago(m.hoursSince).replace(' ago', ''), '', 'since last trained · ' + st[0].toLowerCase(), null); })()}
       </div>
       ${tm && tm.lag ? `<div class="target hint" style="margin:10px 0 0">${icon('bolt', 16)}<div><b>Strength is ahead of the tendons</b><span>Muscle adapts in weeks, tendon in months. Add load slowly here and keep some slow, heavy reps; collagen + vitamin C before training may help.</span></div></div>` : ''}
       ${tens.length ? `<div class="grp-h" style="margin-top:16px">Tendons & joints</div><section class="list frost">${tens.map(x => `<div class="li"><span class="tx"><div class="tt">${esc(x.name)}</div>
@@ -650,13 +650,12 @@ function muscleSheet(slug) {
       ${analysisBlock(v, slug, m)}
       ${liftsBlock(v, slug)}
       <div class="hist7" style="margin-top:14px">${days.map(k => `<span class="${hits.has(k) ? 'hit' : ''} ${k === t ? 't' : ''}"><i></i>${fmtDay(k, { weekday: 'narrow' })}</span>`).join('')}</div>
-      <div class="blk"><div class="blk-h"><span class="eyebrow">Soreness</span><span class="val">${SORE_LBL[met.soreness || 0]}</span></div>
-        <div class="sore">${SORE_LBL.map((l, i) => `<button class="${(met.soreness || 0) === i && (i > 0 || met.soreTs) ? 'on' : ''}" style="--sc:${SORE_COLORS[i]}" data-act="ms-sore" data-slug="${slug}" data-v="${i}">${l.toUpperCase()}</button>`).join('')}</div>
-        <p>A verdict newer than your last workout overrides the recovery colours — mark None to say it has recovered.</p></div>
+      ${soreBlock(v, slug)}
       ${bio.act ? `<div class="grp-h" style="margin-top:16px">Anatomy</div><section class="card frost tight">${bio.ft != null ? fibreBar(bio.ft) : ''}<dl class="anat">
         <dt>Action</dt><dd>${esc(bio.act)}</dd>${bio.org ? `<dt>Origin</dt><dd>${esc(bio.org)}</dd>` : ''}${bio.ins ? `<dt>Insertion</dt><dd>${esc(bio.ins)}</dd>` : ''}
         ${bio.ant ? `<dt>Antagonist</dt><dd>${esc(bio.ant)}</dd>` : ''}</dl>
         ${bio.note ? `<p style="font-size:.8rem;color:var(--t2)">${esc(bio.note)}</p>` : ''}</section>` : ''}
+      ${physioBlock(v, slug)}
       <p class="sub" style="line-height:1.45;margin:12px 0 0">Tendon capacity and AR sensitivity are model estimates from the sets you logged and each exercise's loading, adjusted by sleep, protein and the hormone estimate — not measurements.</p>
       <div class="row" style="gap:8px;margin-top:14px">
         <button class="btn btn-prominent" style="flex:1;--accent:#ff9f0a" data-act="train-slug" data-slug="${slug}">${icon('dumbbell', 17)} Train ${esc(m.name || '')}</button>
@@ -673,6 +672,9 @@ function analysisBlock(v, slug, m) {
   const V = m.vol || null, S = L.muscleStory(v.workouts || [], slug, t, v.injuries || [], 12, Number(w) || null);
   const blk = (h, body, note) => body ? `<div class="ana frost"><div class="ana-h">${h}</div>${body}${note ? `<p class="sub ana-n">${note}</p>` : ''}</div>` : '';
   let H = `<div class="grp-h" style="margin-top:16px">Analysis</div>`;
+  const R = recOf(v, slug, m), win = m.recWindow || { lo: 48, hi: 72 }, SE = soreOf(v, slug);
+  if (R && R.pts.length) H += blk('Recovery & soreness since the last session', L.svgRecovery(R.pts, R.lastH, win, CH_PAL, 320, 170),
+    `Line = strength back after the session — ${Math.round(R.recNow)} % now${R.readyIn ? ', within 5 % of fresh in ~' + R.readyIn + ' h for this many sets' : ', back to fresh'}. Shaded = soreness, now ${SE.label.toLowerCase()} — it often outlasts the strength dip. Green band = the textbook recovery window for this muscle.`);
   H += blk('Hard sets per week · 12 weeks', L.svgWeeklySets(A.weeks, V ? { mev: V.mev, mavLo: V.mavLo, mavHi: V.mavHi, mrv: V.mrv } : null, CH_PAL),
     esc(S.lines.join(' ')) + ' Green band = where weekly sets grow it; dashed = the most you can recover from.');
   A.lifts.forEach(lf => {
@@ -687,6 +689,32 @@ function analysisBlock(v, slug, m) {
   const ME = L.mobilityEstimate(L.setsPerWeekAll(v.workouts || [], t, 56)[slug] || 0, v.body.mobilityDays28 || 0, age);
   H += blk('Mobility · estimated ' + ME.score + ' / 10', `<div class="ana-rows"><div><span>Untrained adult</span><b class="num">5.0</b></div>${ME.parts.map(x => `<div><span>${esc(x.label)}</span><b class="num">${x.d > 0 ? '+' : ''}${x.d}</b></div>`).join('')}</div>`,
     'Strength training through a full range improved range of motion as much as stretching (Afonso 2021) — an exposure estimate, not a measured angle.');
+  return H;
+}
+/* Soreness per muscle from your sessions (DOMS time course × dose × repeated-bout effect, logic/muscle.ts), cached per render. */
+let soreCache = null, soreFor = null;
+function soreAll(v) {
+  const k = (v.rev || 0) + ':' + state.pending.length + ':' + Math.floor(Date.now() / 6e5);
+  if (soreFor !== k) { soreCache = L.sorenessByMuscle(v.workouts || [], Object.keys(window.ARK_MNAME || {}), Date.now()); soreFor = k; }
+  return soreCache;
+}
+function soreOf(v, slug) { return soreAll(v)[slug] || { v: 0, level: 0, label: 'None', bouts: [] }; }
+function recOf(v, slug, m) { const SE = soreOf(v, slug); return SE.bouts.length ? L.recoveryCurve(SE.bouts, (m && m.recWindow) || { lo: 48, hi: 72 }, Date.now()) : null; }
+function soreBlock(v, slug) {
+  const SE = soreOf(v, slug), lb = SE.bouts.slice().sort((a, b) => b.t - a.t)[0];
+  return `<div class="blk"><div class="blk-h"><span class="eyebrow">Soreness · estimated</span><span class="val" style="color:${SORE_COLORS[SE.level]}">${SE.label}</span></div>
+    <div class="b sorebar"><i style="width:${Math.round(Math.min(1, SE.v / 3.5) * 100)}%;background:${SORE_COLORS[Math.max(1, SE.level)]}"></i></div>
+    <p>${lb ? `Last session ${Math.max(0, Math.round((Date.now() - lb.t) / 3600e3))} h ago: ${lb.sets} hard sets here; you average ${lb.usual} a week on it, so it is ${lb.usual >= 6 ? 'used to the work' : lb.usual >= 1 ? 'only partly used to it' : 'not used to it'}. Soreness peaks 1–3 days after a session and is mostly gone by day 5–7 (Cheung 2003); work a muscle is used to hurts far less (repeated-bout effect).` : 'Nothing in the last 10 days that would make it sore.'} Injuries are logged separately.</p></div>`;
+}
+/* Physiology as graphs: size vs training share, what moves receptor sensitivity. */
+function physioBlock(v, slug) {
+  const T = tissueNow(), tm = T.muscles[slug] || null, per = L.setsPerWeekAll(v.workouts || [], today(), 56), SV = L.sizeVsTraining(slug, per, L.MUSCLE_MASS);
+  const blk = (h, body, note) => body ? `<div class="ana frost"><div class="ana-h">${h}</div>${body}${note ? `<p class="sub ana-n">${note}</p>` : ''}</div>` : '';
+  let H = '';
+  if (SV.mass > 0) H += blk('Size vs training · 8 weeks', L.svgBars([{ label: 'Share of your muscle mass', v: SV.mass }, { label: 'Share of your hard sets', v: SV.train }], CH_PAL, 320, ' %'),
+    SV.ratio == null ? 'No training logged in 8 weeks.' : SV.ratio >= 1.5 ? 'Trained ' + SV.ratio + '× its size — it gets more than its share.' : SV.ratio <= 0.5 ? 'Trained at ' + SV.ratio + '× its size — under-served for how big it is.' : 'Trained roughly in proportion to its size (' + SV.ratio + '×).');
+  if (tm && tm.arDrivers && tm.arDrivers.length) H += blk('Receptor sensitivity · ' + tm.ar + ' / 100 · what moves it', L.svgDiverge(tm.arDrivers.slice(0, 6).map(x => ({ label: x.label, v: x.d })), CH_PAL, 320),
+    'How strongly this muscle answers testosterone, from receptor density by region and months of training (Kadi 2000; Ahtiainen 2011) — a model, not a biopsy.');
   return H;
 }
 function fibreBar(ft) {

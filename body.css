@@ -567,3 +567,4 @@ html[data-theme="light"] .br-cc{fill:rgba(40,44,90,.05);stroke:rgba(40,44,90,.18
 .ana-rows div{display:flex;justify-content:space-between;gap:10px;font-size:.82rem;padding:3px 0}
 .ana-rows b{color:#40c8e0}
 .fibre{display:flex;gap:2px;height:10px;border-radius:5px;overflow:hidden}.fibre i{display:block;height:100%}
+.sorebar{height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden;margin:2px 0 8px}.sorebar i{display:block;height:100%;border-radius:3px}

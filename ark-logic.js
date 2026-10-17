@@ -225,7 +225,9 @@ function bodyState(input) {
         const win = { lo: base.lo * sys.factor, hi: base.hi * sys.factor };
         const hrs = t.last ? (now - t.last) / 36e5 : null;
         // Decayed once, here, so no consumer can read soreness raw.
-        const sore = (0, soreness_1.decaySoreness)(md.soreness, md.soreTs || md.updated, now);
+        // Automatic when supplied (DOMS model, muscle.ts); otherwise a stored verdict, decayed.
+        const autoSore = input.sorenessAuto ? (0, sanitize_1.numIn)(input.sorenessAuto[slug], 0, 4) : null;
+        const sore = autoSore !== null ? Math.round(autoSore) : (0, soreness_1.decaySoreness)(md.soreness, md.soreTs || md.updated, now);
         let state;
         if (hrs === null)
             state = 'untouched';
@@ -416,6 +418,8 @@ exports.svgWeeklySets = svgWeeklySets;
 exports.svgLiftTrend = svgLiftTrend;
 exports.svgBars = svgBars;
 exports.svgSplit = svgSplit;
+exports.svgRecovery = svgRecovery;
+exports.svgDiverge = svgDiverge;
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const f = (x) => (isFinite(x) ? Math.round(x * 10) / 10 : 0);
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -506,6 +510,41 @@ function svgSplit(a, b, p, W = 320) {
     return `<svg viewBox="0 0 ${W} 34" width="100%" role="img" aria-label="Balance" style="display:block">`
         + `<rect x="0" y="4" width="${f(wa)}" height="12" rx="3" fill="${p.accent}"/><rect x="${f(wa + 2)}" y="4" width="${f(Math.max(0, W - wa - 2))}" height="12" rx="3" fill="${p.dim}" opacity=".55"/>`
         + `<text x="0" y="30" ${font(p, 9, p.fg)}>${esc(a.label)} ${a.v}</text><text x="${W}" y="30" text-anchor="end" ${font(p, 9, p.dim)}>${esc(b.label)} ${b.v}</text></svg>`;
+}
+/** Recovery (%, line) and soreness (0–3.5, area) since the last session, the recovery window shaded, "now" marked. */
+function svgRecovery(pts, nowH, win, p, W = 320, H = 150) {
+    const P = (pts || []).filter(q => isFinite(q.h) && isFinite(q.rec) && isFinite(q.sore));
+    if (P.length < 2)
+        return '';
+    const L = 32, R = 30, T = 14, B = 20, cw = W - L - R, ch = H - T - B, hMax = P[P.length - 1].h;
+    const X = (h) => L + Math.max(0, Math.min(1, h / hMax)) * cw, Y = (v) => T + ch - (v - 60) / 40 * ch, YS = (v) => T + ch - v / 4 * ch;
+    let g = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Recovery and soreness since the last session" style="display:block">`;
+    [60, 80, 100].forEach(v => { g += `<line x1="${L}" x2="${L + cw}" y1="${f(Y(v))}" y2="${f(Y(v))}" stroke="${p.grid}"/><text x="${L - 4}" y="${f(Y(v) + 3)}" text-anchor="end" ${font(p, 8, p.dim)}>${v}%</text>`; });
+    ['mild', 'sore', 'high'].forEach((l, i) => { g += `<text x="${L + cw + 4}" y="${f(YS(i + 1) + 3)}" ${font(p, 7.5, p.warn)}>${l}</text>`; });
+    if (win && win.hi > 0)
+        g += `<rect x="${f(X(win.lo))}" y="${T}" width="${f(Math.max(1, X(win.hi) - X(win.lo)))}" height="${ch}" fill="${p.band}"/><text x="${f((X(win.lo) + X(win.hi)) / 2)}" y="${T - 4}" text-anchor="middle" ${font(p, 7.5, p.good)}>window ${Math.round(win.lo)}–${Math.round(win.hi)} h</text>`;
+    g += `<path d="M${f(X(P[0].h))} ${f(YS(0))} ${P.map(q => 'L' + f(X(q.h)) + ' ' + f(YS(q.sore))).join(' ')} L${f(X(hMax))} ${f(YS(0))} Z" fill="${p.warn}" opacity=".22"/>`;
+    g += `<path d="${P.map((q, i) => (i ? 'L' : 'M') + f(X(q.h)) + ' ' + f(Y(q.rec))).join(' ')}" fill="none" stroke="${p.accent}" stroke-width="2"/>`;
+    if (nowH != null && nowH >= 0 && nowH <= hMax)
+        g += `<line x1="${f(X(nowH))}" x2="${f(X(nowH))}" y1="${T}" y2="${T + ch}" stroke="${p.fg}" stroke-dasharray="2 2"/><text x="${f(X(nowH))}" y="${H - 6}" text-anchor="middle" ${font(p, 8, p.fg, ' font-weight="700"')}>now</text>`;
+    [0, 24, 48, 72, 96, 120, 144, 168, 192, 216, 240].filter(h => h <= hMax && (nowH == null || Math.abs(h - nowH) > hMax * 0.07)).forEach(h => { g += `<text x="${f(X(h))}" y="${H - 6}" text-anchor="middle" ${font(p, 8, p.dim)}>${h ? h / 24 + 'd' : 'session'}</text>`; });
+    return g + '</svg>';
+}
+/** Signed bars around a centre line (drivers that add or subtract). */
+function svgDiverge(rows, p, W = 320, unit = '') {
+    const R = rows.filter(r => isFinite(r.v) && r.v !== 0);
+    if (!R.length)
+        return '';
+    const rowH = 18, H = R.length * rowH + 4, lw = Math.round(W * 0.5), mid = lw + (W - lw) / 2, half = (W - lw) / 2 - 22, max = Math.max(...R.map(r => Math.abs(r.v)));
+    let g = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Drivers" style="display:block"><line x1="${f(mid)}" x2="${f(mid)}" y1="0" y2="${H}" stroke="${p.grid}"/>`;
+    R.forEach((r, i) => {
+        const yy = 2 + i * rowH, len = Math.max(2, half * Math.abs(r.v) / max), x = r.v > 0 ? mid : mid - len;
+        const lab = r.label.length > 34 ? r.label.slice(0, 33) + '…' : r.label;
+        g += `<text x="0" y="${yy + 12}" ${font(p, 9.5, p.fg)}>${esc(lab)}</text>`;
+        g += `<rect x="${f(x)}" y="${yy + 4}" width="${f(len)}" height="10" rx="2" fill="${r.v > 0 ? p.good : p.warn}"/>`;
+        g += `<text x="${f(r.v > 0 ? mid + len + 3 : mid - len - 3)}" y="${yy + 12}" text-anchor="${r.v > 0 ? 'start' : 'end'}" ${font(p, 8.5, p.dim)}>${r.v > 0 ? '+' : ''}${r.v}${unit}</text>`;
+    });
+    return g + '</svg>';
 }
 
   },
@@ -4226,12 +4265,16 @@ exports.REGIONS = {
   "./muscle": function (exports, module, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.STANDARD_LEVELS = void 0;
+exports.SORE_LABEL = exports.STANDARD_LEVELS = void 0;
 exports.weeklySets = weeklySets;
 exports.setsPerWeekAll = setsPerWeekAll;
 exports.muscleAnalytics = muscleAnalytics;
 exports.mobilityEstimate = mobilityEstimate;
 exports.mobilityByMuscle = mobilityByMuscle;
+exports.domsShape = domsShape;
+exports.sorenessByMuscle = sorenessByMuscle;
+exports.recoveryCurve = recoveryCurve;
+exports.sizeVsTraining = sizeVsTraining;
 /**
  * ONE MUSCLE, ANALYSED — everything the muscle panel charts, from your own sets.
  *
@@ -4369,6 +4412,78 @@ function mobilityByMuscle(sessions, slugs, today, mobilityDays28, age) {
     const per = setsPerWeekAll(sessions, today, 56), out = {};
     (slugs || []).forEach(s => { out[s] = mobilityEstimate(per[s] || 0, mobilityDays28, age); });
     return out;
+}
+/* ── Soreness and recovery, automatically ─────────────────────────────────────────────────────────────────
+ * Delayed-onset soreness (DOMS) rises from ~6 h, peaks at 24–72 h and is mostly gone by 5–7 days (Cheung, Hume &
+ * Maxwell 2003, doi:10.2165/00007256-200333020-00005). How much depends on the dose and on how used to it the muscle
+ * is: an earlier bout of the same work cuts the soreness of the next by about half for weeks — the repeated-bout
+ * effect (McHugh 2003). So each session adds peak × shape(hours since), with peak = 0.3 per hard set on the muscle
+ * (share-weighted, +20 % near failure) × 1 / (1 + your usual weekly sets on it over the 4 weeks before ÷ 4), capped.
+ * 10 hard sets on a muscle you have not trained in a month peaks near "High"; the same 10 on a muscle you train
+ * 12 sets a week peaks at "Mild". Injured is never estimated — that is the injury log.
+ */
+exports.SORE_LABEL = ['None', 'Mild', 'Sore', 'High', 'Injured'];
+/** DOMS time course, peak 1 at 42 h. */
+function domsShape(h) { if (!(h > 0))
+    return 0; const x = h / 42; return Math.min(1, x * x * Math.exp(2 * (1 - x))); }
+const sessTime = (s) => {
+    const a = s.ts ? Date.parse(s.ts) : NaN;
+    if (isFinite(a))
+        return a;
+    const b = s.start ? Date.parse(s.start) : NaN;
+    if (isFinite(b))
+        return b;
+    return t0(s.date) + 18 * 3600e3;
+};
+function sorenessByMuscle(sessions, slugs, now) {
+    const out = {};
+    const S = (sessions || []).filter(s => s && s.date).map(s => ({ s, t: sessTime(s) })).filter(x => isFinite(x.t) && x.t <= now);
+    (slugs || []).forEach(slug => {
+        const bouts = [];
+        S.forEach(({ s, t }) => {
+            const h = (now - t) / 3600e3;
+            if (h < 0 || h > 240)
+                return;
+            let sets = 0, hard = false;
+            (s.exercises || []).forEach(e => { const sh = (0, exercises_1.loadingOf)(e).load[slug] || 0; if (sh > 0)
+                (e.sets || []).forEach(st => { sets += sh * hardShare(st); if (Number(st.rpe) >= 9)
+                    hard = true; }); });
+            if (sets < 0.5)
+                return;
+            // your usual weekly sets on this muscle over the 4 weeks before this session
+            let prior = 0;
+            S.forEach(o => { if (o.t < t - 6 * 3600e3 && o.t >= t - 28 * dayMs)
+                (o.s.exercises || []).forEach(e => { const sh = (0, exercises_1.loadingOf)(e).load[slug] || 0; if (sh > 0)
+                    (e.sets || []).forEach(st => { prior += sh * hardShare(st); }); }); });
+            const usual = prior / 4, novelty = 1 / (1 + usual / 4);
+            bouts.push({ t, date: s.date, sets: r1(sets), usual: r1(usual), novelty: Math.round(novelty * 100) / 100, peak: r1(Math.min(3.5, 0.3 * sets * (hard ? 1.2 : 1) * novelty)) });
+        });
+        const v = Math.min(3.5, bouts.reduce((a, b) => a + b.peak * domsShape((now - b.t) / 3600e3), 0));
+        const level = v < 0.5 ? 0 : v < 1.5 ? 1 : v < 2.5 ? 2 : 3;
+        out[slug] = { v: r1(v), level, label: exports.SORE_LABEL[level], bouts };
+    });
+    return out;
+}
+function recoveryCurve(bouts, window, now, hoursFwd = 120) {
+    const last = (bouts || []).slice().sort((a, b) => b.t - a.t)[0];
+    if (!last)
+        return { lastH: null, pts: [], recNow: null, readyIn: null };
+    const hi = Number(window && window.hi) || 72, tau = Math.max(8, hi / 3), d0 = Math.min(30, 4 + 2.2 * last.sets);
+    const lastH = (now - last.t) / 3600e3, end = Math.max(lastH + 24, Math.min(240, lastH + hoursFwd), hi * 1.2);
+    const pts = [];
+    for (let h = 0; h <= end; h += 3) {
+        const t = last.t + h * 3600e3;
+        const sore = Math.min(3.5, (bouts || []).reduce((a, b) => a + (t >= b.t ? b.peak * domsShape((t - b.t) / 3600e3) : 0), 0));
+        pts.push({ h, rec: r1(100 - d0 * Math.exp(-h / tau)), sore: r1(sore) });
+    }
+    const ready = tau * Math.log(d0 / 5); // hours until within 5 % of fresh
+    return { lastH: r1(lastH), pts, recNow: r1(100 - d0 * Math.exp(-lastH / tau)), readyIn: ready > lastH ? Math.round(ready - lastH) : 0 };
+}
+/** This muscle's share of your muscle mass vs its share of your hard sets (8 weeks). */
+function sizeVsTraining(slug, perWeek, mass) {
+    const tm = Object.values(mass || {}).reduce((a, x) => a + x, 0), ts = Object.keys(mass || {}).reduce((a, k) => a + (perWeek[k] || 0), 0);
+    const m = tm ? (mass[slug] || 0) / tm * 100 : 0, t = ts ? (perWeek[slug] || 0) / ts * 100 : 0;
+    return { mass: r1(m), train: r1(t), ratio: m > 0 && ts > 0 ? Math.round(t / m * 10) / 10 : null };
 }
 
   },
