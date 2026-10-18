@@ -127,6 +127,7 @@ exports.systemicRecoveryFactor = systemicRecoveryFactor;
 const soreness_1 = require("./soreness");
 const physique_1 = require("./physique");
 const sanitize_1 = require("./sanitize");
+const muscle_1 = require("./muscle");
 /**
  * Per-muscle recovery window, parsed from ARK_MUSCLE_BIO.rec ("48-72h", "24h").
  *
@@ -228,12 +229,16 @@ function bodyState(input) {
         // Automatic when supplied (DOMS model, muscle.ts); otherwise a stored verdict, decayed.
         const autoSore = input.sorenessAuto ? (0, sanitize_1.numIn)(input.sorenessAuto[slug], 0, 4) : null;
         const sore = autoSore !== null ? Math.round(autoSore) : (0, soreness_1.decaySoreness)(md.soreness, md.soreTs || md.updated, now);
+        // Dose-dependent when the last session's sets are known: back within 5 % at the window's end after a big session,
+        // sooner after a small one — the clock the muscle view's recovery curve draws (muscle.ts readyHours).
+        const ls = input.lastSets ? (0, sanitize_1.numIn)(input.lastSets[slug], 0, 200) : null;
+        const hiEff = ls !== null ? Math.max(1, (0, muscle_1.readyHours)(ls, win.hi)) : win.hi, loEff = Math.min(win.lo, hiEff * 0.67);
         let state;
         if (hrs === null)
             state = 'untouched';
-        else if (hrs < win.lo)
+        else if (hrs < loEff)
             state = 'fresh';
-        else if (hrs < win.hi)
+        else if (hrs < hiEff)
             state = 'recovering';
         // Gains hold for about two weeks off and fade with longer breaks (Bosquet 2013, doi:10.1111/sms.12047):
         // "detrained" from 14 days, the same line Bio-Regen draws.
@@ -4273,6 +4278,7 @@ exports.mobilityEstimate = mobilityEstimate;
 exports.mobilityByMuscle = mobilityByMuscle;
 exports.domsShape = domsShape;
 exports.sorenessByMuscle = sorenessByMuscle;
+exports.readyHours = readyHours;
 exports.recoveryCurve = recoveryCurve;
 exports.sizeVsTraining = sizeVsTraining;
 exports.sessionSplitSets = sessionSplitSets;
@@ -4470,11 +4476,19 @@ function sorenessByMuscle(sessions, slugs, now) {
     });
     return out;
 }
+/** Hours after a session until strength is within 5 % of fresh: the end of the muscle's window after a big session
+ *  (12+ hard sets for it), sooner after a small one (~0.6 of it for a single set). bodyState uses the same clock, so the
+ *  state chip and the recovery curve agree — they said "RECOVERING" and "99 % back" side by side (2026-10-18). */
+function readyHours(sets, hi) {
+    const d0 = Math.min(30, 4 + 2.2 * Math.max(0, Number(sets) || 0)), H = Number(hi) || 72;
+    return d0 <= 5 ? 0 : r1(H * Math.max(0.6, Math.min(1, 0.5 + d0 / 60)));
+}
 function recoveryCurve(bouts, window, now, hoursFwd = 120) {
     const last = (bouts || []).slice().sort((a, b) => b.t - a.t)[0];
     if (!last)
         return { lastH: null, pts: [], recNow: null, readyIn: null };
-    const hi = Number(window && window.hi) || 72, tau = Math.max(8, hi / 3), d0 = Math.min(30, 4 + 2.2 * last.sets);
+    const hi = Number(window && window.hi) || 72, d0 = Math.min(30, 4 + 2.2 * last.sets), T = readyHours(last.sets, hi);
+    const tau = T > 0 ? Math.max(4, T / Math.log(d0 / 5)) : 8;
     const lastH = (now - last.t) / 3600e3, end = Math.max(lastH + 24, Math.min(240, lastH + hoursFwd), hi * 1.2);
     const pts = [];
     for (let h = 0; h <= end; h += 3) {
@@ -4482,8 +4496,8 @@ function recoveryCurve(bouts, window, now, hoursFwd = 120) {
         const sore = Math.min(3.5, (bouts || []).reduce((a, b) => a + (t >= b.t ? b.peak * domsShape((t - b.t) / 3600e3) : 0), 0));
         pts.push({ h, rec: r1(100 - d0 * Math.exp(-h / tau)), sore: r1(sore) });
     }
-    const ready = tau * Math.log(d0 / 5); // hours until within 5 % of fresh
-    return { lastH: r1(lastH), pts, recNow: r1(100 - d0 * Math.exp(-lastH / tau)), readyIn: ready > lastH ? Math.round(ready - lastH) : 0 };
+    const ready = T; // hours until within 5 % of fresh
+    return { lastH: r1(lastH), pts, recNow: r1(100 - d0 * Math.exp(-lastH / tau)), readyIn: ready > lastH ? Math.max(1, Math.round(ready - lastH)) : 0 };
 }
 /** This muscle's share of your muscle mass vs its share of your hard sets (8 weeks). */
 function sizeVsTraining(slug, perWeek, mass) {
@@ -7508,7 +7522,10 @@ function survivability(input) {
         const s30 = input.sessions30 || 0;
         const streakScore = curve(streak, 30, 70);
         const volScore = curve(s30, 12, 70);
-        const parts = [adh > 0 ? adh : null, streak > 0 ? streakScore : null, s30 > 0 ? volScore : null]
+        // With any history a streak of 0 is a real 0, not "unknown": leaving it out made a 1-day streak LOWER the score
+        // (it entered the average at ~2 while 0 was skipped) — 40 → 29 the day the streak started (2026-10-18).
+        const known = adh > 0 || s30 > 0 || streak > 0;
+        const parts = [adh > 0 ? adh : null, known ? streakScore : null, s30 > 0 ? volScore : null]
             .filter(x => x !== null);
         const score = parts.length ? clamp(Math.round(parts.reduce((a, x) => a + x, 0) / parts.length)) : 0;
         domains.push({

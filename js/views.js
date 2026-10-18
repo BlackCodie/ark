@@ -304,8 +304,9 @@ function healthCard(v, t) {
 const JICON = { log: '📝', win: '🏆', lesson: '🎓', idea: '💡' };
 /** One journal line; `del` adds a delete button to notes (not to the PC's automatic entries). */
 export function journalRow(e, del = false) {
-  const ic = e.type === 'note' ? (JICON[e.cat] || '📝') : e.type === 'habit' ? '🔥' : e.type === 'skill' ? '⬡' : '◆';
-  const d = new Date(e.ts), when = isNaN(d) ? '' : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) + ' · ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const ic = e.type === 'note' ? (JICON[e.cat] || '📝') : e.type === 'habit' ? '🔥' : e.type === 'habits' ? '✅' : e.type === 'skill' ? '⬡' : '◆';
+  // Workouts and habit days come from their records (the PC reads them, nothing is stored): habit days have no time.
+  const d = new Date(e.ts), when = isNaN(d) ? '' : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) + (e.dayOnly ? ' · from your habit log' : ' · ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
   const canDel = del && e.type === 'note' && (e.id != null || e.sid);
   return `<div class="jr${canDel ? ' del' : ''}"><span class="ic">${ic}</span><div><div class="tx">${esc(e.text)}</div><div class="when">${when}${e.src === 'phone' ? ' · 📱' : ''}</div></div>`
     + (canDel ? `<button class="circle sm" data-act="note-del" data-id="${esc(e.id ?? '')}" data-sid="${esc(e.sid || '')}" aria-label="Delete note">${icon('trash', 15)}</button>` : '') + `</div>`;

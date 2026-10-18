@@ -158,7 +158,7 @@ function loadSheet() {
         <p class="sub" style="line-height:1.5;margin:10px 0 0">Load ratio = last 7 days ÷ your 4-week weekly average. 0.8–1.3 is the steady zone; above 1.5 injury risk rises in the sports literature (a debated heuristic — treat it as a caution).</p>
         <div class="sec"><h2>Muscles</h2><span class="sub">sets/wk · AR</span></div>
         <section class="list frost">${ms.map(m => `<button class="li" data-act="muscle" data-slug="${m.slug}"><span class="tx"><div class="tt">${esc(MNAME(m.slug))}</div>
-          <div class="st">${fmt1(m.weekSets)} this week · ${esc(m.zone)}${m.lag ? ' · tendon behind muscle' : ''}</div></span>
+          <div class="st">${fmt1(m.weekSets)} this week · ${esc(({ none: 'none', under: 'below the minimum', low: 'growing', optimal: 'productive range', high: 'near the limit', over: 'over the limit' })[L.volumePlan(m.slug, m.weekSets).zone] || m.zone)}${m.lag ? ' · tendon behind muscle' : ''}</div></span>
           <b class="num" title="Estimated androgen-receptor sensitivity">${m.ar}</b><span class="chev">${icon('chev', 15)}</span></button>`).join('')}</section>
         <div class="sec"><h2>Tendons</h2><span class="sub">capacity</span></div>
         <section class="list frost">${ts.map(x => `<div class="li"><span class="tx"><div class="tt">${esc(x.name)}</div>
