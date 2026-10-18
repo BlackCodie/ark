@@ -20,8 +20,7 @@ export function fatigueNow(v = view()) {
   const k = (v.rev || 0) + ':' + state.pending.length + ':' + today();
   if (fatCache && fatKey === k) return fatCache;
   let acwr = null; try { acwr = tissueNow().acwr; } catch (e) { /* no tissue yet */ }
-  fatCache = L.fatigueRadar({ today: today(), bio: v.bio || {}, readiness: v.readiness || {}, sessions: v.workouts || [], acwr,
-    sore: (v.body.muscles || []).filter(m => (m.soreness || 0) >= 2).length });
+  fatCache = L.fatigueRadar({ today: today(), bio: v.bio || {}, readiness: v.readiness || {}, sessions: v.workouts || [], acwr });
   fatKey = k; return fatCache;
 }
 export function planNow(v = view()) {

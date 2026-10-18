@@ -252,11 +252,14 @@ export function renderToday() {
     const st = next ? 'Next: ' + next.t : goal.type === 'numeric' ? `${fmt1(goal.current || 0)} / ${fmt1(goal.target || 0)} ${goal.unit || ''}` : Math.round(L.goalProgress(goal, goal.habitRate) * 100) + '% there';
     items.push({ ic: 'target', c: C.goal, t: goal.title, st, act: 'tab', tab: 'grow', seg: 'goals' });
   }
-  const sk = v.skills.filter(x => x.status !== 'archived').sort((a, b) => (a.last || '').localeCompare(b.last || ''))[0];
+  // A skill's last day is its last practice or the last time the rest of ARK saw you do it (sk.ev from the PC:
+  // nights logged, workouts…) — "Practice Sleep engineering · Not practiced yet" sat beside 29 logged nights.
+  const lastOf = x => { const p = x.last ? L.dayKey(new Date(x.last)) : ''; const e = (x.ev && x.ev.last) || ''; return p > e ? p : e; };
+  const sk = v.skills.filter(x => x.status !== 'archived').sort((a, b) => lastOf(a).localeCompare(lastOf(b)))[0];
   if (sk) {
-    const d = sk.last ? daysBetween(L.dayKey(new Date(sk.last)), t) : null;
+    const lk = lastOf(sk), d = lk ? daysBetween(lk, t) : null;
     if (d === null || d >= 1) items.push({ ic: 'sprout', c: C.practice, t: 'Practice ' + sk.name,
-      st: d === null ? 'Not practiced yet' : d === 1 ? 'Last: yesterday' : 'Last: ' + d + ' days ago', act: 'practice-sheet', skill: sk.id });
+      st: (d === null ? 'Not practiced yet' : d === 1 ? 'Last: yesterday' : 'Last: ' + d + ' days ago') + (sk.ev ? ' · ' + sk.ev.label + ' in 90 days' : ''), act: 'practice-sheet', skill: sk.id });
   }
   H += `<div class="sec"><h2>Up next</h2></div><section class="list frost plan">` + items.map(it => `
     <button class="li${it.done ? ' done' : ''}" ${it.act ? `data-act="${it.act}"` : 'disabled'} ${it.tab ? `data-tab="${it.tab}"` : ''} ${it.seg ? `data-seg="${it.seg}"` : ''} ${it.skill ? `data-skill="${esc(it.skill)}"` : ''} style="--c:${it.c}">

@@ -134,10 +134,10 @@ function loadCard() {
   return `<section class="card frost tl-card" data-act="load-sheet" role="button" tabindex="0" aria-label="Training load details">
     <div class="card-h"><span class="t">Training load</span><span class="k">hard sets · last 7 days</span></div>
     ${ms.length ? `<div class="ld">${ms.map(m => `<div class="ld-r"><span>${esc(MNAME(m.slug))}</span>
-      <span class="ld-t"><i class="z1" style="left:${10 / max * 100}%"></i><i class="z1" style="left:${20 / max * 100}%"></i>
-        <b style="width:${Math.min(100, m.weekSets / max * 100)}%;background:${m.weekSets >= 10 && m.weekSets <= 20 ? GREEN : m.weekSets > 20 ? '#ffb340' : BLUE}"></b></span>
+      ${(() => { const vp = L.volumePlan(m.slug, m.weekSets), pc = x => Math.min(100, x / max * 100); return `<span class="ld-t"><i class="z1" style="left:${pc(vp.mavLo)}%"></i><i class="z1" style="left:${pc(vp.mavHi)}%"></i>
+        <b style="width:${pc(m.weekSets)}%;background:${vp.zone === 'none' || vp.zone === 'under' ? BLUE : vp.color}"></b></span>`; })()}
       <span class="num">${fmt1(m.weekSets)}</span></div>`).join('')}</div>
-      <div class="sub" style="margin-top:6px">Markers at 10 and 20: the range where weekly sets grow muscle best.</div>` : '<div class="sub">No hard sets in the last 7 days.</div>'}
+      <div class="sub" style="margin-top:6px">Ticks: each muscle's productive range — the same landmarks as Body Arch. A press set counts as half a triceps set.</div>` : '<div class="sub">No hard sets in the last 7 days.</div>'}
     <div class="ld-foot"><span><b style="color:${lab[1]}">${T.acwr === null ? '—' : T.acwr}</b> load ratio · ${lab[0]}</span>
       ${T.rpe7 !== null ? `<span>RPE <b>${T.rpe7}</b>${T.rpePrev !== null ? ` <small>(was ${T.rpePrev})</small>` : ''}</span>` : ''}</div>
     ${alerts.length ? `<div class="target hint sore" style="margin:10px 0 0">${icon('heart', 16)}<div><b>${alerts.map(a => esc(a.name)).join(', ')}</b><span>Load jumped more than 50 % above your 4-week average — tendons adapt slower than muscle. Hold the load steady for a week.</span></div></div>` : ''}
@@ -308,7 +308,7 @@ function hints(ex, x) {
   const alt = sore.length ? L.swapOptions(ex, library(), sore, view().workouts) : [];
   if (alt.length) {
     const hit = (ex.m || []).filter(m => sore.includes(m)).map(m => MNAME(m));
-    H += `<div class="target hint sore">${icon('heart', 16)}<div><b>${esc(hit.join(', '))} marked sore</b><span>These train the same group without it:</span>
+    H += `<div class="target hint sore">${icon('heart', 16)}<div><b>${esc(hit.join(', '))} still sore (estimated from your sessions)</b><span>These train the same group without it:</span>
       <div class="chips" style="margin-top:8px">${alt.map(a => `<button class="chip" data-act="swap-ex" data-x="${x}" data-n="${esc(a.n)}">${esc(a.n)}</button>`).join('')}</div></div></div>`;
   }
   return H;

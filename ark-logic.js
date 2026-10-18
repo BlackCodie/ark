@@ -3242,7 +3242,7 @@ function relativeStrength(sessions, weights, today, opts = {}) {
             : { key: 'losing', title: 'Strength falling with the weight', text: 'Weight ' + kg(weight.delta) + ', strength ' + sPct + ' %. Slow the cut and keep protein near 1.6–2.2 g per kg; keep the heavy sets in.', color: '#ff453a' };
     }
     else {
-        verdict = { key: 'steady', title: sPct > 1 ? 'Same weight, stronger' : sPct < -1 ? 'Same weight, a little weaker' : 'Weight and strength both steady', text: 'Weight ' + kg(weight.delta) + ', strength ' + (sPct > 0 ? '+' : '') + sPct + ' %.', color: sPct > 1 ? '#30d158' : sPct < -1 ? '#ff9f0a' : '#64d2ff' };
+        verdict = { key: 'steady', title: sPct > 1 ? 'Same weight, stronger' : sPct < -1 ? 'Same weight, a little weaker' : 'Weight and strength both steady', text: (weight.delta === 0 ? 'Weight unchanged' : 'Weight ' + kg(weight.delta)) + ', strength ' + (sPct > 0 ? '+' : '') + sPct + ' %.', color: sPct > 1 ? '#30d158' : sPct < -1 ? '#ff9f0a' : '#64d2ff' };
     }
     return { known: true, weeks, weight, lifts, index, verdict };
 }
@@ -4265,7 +4265,7 @@ exports.REGIONS = {
   "./muscle": function (exports, module, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SORE_LABEL = exports.STANDARD_LEVELS = void 0;
+exports.SORE_LABEL = exports.STANDARD_LEVELS = exports.hardShare = void 0;
 exports.weeklySets = weeklySets;
 exports.setsPerWeekAll = setsPerWeekAll;
 exports.muscleAnalytics = muscleAnalytics;
@@ -4275,6 +4275,10 @@ exports.domsShape = domsShape;
 exports.sorenessByMuscle = sorenessByMuscle;
 exports.recoveryCurve = recoveryCurve;
 exports.sizeVsTraining = sizeVsTraining;
+exports.sessionSplitSets = sessionSplitSets;
+exports.sessionKind = sessionKind;
+exports.splitLastTrained = splitLastTrained;
+exports.setsInWindow = setsInWindow;
 /**
  * ONE MUSCLE, ANALYSED — everything the muscle panel charts, from your own sets.
  *
@@ -4298,7 +4302,9 @@ const dayMs = 864e5;
 const t0 = (k) => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d).getTime(); };
 const dk = (k, n) => { const d = new Date(t0(k) + n * dayMs + 12 * 3600e3); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 const r1 = (x) => Math.round(x * 10) / 10;
+/** How much one logged set counts as a hard set: warm-ups and empty sets 0, a set logged under RPE 6 half. */
 const hardShare = (st) => (st.warm ? 0 : !(Number(st.r) > 0) ? 0 : st.rpe != null && Number(st.rpe) > 0 && Number(st.rpe) < 6 ? 0.5 : 1);
+exports.hardShare = hardShare;
 exports.STANDARD_LEVELS = [['Beginner', 0.5], ['Novice', 0.75], ['Intermediate', 1.0], ['Advanced', 1.4], ['Elite', 1.8]];
 /** Hard sets per Monday-week for `weeks` weeks (oldest first), share-weighted. */
 function weeklySets(sessions, slug, today, weeks = 12) {
@@ -4311,7 +4317,7 @@ function weeklySets(sessions, slug, today, weeks = 12) {
         while (i > 0 && s.date < W[i].start)
             i--;
         (s.exercises || []).forEach(e => { const share = (0, exercises_1.loadingOf)(e).load[slug] || 0; if (share > 0)
-            (e.sets || []).forEach(st => { W[i].sets += share * hardShare(st); }); });
+            (e.sets || []).forEach(st => { W[i].sets += share * (0, exports.hardShare)(st); }); });
     });
     W.forEach(w => { w.sets = r1(w.sets); });
     return W;
@@ -4322,7 +4328,7 @@ function setsPerWeekAll(sessions, today, days = 56) {
     (sessions || []).forEach(s => {
         if (!s || !s.date || s.date > today || s.date < from)
             return;
-        (s.exercises || []).forEach(e => { const L = (0, exercises_1.loadingOf)(e).load; Object.keys(L).forEach(m => (e.sets || []).forEach(st => { out[m] = (out[m] || 0) + L[m] * hardShare(st); })); });
+        (s.exercises || []).forEach(e => { const L = (0, exercises_1.loadingOf)(e).load; Object.keys(L).forEach(m => (e.sets || []).forEach(st => { out[m] = (out[m] || 0) + L[m] * (0, exports.hardShare)(st); })); });
     });
     Object.keys(out).forEach(m => { out[m] = r1(out[m] / (days / 7)); });
     return out;
@@ -4344,7 +4350,7 @@ function muscleAnalytics(inp) {
                 return;
             const lib = (0, exercises_1.findExercise)(e.n), name = lib ? lib.n : e.n;
             if (s.date >= from56)
-                exSets.set(name, (exSets.get(name) || 0) + share * (e.sets || []).reduce((a, st) => a + hardShare(st), 0));
+                exSets.set(name, (exSets.get(name) || 0) + share * (e.sets || []).reduce((a, st) => a + (0, exports.hardShare)(st), 0));
             if (share < 0.8 || !lib || !lib.p || !tissue_1.STRENGTH_STD[lib.p] || s.date < from26)
                 return;
             const bwMove = tissue_1.BW_SHARE[lib.p] !== undefined && lib.e === 'bodyweight';
@@ -4446,7 +4452,7 @@ function sorenessByMuscle(sessions, slugs, now) {
                 return;
             let sets = 0, hard = false;
             (s.exercises || []).forEach(e => { const sh = (0, exercises_1.loadingOf)(e).load[slug] || 0; if (sh > 0)
-                (e.sets || []).forEach(st => { sets += sh * hardShare(st); if (Number(st.rpe) >= 9)
+                (e.sets || []).forEach(st => { sets += sh * (0, exports.hardShare)(st); if (Number(st.rpe) >= 9)
                     hard = true; }); });
             if (sets < 0.5)
                 return;
@@ -4454,7 +4460,7 @@ function sorenessByMuscle(sessions, slugs, now) {
             let prior = 0;
             S.forEach(o => { if (o.t < t - 6 * 3600e3 && o.t >= t - 28 * dayMs)
                 (o.s.exercises || []).forEach(e => { const sh = (0, exercises_1.loadingOf)(e).load[slug] || 0; if (sh > 0)
-                    (e.sets || []).forEach(st => { prior += sh * hardShare(st); }); }); });
+                    (e.sets || []).forEach(st => { prior += sh * (0, exports.hardShare)(st); }); }); });
             const usual = prior / 4, novelty = 1 / (1 + usual / 4);
             bouts.push({ t, date: s.date, sets: r1(sets), usual: r1(usual), novelty: Math.round(novelty * 100) / 100, peak: r1(Math.min(3.5, 0.3 * sets * (hard ? 1.2 : 1) * novelty)) });
         });
@@ -4485,6 +4491,64 @@ function sizeVsTraining(slug, perWeek, mass) {
     const m = tm ? (mass[slug] || 0) / tm * 100 : 0, t = ts ? (perWeek[slug] || 0) / ts * 100 : 0;
     return { mass: r1(m), train: r1(t), ratio: m > 0 && ts > 0 ? Math.round(t / m * 10) / 10 : null };
 }
+const SPLITS = ['push', 'pull', 'legs', 'core'];
+/** Hard sets per movement category in one session, from the exercise library (the logged category otherwise). */
+function sessionSplitSets(s) {
+    const out = {};
+    ((s && s.exercises) || []).forEach(e => {
+        if (!e || !e.n)
+            return;
+        const lib = (0, exercises_1.findExercise)(e.n), c = (lib && lib.c) || e.c;
+        if (!c)
+            return;
+        const n = (e.sets || []).reduce((a, st) => a + (0, exports.hardShare)(st || {}), 0);
+        if (n > 0)
+            out[c] = r1((out[c] || 0) + n);
+    });
+    return out;
+}
+/** Push / pull / legs / core when one category holds at least two thirds of the hard sets, otherwise 'full'.
+ *  Sessions without exercises keep their stored type. */
+function sessionKind(s) {
+    const by = sessionSplitSets(s), tot = Object.keys(by).reduce((a, k) => a + by[k], 0);
+    if (!(tot > 0))
+        return (s && s.type) || 'full';
+    const top = Object.keys(by).sort((a, b) => by[b] - by[a])[0];
+    return by[top] / tot >= 2 / 3 ? top : 'full';
+}
+/** When each split last got real work — 2+ hard sets of it in one session — in ms (null = never). */
+function splitLastTrained(sessions, now = Infinity) {
+    const out = { push: null, pull: null, legs: null, core: null };
+    (sessions || []).forEach(s => {
+        if (!s)
+            return;
+        const t = new Date(s.ts || s.date || '').getTime();
+        if (!isFinite(t) || t > now)
+            return;
+        const by = sessionSplitSets(s), any = Object.keys(by).length > 0;
+        SPLITS.forEach(c => {
+            const hit = any ? (by[c] || 0) >= 2 : s.type === c;
+            if (hit && (out[c] == null || t > out[c]))
+                out[c] = t;
+        });
+    });
+    return out;
+}
+/** Hard sets per muscle in a time window, share-weighted (a bench set is a chest set and half a triceps set). */
+function setsInWindow(sessions, from, to) {
+    const out = {};
+    (sessions || []).forEach(s => {
+        if (!s)
+            return;
+        const t = new Date(s.ts || s.date || '').getTime();
+        if (!isFinite(t) || t < from || t > to)
+            return;
+        (s.exercises || []).forEach(e => { if (!e || !e.n)
+            return; const Ld = (0, exercises_1.loadingOf)(e).load; Object.keys(Ld).forEach(m => (e.sets || []).forEach(st => { out[m] = (out[m] || 0) + Ld[m] * (0, exports.hardShare)(st || {}); })); });
+    });
+    Object.keys(out).forEach(m => { out[m] = r1(out[m]); });
+    return out;
+}
 
   },
   "./physique": function (exports, module, require) {
@@ -4498,6 +4562,7 @@ exports.navyBodyFat = navyBodyFat;
 exports.measureReport = measureReport;
 exports.strengthRatios = strengthRatios;
 exports.cleanInjury = cleanInjury;
+exports.groupVolume = groupVolume;
 const sanitize_1 = require("./sanitize");
 /** Weekly hard sets per muscle. The last few (obliques, tibialis, adductors, lower back) have no published
  *  landmarks; they are set conservatively from how much indirect work they already get. */
@@ -4754,6 +4819,19 @@ function cleanInjury(j, fallbackId, ts) {
     const side = ['L', 'R', 'both'].includes(j.side) ? j.side : '';
     return { id, slug, sev, kind, side, start: j.start, cleared: isDay(j.cleared) ? j.cleared : null,
         note: String(j.note || '').slice(0, 300), upd: String(ts || j.upd || '') };
+}
+/**
+ * A muscle group's week (Bio-Regen's chest / back / shoulders / arms / legs / core): its muscles' hard sets added
+ * up against their landmarks added up. Each muscle keeps its own range, so an untrained forearm counts against
+ * "arms" instead of disappearing into an average.
+ */
+function groupVolume(rows, ctx = {}) {
+    const parts = (rows || []).filter(r => r && r.slug).map(r => ({ slug: r.slug, plan: volumePlan(r.slug, Math.max(0, Number(r.sets) || 0), ctx) }));
+    const sum = (f) => parts.reduce((a, x) => a + f(x.plan), 0);
+    const s = r1(sum(p => p.sets)), mev = sum(p => p.mev), mavLo = sum(p => p.mavLo), mavHi = sum(p => p.mavHi), mrv = sum(p => p.mrv), mv = sum(p => p.mv);
+    const zone = !parts.length || s < 0.5 ? 'none' : s < mev ? 'under' : s < mavLo ? 'low' : s <= mavHi ? 'optimal' : s <= mrv ? 'high' : 'over';
+    return { sets: s, mv, mev, mavLo, mavHi, mrv, zone, label: exports.VOLUME_ZONE[zone].label, color: exports.VOLUME_ZONE[zone].color,
+        need: Math.max(0, Math.ceil(mavLo - s)), room: Math.floor(mrv - s), notes: [], parts };
 }
 
   },
@@ -8333,11 +8411,20 @@ const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : nu
 function recent(bio, today, f, days, lo = -Infinity) {
     const out = [];
     for (let i = 0; i < days; i++) {
-        const v = Number((bio[(0, series_1.shiftDayKey)(today, -i)] || {})[f]);
+        const raw = (bio[(0, series_1.shiftDayKey)(today, -i)] || {})[f];
+        // A missing value is not 0 — Number(null) is, and a day with no mood logged read as "destroyed" (2026-10-18).
+        if (raw == null || raw === '')
+            continue;
+        const v = Number(raw);
         if (isFinite(v) && v > lo)
             out.push(v);
     }
     return out;
+}
+/** Daily steps over the last 14 days, from days that have them — needs 3, or one big day reads as "30k steps". */
+function stepsAvg(bio, today) {
+    const xs = recent(bio, today, 'steps', 14, 0);
+    return xs.length >= 3 ? { avg: xs.reduce((a, b) => a + b, 0) / xs.length, n: xs.length } : null;
 }
 function latest(bio, today, f, days = 120) {
     for (let i = 0; i < days; i++) {
@@ -8424,7 +8511,7 @@ function bodyAge(inp) {
     const sleep = mean(recent(inp.bio, inp.today, 'sleep', 14, 2));
     if (sleep != null) {
         const short = clamp(7 - sleep, 0, 1), y = yrs(1.12, short);
-        M.push({ key: 'sleep', label: 'Sleep', value: r1(sleep) + ' h a night', years: r1(y), ref: '7 h or more', source: 'Cappuccio 2010' });
+        M.push({ key: 'sleep', label: 'Sleep', value: r1(sleep) + ' h a night · 2 weeks', years: r1(y), ref: '7 h or more', source: 'Cappuccio 2010' });
         if (y > 0)
             consider('Sleep', 'Reach 7 h a night', y);
     }
@@ -8466,15 +8553,15 @@ function bodyAge(inp) {
     }
     else
         missing.push('Strength (log a bench press, or any strength session)');
-    const steps = mean(recent(inp.bio, inp.today, 'steps', 14, 0));
-    if (steps != null) {
+    const SA = stepsAvg(inp.bio, inp.today), steps = SA ? SA.avg : null;
+    if (steps != null && SA) {
         const y = clamp(yrs(0.85, (Math.min(steps, 10000) - 8000) / 1000), -1.5, 6);
-        M.push({ key: 'steps', label: 'Daily steps', value: Math.round(steps).toLocaleString('en-US') + ' a day', years: r1(y), ref: 'vs 8,000', source: 'Paluch 2022' });
+        M.push({ key: 'steps', label: 'Daily steps', value: Math.round(steps).toLocaleString('en-US') + ' a day · ' + SA.n + ' days logged in 2 weeks', years: r1(y), ref: 'vs 8,000', source: 'Paluch 2022' });
         if (steps < 8000)
             consider('Daily steps', '+2,000 steps a day is worth about ' + r1(-yrs(0.85, 2)) + ' years', Math.min(y, -yrs(0.85, 2)));
     }
     else
-        missing.push('Steps (Apple Health)');
+        missing.push('Steps on 3+ days (Apple Health)');
     if (inp.age == null)
         return { known: false, why: 'Add your birthday in More › Body profile — body age is measured against it.', age: null, bodyAge: null, low: null, high: null, markers: M, missing, lever };
     if (M.filter(x => x.key !== 'sleepReg').length < 2)
@@ -8516,10 +8603,11 @@ function systemsReport(inp) {
             P.push({ s: clamp(60 + (vo2 - med) * 3, 0, 100), label: 'VO₂max ' + r1(vo2), act: 'VO₂max is the strongest single fitness marker — intervals once a week' });
             bits.push('VO₂max ' + r1(vo2));
         }
-        const st = mean(recent(inp.bio, T, 'steps', 7, 0));
-        if (st != null) {
+        const SA = stepsAvg(inp.bio, T);
+        if (SA) {
+            const st = SA.avg;
             P.push({ s: clamp(st / 100, 0, 100), label: Math.round(st).toLocaleString('en-US') + ' steps a day', act: 'More daily steps — the easiest lever for heart and lymph' });
-            bits.push(Math.round(st / 100) / 10 + 'k steps');
+            bits.push(Math.round(st / 100) / 10 + 'k steps a day');
         }
         const A = avgScore(P);
         rows.push({ key: 'heart', name: 'Heart & fitness', icon: '❤️', grade: grade(A.score), score: A.score, line: (bits.length ? bits.join(' · ') + of(P.length, 4) : '') || 'not measured — Apple Health brings RHR, HRV, VO₂max, steps', weakest: A.weakest, action: A.action });
@@ -8529,7 +8617,7 @@ function systemsReport(inp) {
         const P = [];
         const s7 = mean(recent(inp.bio, T, 'sleep', 7, 2));
         if (s7 != null)
-            P.push({ s: s7 >= 7 && s7 <= 9.5 ? 100 : clamp(100 - Math.abs((s7 < 7 ? 7 : 9.5) - s7) * 45, 0, 100), label: r1(s7) + ' h a night', act: s7 < 7 ? 'Half an hour earlier to bed — sleep is short this week' : 'Very long nights — check how rested you feel' });
+            P.push({ s: s7 >= 7 && s7 <= 9.5 ? 100 : clamp(100 - Math.abs((s7 < 7 ? 7 : 9.5) - s7) * 45, 0, 100), label: r1(s7) + ' h a night this week', act: s7 < 7 ? 'Half an hour earlier to bed — sleep is short this week' : 'Very long nights — check how rested you feel' });
         const beds = recent(inp.bio, T, 'bed', 7, -1).map(b => (b < 12 ? b + 24 : b));
         if (beds.length >= 4) {
             const m = mean(beds), sd = Math.sqrt(mean(beds.map(b => (b - m) * (b - m))));
@@ -8546,7 +8634,7 @@ function systemsReport(inp) {
         // Each axis as its estimated blood level against men of the same age (logic/labs.ts).
         // (This row used to count a score "in band" when it sat inside its own credible interval — always true.)
         const ax = ((inp.endo && inp.endo.axes) || []).filter(a => typeof a.score === 'number');
-        const est = ax.map(a => { var _a, _b, _c; return ({ a, E: (0, labs_1.labEstimate)({ k: a.k, score: a.score, lo: (_a = a.lo) !== null && _a !== void 0 ? _a : a.score, hi: (_b = a.hi) !== null && _b !== void 0 ? _b : a.score, ref: a.ref, pos: a.pos, neg: a.neg }, { age: (_c = inp.age) !== null && _c !== void 0 ? _c : null, sex: inp.sex || 'male', today: T }) }); })
+        const est = ax.map(a => { var _a, _b, _c; return ({ a, E: (0, labs_1.labEstimate)({ k: a.k, score: a.score, lo: (_a = a.lo) !== null && _a !== void 0 ? _a : a.score, hi: (_b = a.hi) !== null && _b !== void 0 ? _b : a.score, ref: a.ref, pos: a.pos, neg: a.neg, hist: a.hist }, { age: (_c = inp.age) !== null && _c !== void 0 ? _c : null, sex: inp.sex || 'male', blood: inp.blood || [], today: T }) }); })
             .filter((x) => !!x.E && x.E.kind !== 'none');
         if (est.length) {
             const vs = est.map(x => ({ ...x, V: (0, labs_1.labVerdict)(x.E) }));
@@ -8574,8 +8662,10 @@ function systemsReport(inp) {
             P.push({ s: clamp(en * 10, 0, 100), label: 'energy ' + r1(en) + '/10', act: 'Energy is low — sleep first, then morning light' });
         // Mood is the check-in's 0–5 scale (Destroyed, Drained, Stable, Sharp, Locked in, Ascended): Stable is a normal
         // day, so it sits mid-scale and only below it counts as low.
+        // Stable (2) and up is fine; the word and the "low" advice follow the same line, so "mood sharp" can no longer
+        // sit beside "Mood has been low" (2026-10-18).
         if (md != null)
-            P.push({ s: Math.round(md >= 2 ? clamp(55 + (md - 2) * 15, 0, 100) : md * 27.5), label: 'mood ' + MOOD_WORDS[clamp(Math.round(md), 0, 5)],
+            P.push({ s: Math.round(md >= 2 ? clamp(70 + (md - 2) * 10, 0, 100) : md * 34), label: 'mood ' + MOOD_WORDS[md >= 2 ? clamp(Math.round(md), 2, 5) : md >= 1 ? 1 : 0],
                 act: 'Mood has been low — time outside and with people helps most' });
         const A = avgScore(P);
         rows.push({ key: 'mind', name: 'Mind & nerves', icon: '🧠', grade: grade(A.score), score: A.score, line: (P.length ? P.map(p => p.label).join(' · ') + of(P.length, 3) : '') || 'no check-ins this week', weakest: A.weakest, action: A.action });

@@ -105,7 +105,7 @@ function paint() {
 
 /* ══════════════ sections ══════════════ */
 function legend() {
-  if (ui.mode === 'status') return `<span><i style="background:rgba(34,197,94,.6)"></i>Fresh ≤48 h</span><span><i style="background:rgba(245,158,11,.6)"></i>Recovering → 7 d</span><span><i style="background:rgba(112,140,178,.35)"></i>Idle</span><span><i style="background:rgba(239,68,68,.6)"></i>Sore (your verdict)</span>`;
+  if (ui.mode === 'status') return `<span><i style="background:rgba(34,197,94,.6)"></i>Fresh ≤48 h</span><span><i style="background:rgba(245,158,11,.6)"></i>Recovering → 7 d</span><span><i style="background:rgba(112,140,178,.35)"></i>Idle</span><span><i style="background:rgba(239,68,68,.6)"></i>Sore (estimated)</span>`;
   if (ui.mode === 'soreness') return SORE_LBL.map((l, i) => `<span><i style="background:${SORE_COLORS[i]}"></i>${l}</span>`).join('');
   if (ui.mode === 'range') return ['under', 'low', 'optimal', 'high', 'over'].map(k => `<span><i style="background:${L.VOLUME_ZONE[k].color}"></i>${L.VOLUME_ZONE[k].label.replace(/ —.*/, '')}</span>`).join('');
   if (ui.mode === 'volume') return `<span>30-day tonnage · none</span><span class="ramp"></span><span>your hardest-hit</span>`;
@@ -163,7 +163,7 @@ function secRecovery(v) {
   if (!R) return card(`<div class="empty">The Bio-Regen Matrix appears after the first sync with a PC that has it.</div>`);
   const S = R.summary;
   let H = `<div class="agg4">
-    <div class="frost"><div class="v num" style="color:#40c8e0">${R.lvl}</div><div class="k">Specimen lvl</div></div>
+    <div class="frost"><div class="v num" style="color:#40c8e0">${R.lvl}</div><div class="k">${R.lvlLabel || 'Specimen lvl'}</div></div>
     <div class="frost"><div class="v num" style="color:#30d158">${R.impAvg}%</div><div class="k">Imprint</div></div>
     <div class="frost"><div class="v num" style="color:#ffb340">${R.weekSets}</div><div class="k">Sets / wk</div></div>
     <div class="frost"><div class="v num" style="color:#bf5af2">${R.primed}/6</div><div class="k">Primed</div></div></div>`;
@@ -182,7 +182,7 @@ function secRecovery(v) {
       <div class="rm"><span>Recovery ${esc(s.pctTxt)}</span><span>${esc(String(s.lastTxt).replace('last: ', ''))}</span></div>
       <div class="mini"><span>IMPRINT</span><span class="t"><i style="width:${s.imprint}%;background:#30d158"></i></span><b>${s.imprint ? s.imprint + '%' : '—'}</b>
         <span>MOBILITY</span><span class="t"><i style="width:${s.mobPct}%;background:#40c8e0"></i></span><b>${s.mobPct ? s.mobPct + '%' : '—'}</b>
-        <span>VOL/WK</span><span class="t"><i style="width:${s.volPct}%;background:#ffb340"></i></span><b>${s.wk}/10</b></div></div>`;
+        <span>VOL/WK</span><span class="t"><i style="width:${s.volPct}%;background:${s.volCol || '#ffb340'}"></i></span><b style="${s.volCol ? 'color:' + s.volCol : ''}">${s.wkTxt || s.wk + '/10'}</b></div></div>`;
   }).join('')}</div>`;
   // Strength imprint per group (no training pick — TRAIN NEXT was removed from Body Arch, 2026-10-04).
   const byImp = S.slice().sort((a, b) => b.imprint - a.imprint);
@@ -856,7 +856,7 @@ function systemsNow(v) {
   const inp = { today: t, bio: v.bio || {}, age: sp.age, sex: p.sex || null, height: +p.height || null, weight: w, bodyfat: p.bodyfat != null && p.bodyfat !== '' ? +p.bodyfat : null, vo2max: +p.vo2max || null };
   // Muscular strength (bench ÷ body weight vs age norms) or, without a bench, strength-training time (logic/systems.ts).
   try { inp.pressRatio = L.strengthForAge(tissueNow().lifts, w); inp.msaMinutes = L.trainingMinutes(v.workouts || [], t); } catch (e) { /* body age still works without them */ }
-  sysCache = { rows: L.systemsReport({ ...inp, endo: v.endo || null, rebuild: rebuildNow(v), injuries: Object.keys(L.activeInjuries(v.injuries || [], t)).length, coverage: v.body.coverage ?? null, coverage28: v.body.coverage28 ?? null }), age: L.bodyAge(inp) };
+  sysCache = { rows: L.systemsReport({ ...inp, endo: v.endo || null, blood: v.bloodwork || [], rebuild: rebuildNow(v), injuries: Object.keys(L.activeInjuries(v.injuries || [], t)).length, coverage: v.body.coverage ?? null, coverage28: v.body.coverage28 ?? null }), age: L.bodyAge(inp) };
   sysFor = k; return sysCache;
 }
 const GRADE = { good: ['#30d158', 'Good'], watch: ['#ffd60a', 'Watch'], poor: ['#ff453a', 'Needs work'] };
