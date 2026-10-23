@@ -347,7 +347,7 @@ function vitalsInputs(v, t) {
 function secVitals(v) {
   const t = today();
   let H = `<div class="ba-h"><h2 style="font-size:1.05rem">Survivor vitals</h2><span class="k">vs yesterday</span></div>` + hud(v, t);
-  H += `<div class="ba-h"><h2 style="font-size:1.05rem">Log today</h2><span class="k">${fmtDay(t, { weekday: 'long' })}</span></div>` + card(vitalsInputs(v, t), 'tight');
+  H += `<div class="ba-h"><h2 style="font-size:1.05rem">Log today</h2><span class="k">${fmtDay(t, { weekday: 'long' })}</span></div>` + card(vitalsInputs(v, t), 'tight vin-grid');
   return H;
 }
 

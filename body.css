@@ -565,3 +565,45 @@ html[data-theme="light"] .br-cc{fill:rgba(40,44,90,.05);stroke:rgba(40,44,90,.18
 .ana-rows b{color:#40c8e0}
 .fibre{display:flex;gap:2px;height:10px;border-radius:5px;overflow:hidden}.fibre i{display:block;height:100%}
 .sorebar{height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden;margin:2px 0 8px}.sorebar i{display:block;height:100%;border-radius:3px}
+
+/* ══ Body Arch · horizontal HUD layout (2026-10-23, phone first) ══
+   Bruno wanted Body Arch's cards to fit more across the screen and look like the scanner: Log today and the
+   supplements become two tiles a row (the 1–10 scales keep the full width), the body-age markers sit in two
+   columns, and every Body Arch card gets the HUD corner brackets the PC has. */
+.card.vin-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:10px}
+.vin-grid .vin{grid-template-columns:28px minmax(0,1fr);gap:7px 8px;padding:10px;border-radius:14px;background:var(--fill-1);align-content:start;min-width:0}
+.vin-grid .vin+.vin{border-top:0}
+.vin-grid .vin .vi{width:28px;height:28px;border-radius:8px}
+.vin-grid .vin .nm{font-size:.84rem}
+.vin-grid .vin .bar{grid-column:1/3;grid-row:2}
+.vin-grid .vin .ctl{grid-column:1/3;grid-row:auto;justify-content:stretch;gap:4px;min-width:0}
+.vin-grid .vin .ctl button{flex:1 1 0;min-width:0;height:30px;padding:0 2px;font-size:.72rem;border-radius:9px;white-space:nowrap}
+.vin-grid .vin .ctl button.x{flex:0 0 24px}
+.vin-grid .vin:has(.scale){grid-column:1/-1}
+.vin-grid .vin .scale{grid-column:1/3}
+
+.mic-list.card{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:10px}
+.mic-list .mic2{flex-direction:column;align-items:stretch;gap:8px;padding:10px;border-radius:14px;background:var(--fill-1);min-width:0}
+.mic-list .mic2+.mic2{border-top:0}
+.mic-list .mic2-main{grid-template-columns:36px minmax(0,1fr);gap:8px;align-items:start}
+.mic-list .mic2 .ring svg{width:36px;height:36px}
+.mic-list .mic2 .nm{font-size:.84rem}
+.mic-list .mic2 .amt{font-size:.7rem}
+.mic-list .mic2 .est{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-size:.68rem}
+.mic-list .mic2 .warn{font-size:.58rem}
+.mic-list .mic2-add{height:30px;min-width:0;width:100%}
+.mic-list .mic2-sep{grid-column:1/-1;border-top:0;padding:8px 2px 0}
+.mic-list .mic2.slim{padding:8px}
+.mic-list .mic2.slim .mic2-main{grid-template-columns:26px minmax(0,1fr)}
+.mic-list .mic2-dot{width:26px;height:26px;font-size:.8rem}
+.mic-list .mic2.slim .mic2-add{height:26px}
+
+.bage-m{display:grid !important;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.bage-m>div{flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:4px;padding:8px 10px;border-top:0 !important;border-radius:12px;background:var(--fill-1);font-size:.82rem}
+.bage-m>div b{font-size:.95rem;align-self:flex-start;margin:0;text-align:left}
+
+/* HUD frame: corner brackets inside every Body Arch card (the rim keeps ::before) */
+.ba-sec .card.frost::after,.ba-sec .gc.frost::after{content:"";position:absolute;inset:6px;pointer-events:none;z-index:2;--hudc:rgba(64,200,224,.5);
+  background:linear-gradient(var(--hudc),var(--hudc)) top left/12px 1.5px no-repeat,linear-gradient(var(--hudc),var(--hudc)) top left/1.5px 12px no-repeat,
+    linear-gradient(var(--hudc),var(--hudc)) bottom right/12px 1.5px no-repeat,linear-gradient(var(--hudc),var(--hudc)) bottom right/1.5px 12px no-repeat}
+html[data-theme="light"] .ba-sec .card.frost::after,html[data-theme="light"] .ba-sec .gc.frost::after{--hudc:rgba(10,132,160,.45)}
