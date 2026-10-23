@@ -2598,6 +2598,7 @@ __exportStar(require("./rebuild"), exports);
 __exportStar(require("./labs"), exports);
 __exportStar(require("./muscle"), exports);
 __exportStar(require("./charts"), exports);
+__exportStar(require("./weekly"), exports);
 
   },
   "./labs": function (exports, module, require) {
@@ -9345,6 +9346,297 @@ async function buildPush(sub, payload, vapid, contact, opts = {}) {
     if (opts.topic)
         headers.Topic = opts.topic.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32);
     return { endpoint: sub.endpoint, headers, body: b64u(body) };
+}
+
+  },
+  "./weekly": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.REGEN_GROUPS = void 0;
+exports.slugTraining = slugTraining;
+exports.bodyGroupOf = bodyGroupOf;
+exports.regenMatrix = regenMatrix;
+exports.splitStatus = splitStatus;
+exports.weightTrend = weightTrend;
+exports.scoreHistory = scoreHistory;
+/**
+ * The PC's body and training tallies, moved out of ARK_Dashboard.html so they are tested and shared
+ * (2026-10-23). Every contradiction found in the October sweeps came from one quantity computed twice —
+ * weekly sets three ways, recovery two ways — so the maths lives here once and the dashboard only draws it.
+ *
+ *   slugTraining   last session, share-weighted hard sets this week and 30-day tonnage per muscle
+ *   bodyGroupOf    a muscle label or slug → chest / back / shoulders / arms / legs / core
+ *   regenMatrix    Bio-Regen: per group strength, mobility, weekly sets against landmarks and recovery
+ *   splitStatus    the training directive's push / pull / legs rest and soreness
+ *   weightTrend    the weigh-in trend: span, rate and whether it is a bulk, a cut or maintenance
+ */
+const exercises_1 = require("./exercises");
+const muscle_1 = require("./muscle");
+const physique_1 = require("./physique");
+const DAY = 864e5;
+const tsOf = (s) => new Date((s && (s.ts || s.date)) || '').getTime();
+const r1 = (x) => Math.round(x * 10) / 10;
+/* ───────────────────────── per-muscle training ───────────────────────── */
+/**
+ * Per muscle: the last session that listed it, this week's hard sets (share-weighted — a bench set is a chest
+ * set and half a triceps set; warm-ups out) and 30-day tonnage spread over the muscles a session listed.
+ * Sessions after `now` (timeline scrub) are ignored. Old sessions without exercises count their logged group
+ * sets (`label2slug`), or 3 per listed muscle.
+ */
+function slugTraining(inp) {
+    const out = {}, known = new Set(inp.slugs || []);
+    (inp.slugs || []).forEach(s => { out[s] = { last: null, weekSets: 0, vol30: 0 }; });
+    const now = inp.now, weekAgo = now - 7 * DAY, monthAgo = now - 30 * DAY;
+    const p2s = inp.ppl2slug || {}, l2s = inp.label2slug || {};
+    (inp.sessions || []).forEach(s => {
+        if (!s)
+            return;
+        const t = tsOf(s);
+        if (isNaN(t) || t > now)
+            return;
+        const seen = {};
+        (s.muscles || []).forEach(pid => { const sl = p2s[pid] || (known.has(pid) ? pid : null); if (sl)
+            seen[sl] = 1; });
+        Object.keys(seen).forEach(sl => { if (out[sl] && (out[sl].last === null || t > out[sl].last))
+            out[sl].last = t; });
+        if (t >= weekAgo) {
+            if (s.exercises && s.exercises.length) {
+                s.exercises.forEach(ex => {
+                    if (!ex || !ex.n)
+                        return;
+                    const L = (0, exercises_1.loadingOf)(ex).load;
+                    Object.keys(L).forEach(sl => { if (out[sl])
+                        (ex.sets || []).forEach(st => { out[sl].weekSets += L[sl] * (0, muscle_1.hardShare)(st || {}); }); });
+                });
+            }
+            else {
+                const so = s.sets || {}, labels = Object.keys(so);
+                if (labels.length)
+                    labels.forEach(lab => { const n = +so[lab] || 0; (l2s[lab] || []).forEach(sl => { if (out[sl])
+                        out[sl].weekSets += n; }); });
+                else
+                    Object.keys(seen).forEach(sl => { if (out[sl])
+                        out[sl].weekSets += 3; });
+            }
+        }
+        if (t >= monthAgo) {
+            const slugs = Object.keys(seen);
+            if (slugs.length) {
+                let vol = +(s.volume || 0) || 0;
+                if (!vol && s.exercises)
+                    s.exercises.forEach(ex => (ex.sets || []).forEach(st => { vol += (+st.w || 0) * (+st.r || 0); }));
+                if (!vol)
+                    vol = slugs.length * 400; // bodyweight / untracked session — nominal load
+                const per = vol / slugs.length;
+                slugs.forEach(sl => { if (out[sl])
+                    out[sl].vol30 += per; });
+            }
+        }
+    });
+    Object.keys(out).forEach(sl => { out[sl].weekSets = r1(out[sl].weekSets); });
+    return out;
+}
+exports.REGEN_GROUPS = ['chest', 'back', 'shoulders', 'arms', 'legs', 'core'];
+/** A logger label ("Upper Chest", "Biceps Femoris") or a figure slug → its Bio-Regen group. */
+function bodyGroupOf(label) {
+    const l = String(label || '').toLowerCase();
+    if (/femoris|vastus|hamstring|glute|\bhip|adduct|abduct|gastro|soleus|tibial|peroneal|quad|calf|calv|\bleg/.test(l))
+        return 'legs';
+    if (/chest|pec/.test(l))
+        return 'chest';
+    if (/delt|shoulder/.test(l))
+        return 'shoulders';
+    if (/tricep|bicep|brachi|forearm|\barm/.test(l))
+        return 'arms';
+    if (/lat|trap|rhomboid|teres|infraspin|erector|spinal|neck|\bback/.test(l))
+        return 'back';
+    if (/abs|oblique|serratus|core/.test(l))
+        return 'core';
+    return null;
+}
+/**
+ * Bio-Regen, per group: imprint and mobility (the muscles' averages, unmeasured ones left out), this week's sets
+ * against the muscles' summed landmarks (groupVolume), and recovery from the same curve as each muscle's view —
+ * charging until the slowest trained muscle is within 5 % of fresh; 2–4 weeks off = detraining, 4+ = losing
+ * (Bosquet 2013). `wk` is the logged group sets, for the "sets / wk" total.
+ */
+function regenMatrix(inp) {
+    const now = inp.now, weekAgo = now - 7 * DAY, M = inp.muscles || {}, names = inp.names || {};
+    const lastTs = {}, weekSets = {};
+    const str = {}, mob = {}, cnt = {};
+    exports.REGEN_GROUPS.forEach(g => { lastTs[g] = null; weekSets[g] = 0; str[g] = 0; mob[g] = 0; cnt[g] = 0; });
+    (inp.sessions || []).forEach(s => {
+        if (!s)
+            return;
+        const t = tsOf(s);
+        if (isNaN(t))
+            return;
+        const so = s.sets || {}, labels = s.labels || Object.keys(so), seen = {};
+        labels.forEach(lab => { const g = bodyGroupOf(lab); if (g)
+            seen[g] = 1; });
+        Object.keys(seen).forEach(g => { if (lastTs[g] === null || t > lastTs[g])
+            lastTs[g] = t; });
+        if (t >= weekAgo) {
+            const keys = Object.keys(so);
+            if (keys.length)
+                keys.forEach(lab => { const g = bodyGroupOf(lab); if (g)
+                    weekSets[g] += (+so[lab] || 0); });
+            else
+                labels.forEach(lab => { const g = bodyGroupOf(lab); if (g)
+                    weekSets[g] += 3; });
+        }
+    });
+    let totalLevelPts = 0;
+    Object.keys(M).forEach(sl => {
+        const g = bodyGroupOf(sl);
+        if (!g)
+            return;
+        const st = +(M[sl].strength || 0) || 0, mo = +(M[sl].mobility || 0) || 0;
+        if (st === 0 && mo === 0)
+            return;
+        str[g] += st;
+        mob[g] += mo;
+        cnt[g]++;
+        totalLevelPts += st + mo;
+    });
+    const slugsOf = (g) => Object.keys(M).filter(sl => bodyGroupOf(sl) === g);
+    const recOf = (g) => {
+        let rec = null, rin = 0;
+        slugsOf(g).forEach(sl => {
+            const b = inp.bouts && inp.bouts[sl];
+            if (!b || !b.length)
+                return;
+            const R = (0, muscle_1.recoveryCurve)(b, M[sl].recWindow || { lo: 48, hi: 72 }, now);
+            if (R.recNow == null)
+                return;
+            rec = rec == null ? R.recNow : Math.min(rec, R.recNow);
+            rin = Math.max(rin, R.readyIn || 0);
+        });
+        return rec == null ? null : { rec: rec, readyIn: rin };
+    };
+    let totalImprint = 0, imprintCount = 0, primed = 0, totalWeekSets = 0;
+    const groups = exports.REGEN_GROUPS.map(g => {
+        const n = cnt[g], avgStr = n ? str[g] / n : 0, avgMob = n ? mob[g] / n : 0;
+        const imprint = Math.round(avgStr / 10 * 100), mobPct = Math.round(avgMob / 10 * 100);
+        if (avgStr > 0) {
+            totalImprint += imprint;
+            imprintCount++;
+        }
+        const wk = weekSets[g];
+        totalWeekSets += wk;
+        const GV = (0, physique_1.groupVolume)(slugsOf(g).map(sl => ({ slug: sl, sets: M[sl].weekSets || 0 })), inp.volCtx || {});
+        const wkTxt = r1(GV.sets) + '/' + GV.mavLo + '–' + GV.mavHi;
+        const volPct = GV.mrv ? Math.min(100, GV.sets / GV.mrv * 100) : 0;
+        const volTip = GV.label + ' — ' + GV.parts.map(p => (names[p.slug] || p.slug) + ' ' + p.plan.sets + ' / ' + p.plan.mavLo + '–' + p.plan.mavHi).join(' · ');
+        const last = lastTs[g];
+        let state, fillPct, fillCol, lastTxt, pctTxt;
+        if (last === null) {
+            state = 'dormant';
+            fillPct = 0;
+            fillCol = 'rgba(255,255,255,.12)';
+            lastTxt = 'never';
+            pctTxt = '—';
+        }
+        else {
+            const hrs = (now - last) / 3600e3;
+            lastTxt = 'last: ' + (hrs < 24 ? Math.max(1, Math.round(hrs)) + 'h ago' : Math.round(hrs / 24) + 'd ago');
+            if (hrs >= 672) {
+                state = 'atrophy';
+                fillPct = 100;
+                fillCol = '#f87171';
+                pctTxt = 'losing';
+            }
+            else if (hrs >= 336) {
+                state = 'detraining';
+                fillPct = 100;
+                fillCol = '#f59e0b';
+                pctTxt = 'fading';
+            }
+            else {
+                const gr = recOf(g);
+                if (gr ? gr.readyIn > 0 : hrs < 72) {
+                    state = 'charging';
+                    fillPct = gr ? Math.min(99, Math.round(gr.rec)) : Math.round(hrs / 72 * 100);
+                    fillCol = '#f59e0b';
+                    pctTxt = fillPct + '%';
+                }
+                else {
+                    state = 'primed';
+                    fillPct = 100;
+                    fillCol = '#22c55e';
+                    pctTxt = '100%';
+                    primed++;
+                }
+            }
+        }
+        return { key: g, imprint, mobPct, wk, volPct, wkTxt, volCol: GV.color, volTip, state, fillPct, fillCol, pctTxt, lastTxt, recHrs: last === null ? null : (now - last) / 3600e3 };
+    });
+    return { groups, impAvg: imprintCount ? Math.round(totalImprint / imprintCount) : 0, weekSets: totalWeekSets, primed, levelPts: totalLevelPts };
+}
+/**
+ * Push / pull / legs: days since the split last got 2+ hard sets in any session, the highest estimated soreness
+ * among its muscles (3+ = blocked), recovering under 2 days — and the ready split rested longest (never trained
+ * wins) as the fallback pick when there is no plan.
+ */
+function splitStatus(inp) {
+    const last = (0, muscle_1.splitLastTrained)(inp.sessions, inp.now), sl = inp.soreLevel || {};
+    const info = {};
+    ['push', 'pull', 'legs'].forEach(t => {
+        const l = last[t], days = l != null ? Math.round((inp.now - l) / DAY) : null;
+        let sore = 0;
+        (inp.splitMuscles[t] || []).forEach(id => { const v = sl[id]; if (v != null && v > sore)
+            sore = v; });
+        info[t] = { days, sore, st: sore >= 3 ? 'sore' : days != null && days < 2 ? 'recov' : 'ready' };
+    });
+    let pick = null, best = -1;
+    ['push', 'pull', 'legs'].forEach(t => { if (info[t].st !== 'ready')
+        return; const sc = info[t].days == null ? 999 : info[t].days; if (sc > best) {
+        best = sc;
+        pick = t;
+    } });
+    return { info, pick };
+}
+/**
+ * The last `maxN` weigh-ins: span, change and rate. Under ~0.1 % of body weight a week is maintenance within
+ * weigh-in noise (bulks run ~0.25–0.5 %/wk, Helms 2014) — +1 kg across five months is not a bulk. Null under 2.
+ */
+function weightTrend(weights, maxN = 90) {
+    const keys = Object.keys(weights || {}).filter(k => +weights[k] > 0).sort();
+    const ks = keys.slice(-maxN), vals = ks.map(k => +weights[k]);
+    if (vals.length < 2)
+        return null;
+    const dW = vals[vals.length - 1] - vals[0];
+    const spanDays = Math.max(1, (new Date(ks[ks.length - 1] + 'T12:00:00').getTime() - new Date(ks[0] + 'T12:00:00').getTime()) / DAY);
+    const perWeekPct = dW / (spanDays / 7) / (vals[0] || 1) * 100;
+    return { n: vals.length, vals, min: Math.min(...vals), max: Math.max(...vals), dW, spanDays,
+        spanTxt: spanDays >= 45 ? Math.round(spanDays / 30.4) + ' mo' : Math.round(spanDays) + ' d', perWeekPct,
+        tag: Math.abs(perWeekPct) < 0.1 ? 'MAINTAINING' : dW > 0 ? 'BULKING' : 'CUTTING' };
+}
+/* ───────────────────────── ARK Score history ───────────────────────── */
+/**
+ * The ARK Score on each of the last `days` days, rebuilt from the engram unlock dates with today's formula —
+ * unlocked × 100 × 1.2^(pillars with an unlock − 1). Exact, where the daily snapshots held zeros from days the
+ * page saved before the tree had loaded (2026-10-23).
+ */
+function scoreHistory(unlocks, days, now = Date.now()) {
+    const done = (unlocks || []).map(u => ({ t: new Date(u.at).getTime(), k: u.pillar })).filter(u => isFinite(u.t)).sort((a, b) => a.t - b.t);
+    const end = new Date(now);
+    end.setHours(23, 59, 59, 999);
+    const out = [];
+    for (let i = Math.max(1, Math.floor(days)) - 1; i >= 0; i--) {
+        const d = new Date(end);
+        d.setDate(end.getDate() - i);
+        const cut = d.getTime(), pill = {};
+        let n = 0;
+        done.forEach(u => { if (u.t <= cut) {
+            n++;
+            pill[u.k] = 1;
+        } });
+        const ap = Object.keys(pill).length;
+        out.push({ date: d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'),
+            score: Math.round(n * 100 * (ap === 0 ? 1 : Math.pow(1.2, ap - 1))) });
+    }
+    return out;
 }
 
   },
