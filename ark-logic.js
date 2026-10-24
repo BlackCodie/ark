@@ -4857,6 +4857,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PK = void 0;
 exports.pkFor = pkFor;
 exports.doseEvents = doseEvents;
+exports.usualDose = usualDose;
 exports.pkNow = pkNow;
 exports.amountAt = amountAt;
 exports.cutoffBefore = cutoffBefore;
@@ -4966,6 +4967,26 @@ function doseEvents(k, doses, toMass = 1) {
     else
         out.push({ at: d.at, m: d.m }); });
     return out;
+}
+/**
+ * How much you usually take of one supplement — what the log buttons offer first, so a 400 µg tablet is one tap
+ * instead of sixteen taps of +25 (the user, 2026-10-24: "make it remember how much I'm taking"). Taps within 20 min
+ * count as one intake, as in doseEvents. Of the last five intakes in the last 60 days the most frequent amount wins;
+ * a tie goes to the most recent. Null when nothing was taken in that time — then nothing is remembered.
+ */
+function usualDose(k, doses, now = Date.now()) {
+    const ev = doseEvents(k, doses).filter(e => e.at <= now + 60e3 && now - e.at <= 60 * 864e5).slice(-5);
+    if (!ev.length)
+        return null;
+    const r = (x) => Math.round(x * 1000) / 1000, n = new Map();
+    ev.forEach(e => n.set(r(e.m), (n.get(r(e.m)) || 0) + 1));
+    let best = r(ev[ev.length - 1].m);
+    for (let i = ev.length - 2; i >= 0; i--) {
+        const x = r(ev[i].m);
+        if ((n.get(x) || 0) > (n.get(best) || 0))
+            best = x;
+    }
+    return { amount: best, times: n.get(best) || 1, of: ev.length, lastAt: ev[ev.length - 1].at };
 }
 const H = 3600e3;
 /**

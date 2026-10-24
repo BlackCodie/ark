@@ -10,6 +10,7 @@
 import { L, state, view, emit, changed, esc, icon, today, fmtDay, haptic, openSheet, topSheet, closeSheet } from './core.js';
 import { bioPatch, MOODS } from './views.js';
 import { bedtimeTonight } from './doses.js';
+import { meter, moodRow, ENERGY_WORDS, STRESS_WORDS } from './logui.js';
 import * as ART from './brain-art.js';
 
 const H = 3600e3;
@@ -185,13 +186,12 @@ export function secMind(v) {
   const days = [6, 5, 4, 3, 2, 1, 0].map(i => L.shiftDayKey(t, -i));
   const moods = days.map(k => (v.bio[k] || {}).mood);
   const lv = d.mood != null ? levels[d.mood] : null;
-  const scale = (f, c, cur) => `<div class="scale fill">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<button class="${cur === n ? 'on' : ''}" style="--c:${c}" data-act="bio-set" data-f="${f}" data-v="${n}">${n}</button>`).join('')}</div>`;
   H0 += `<div class="ba-h"><h2 style="font-size:1.05rem">Check in</h2><span class="k">${lv ? esc(lv.n) : 'how are you, really?'}</span></div>
     <section class="card frost tight">
       <div class="eyebrow" style="margin-bottom:8px">Mood</div>
-      <div class="moods">${levels.map((m, i) => `<button class="${d.mood === i ? 'on' : ''}" style="--c:${m.c}" data-act="bio-set" data-f="mood" data-v="${i}" aria-label="${esc(m.n)}">${m.e}</button>`).join('')}</div>
-      <div class="row" style="margin:14px 0 8px"><span class="eyebrow" style="flex:1">Energy</span><span class="sub num">${d.energy ? d.energy + ' / 10' : ''}</span></div>${scale('energy', '#ffd60a', d.energy)}
-      <div class="row" style="margin:14px 0 8px"><span class="eyebrow" style="flex:1">Stress</span><span class="sub num">${d.stress ? d.stress + ' / 10' : ''}</span></div>${scale('stress', '#bf5af2', d.stress)}
+      ${moodRow(levels, d.mood)}
+      ${meter('energy', 'Energy', '#ffd60a', d.energy, ENERGY_WORDS)}
+      ${meter('stress', 'Stress', '#bf5af2', d.stress, STRESS_WORDS)}
       <div class="nlog">${days.map((k, i) => { const m = moods[i], c = m != null && levels[m] ? levels[m].c : '';
         return `<span><i style="height:${m != null ? 12 + m * 7 : 4}px;${c ? 'background:' + c : ''}"></i>${fmtDay(k, { weekday: 'narrow' })}</span>`; }).join('')}</div>
     </section>`;

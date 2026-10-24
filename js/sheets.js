@@ -2,7 +2,8 @@
 import {
   L, state, view, emit, changed, esc, icon, today, shiftDay, fmt1, fmtDay, fmtMins, ago,
   openSheet, closeSheet, topSheet, toast, haptic, pair, unpair, syncNow, syncLabel, hubBase, syncState, pcAsOf, pcAgeMin, onPublicCopy } from './core.js';
-import { vitalsCard, pillarColor, journalRow } from './views.js';
+import { pillarColor, journalRow, MOODS } from './views.js';
+import { logRows, meter, moodRow, ENERGY_WORDS } from './logui.js';
 import { weighList, practiceList, appearanceChips } from './more.js';
 
 /* ── pairing ── */
@@ -166,8 +167,13 @@ export function weighSheet() {
 
 /* ── vitals ── */
 export function vitalsSheet() {
-  openSheet({ id: 'vitals', title: 'Vitals · ' + fmtDay(today(), { weekday: 'long' }), render: () => vitalsCard(today())
-    + `<p class="sub" style="margin-top:12px;line-height:1.5">Every tap is saved. ARK on your PC turns these into today's readiness.</p>` });
+  openSheet({ id: 'vitals', title: 'Vitals · ' + fmtDay(today(), { weekday: 'long' }), render: () => {
+    const v = view(), t = today(), b = v.bio[t] || {}, D = v.bioDefs || {};
+    const levels = D.levels && D.levels.length ? D.levels : MOODS.map(m => ({ e: m[0], n: m[1], c: '#5ee6b5' }));
+    return `${logRows(v, t, ['sleep', 'water', 'prot'])}
+      <section class="card frost tight" style="margin-top:10px">${meter('energy', 'Energy', '#ffd60a', b.energy, ENERGY_WORDS)}<div class="eyebrow" style="margin:14px 0 8px">Mood</div>${moodRow(levels, b.mood)}</section>
+      <p class="sub" style="margin-top:12px;line-height:1.5">Every tap is saved. ARK on your PC turns these into today's readiness.</p>`;
+  } });
 }
 
 /* ── practice ── */

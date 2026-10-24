@@ -19,7 +19,8 @@ import {
 import { GROUPS, syncButton, bioPatch, MOODS } from './views.js';
 import { startForMuscles, tissueNow } from './train.js';
 import { secMind } from './mind.js';
-import { standing, fmtAmt } from './doses.js';
+import { standing, fmtAmt, usualOf, hm } from './doses.js';
+import { logRows } from './logui.js';
 import { hormoneRows } from './hormones.js';
 import { rebuildNow } from './rebuild.js';
 import { fatigueCard, fatigueNow } from './system.js';
@@ -277,15 +278,6 @@ function secProfile(v) {
 }
 
 /* ── vitals ── */
-const VIT = [
-  { f: 'sleep', ic: 'moon', c: '#7d7aff', n: 'Sleep', u: 'h', steps: [-0.5, 0.5, 1], round: 0.5, goal: 'sleep' },
-  { f: 'deep', ic: 'moon', c: '#5e5ce6', n: 'Deep sleep', u: 'h', steps: [-0.25, 0.25, 0.5], round: 0.25 },
-  { f: 'prot', ic: 'meat', c: '#ff7a7a', n: 'Protein', u: 'g', steps: [25, 50], round: 1, goal: 'prot' },
-  { f: 'water', ic: 'drop', c: '#40c8e0', n: 'Hydration', u: 'L', steps: [0.5, 1], round: 0.1, goal: 'water' },
-  { f: 'weight', ic: 'scale', c: '#40c8e0', n: 'Body weight', u: 'kg', steps: [-0.1, 0.1], round: 0.1 },
-  { f: 'steps', ic: 'target', c: '#30d158', n: 'Steps', u: '', steps: [1000, 5000], round: 1, goal: 'steps' },
-  { f: 'cal', ic: 'flame', c: '#ff9f0a', n: 'Calories', u: 'kcal', steps: [100, 500], round: 1, goal: 'cal' },
-];
 function readinessCard(v, t) {
   const r = v.readiness[t];
   // Not scored yet today (nothing logged): show the last score, dimmed and dated, rather than an empty ring.
@@ -328,26 +320,10 @@ function hud(v, t) {
     return `<div style="--hc:${c}"><div class="n">${n}</div><div class="v num">${cur == null ? '—' : shown + '<small>' + unit + '</small>'}${dl}</div><div class="b"><i style="width:${pct}%"></i></div></div>`;
   }).join('')}</div>`;
 }
-function vitalsInputs(v, t) {
-  const d = v.bio[t] || {}, G = (v.bioDefs && v.bioDefs.goals) || {};
-  return VIT.map(x => {
-    const cur = d[x.f];
-    if (x.scale) return `<div class="vin" style="--c:${x.c}"><span class="vi">${icon(x.ic, 17)}</span>
-      <div class="top"><span class="nm">${x.n}</span><span class="val ${cur == null ? 'none' : ''}">${cur == null ? '—' : cur + '<small> /10</small>'}</span></div>
-      <div class="scale fill">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<button class="${cur === n ? 'on' : ''}" style="--c:${x.c}" data-act="bio-set" data-f="${x.f}" data-v="${n}">${n}</button>`).join('')}</div></div>`;
-    const goal = x.goal ? G[x.goal] : null;
-    const shown = cur == null ? '—' : x.f === 'steps' ? Math.round(cur).toLocaleString() : fmt1(cur);
-    return `<div class="vin" style="--c:${x.c}"><span class="vi">${icon(x.ic, 17)}</span>
-      <div class="top"><span class="nm">${x.n}</span><span class="val ${cur == null ? 'none' : ''}">${shown}${cur != null && x.u ? '<small> ' + x.u + '</small>' : ''}${goal ? `<small> / ${goal >= 1000 ? fmt1(goal / 1000) + 'k' : goal}</small>` : ''}</span></div>
-      ${goal ? `<div class="bar" style="--c:${x.c}"><i style="width:${Math.min(100, (cur || 0) / goal * 100)}%"></i></div>` : ''}
-      <div class="ctl">${x.steps.map(s => `<button data-act="vit-step" data-f="${x.f}" data-d="${s}">${s > 0 ? '+' : '−'}${Math.abs(s) >= 1000 ? Math.abs(s) / 1000 + 'k' : Math.abs(s)}</button>`).join('')}
-        ${cur != null ? `<button class="x" data-act="vit-clear" data-f="${x.f}" aria-label="Clear ${x.n}">${icon('x', 14)}</button>` : ''}</div></div>`;
-  }).join('');
-}
 function secVitals(v) {
   const t = today();
   let H = `<div class="ba-h"><h2 style="font-size:1.05rem">Survivor vitals</h2><span class="k">vs yesterday</span></div>` + hud(v, t);
-  H += `<div class="ba-h"><h2 style="font-size:1.05rem">Log today</h2><span class="k">${fmtDay(t, { weekday: 'long' })}</span></div>` + card(vitalsInputs(v, t), 'tight');
+  H += `<div class="ba-h"><h2 style="font-size:1.05rem">Log today</h2><span class="k">${fmtDay(t, { weekday: 'long' })}</span></div>` + logRows(v, t);
   return H;
 }
 
@@ -371,7 +347,7 @@ setInterval(() => {
 function secMicros(v) {
   const t = today(), D = v.bioDefs;
   if (!D || !D.micros || !D.micros.length) return card(`<div class="empty">Micronutrient tracking appears after the first sync.</div>`);
-  const amt = (v.bio[t] || {}).micros || {};
+  const amt = (v.bio[t] || {}).micros || {}, doses = v.doses || [];
   const fmtN = n => n >= 1000 ? (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + 'k' : (n % 1 === 0 ? '' + n : (+n).toFixed(1));
   // What you actually take comes first: logged on 3+ different days in the last 30 (dose log or a day's total),
   // most recent first. One-offs and the ones you never take follow as slim rows — still one list.
@@ -383,23 +359,25 @@ function secMicros(v) {
   const used = order.filter(m => daysOf[m.k] && daysOf[m.k].size >= 3).sort((x, y) => (last[y.k] || '').localeCompare(last[x.k] || ''));
   const rest = order.filter(m => !used.includes(m));
   const goals = used.filter(m => !m.limit), hit = goals.filter(m => (amt[m.k] || 0) >= m.goal).length;
-  let H = `<div class="sub" style="margin:-4px 2px 8px;line-height:1.45">${used.length ? hit + ' of ' + goals.length + ' you take at target today · ' : ''}tap one to log it with the time you took it. Amounts in blood are estimates from dose times and average kinetics (±30–50 %), not lab values.</div>`;
+  let H = `<div class="sub" style="margin:-4px 2px 8px;line-height:1.45">${used.length ? hit + ' of ' + goals.length + ' you take at target today · ' : ''}the + button logs your usual dose; tap a row to change the amount or time. Amounts in blood are estimates from dose times and average kinetics (±30–50 %), not lab values.</div>`;
   const row = (m, slim) => {
     const a = amt[m.k] || 0, saf = L.microSafety(m.k, a), over = (saf && saf.level === 'over') || (m.limit && a > (m.goal || 0));
     const pct = m.limit ? (a > 0 ? 1 : 0) : Math.min(1, a / (m.goal || 1));
     const col = over ? '#ff453a' : m.c;
     const S = slim ? null : standing(m.k);
     const est = estOf(S);   // no dose, no claim
-    const step = (m.steps || [])[0];
+    // The quick button logs what you usually take (logic/pk.ts usualDose) — 400 µg is one tap, not sixteen of +25.
+    const u = usualOf(m.k), step = u ? u.amount : (m.steps || [])[0];
+    const tk = slim ? null : doses.filter(x => x.k === m.k && L.dayKey(new Date(x.at)) === t).map(x => Date.parse(x.at)).sort((a, c) => c - a)[0];
     return `<div class="mic2${slim ? ' slim' : ''}" style="--mc:${col}">
         <button class="mic2-main" data-act="dose-sheet" data-k="${m.k}" aria-label="${esc(m.name)} — log a dose and see the estimate">
           <span class="ring">${slim ? `<span class="mic2-dot">${m.icon}</span>` : ringSvg(pct, col, 44, 5.5, m.limit ? (a ? fmtN(a) : '0') : over ? '!' : a >= m.goal ? '✓' : Math.round(pct * 100))}</span>
           <span class="tx"><span class="nm">${slim ? '' : m.icon + ' '}${esc(m.name)}</span>
             <span class="amt">${slim ? (last[m.k] ? 'last ' + fmtDay(last[m.k], { day: 'numeric', month: 'short' }) + ' · ' : '') + 'goal ' + fmtN(m.goal || 0) + ' ' + esc(m.unit)
-              : m.limit ? (a ? fmtN(a) + ' ' + esc(m.unit) + ' today' : 'none today') + ' · keep at ' + fmtN(m.goal || 0) : fmtN(a) + ' / ' + fmtN(m.goal) + ' ' + esc(m.unit)}</span>
+              : (m.limit ? (a ? fmtN(a) + ' ' + esc(m.unit) + ' today' : 'none today') + ' · keep at ' + fmtN(m.goal || 0) : fmtN(a) + ' / ' + fmtN(m.goal) + ' ' + esc(m.unit)) + (tk ? ' · <b class="tk">✓ ' + hm(tk) + '</b>' : '')}</span>
             ${est ? `<span class="est">${esc(est)}</span>` : ''}
             ${saf && !m.limit && a > 0 ? `<span class="warn ${saf.level}">⚠ ${esc(L.safetyLabel(saf))} · ${fmtN(saf.ul)} ${esc(saf.unit)}</span>` : ''}</span></button>
-        ${step ? `<button class="mic2-add" data-act="dose-quick" data-k="${m.k}" data-v="${step}" aria-label="Log ${fmtN(step)} ${esc(m.unit)} of ${esc(m.name)} now">+${fmtN(step)}</button>` : ''}</div>`;
+        ${step ? `<button class="mic2-add${u ? ' mine' : ''}" data-act="dose-quick" data-k="${m.k}" data-v="${step}" aria-label="Log ${u ? 'your usual ' : ''}${fmtN(step)} ${esc(m.unit)} of ${esc(m.name)} now">+${fmtN(step)}<small>${esc(m.unit)}</small></button>` : ''}</div>`;
   };
   // One list: what you take (full rows, most recent first), then everything else as slim rows.
   H += card(used.map(m => row(m, false)).join('') + (used.length && rest.length ? `<div class="mic2-sep">Rarely or never in the last 30 days</div>` : '') + rest.map(m => row(m, !!used.length)).join(''), 'tight mic-list');
@@ -1031,8 +1009,6 @@ const devActions = {
 };
 
 /* ══════════════ actions ══════════════ */
-const ROUND = Object.fromEntries(VIT.map(x => [x.f, x.round || 1]));
-const RANGE = { sleep: [0, 14], deep: [0, 6], prot: [0, 500], water: [0, 10], weight: [30, 250], steps: [0, 100000], cal: [0, 10000] };
 export const actions = {
   'body-profile'() { bodyProfileSheet(); },
   'tpl-area'(d) {
@@ -1093,16 +1069,6 @@ export const actions = {
     if (!(d.k in patch)) { toast('That value is outside the valid range'); return; }
     emit('profile.set', { fields: patch }); closeSheet(topSheet()); haptic(); toast('Saved');
   },
-  'vit-step'(d) {
-    const t = today(), v = view(), b = v.bio[t] || {};
-    let cur = b[d.f];
-    const x = VIT.find(q => q.f === d.f);
-    if (cur == null) cur = d.f === 'weight' ? (latestWeight(v) || 75) : (x && x.seed) || 0;
-    const r = ROUND[d.f] || 1, rg = RANGE[d.f] || [0, 1e6];
-    const nv = Math.max(rg[0], Math.min(rg[1], Math.round((cur + Number(d.d)) / r) * r));
-    haptic(); bioPatch(t, { [d.f]: Math.round(nv * 100) / 100 });
-  },
-  'vit-clear'(d) { bioPatch(today(), { [d.f]: null }); },
   'mind-tag'(d) { haptic(); emit('bio.mind', { day: today(), tag: d.tag, on: d.on === '1' }); },
   'ar-why'(d) { haptic(); arSheet(d.slug); },
   'str-why'(d) { haptic(); whySheet(d.slug, 'strength'); },

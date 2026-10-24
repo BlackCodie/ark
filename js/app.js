@@ -8,6 +8,7 @@ import { renderBodyArch, mountFigure, onTimeline, patchBodyArch, actions as body
 import { actions as moreActions, onHidden, onVisible } from './more.js';
 import { actions as reviewActions } from './review.js';
 import { actions as doseActions, onDoseInput } from './doses.js';
+import { actions as logActions, onLogInput } from './logui.js';
 import { actions as mindActions } from './mind.js';
 import { actions as routineActions } from './routines.js';
 import { actions as hormoneActions } from './hormones.js';
@@ -145,7 +146,7 @@ setInterval(tickElapsed, 1000);
 
 /* ── events ── */
 const ACT = {
-  ...viewActions, ...trainActions, ...sheetActions, ...bodyActions, ...moreActions, ...reviewActions, ...doseActions, ...mindActions, ...routineActions, ...hormoneActions, ...systemActions, ...dailyActions, ...habitActions, ...weatherActions, ...rebuildActions,
+  ...viewActions, ...trainActions, ...sheetActions, ...bodyActions, ...moreActions, ...reviewActions, ...doseActions, ...logActions, ...mindActions, ...routineActions, ...hormoneActions, ...systemActions, ...dailyActions, ...habitActions, ...weatherActions, ...rebuildActions,
   tab(d) { closeAllSheets(); haptic(); switchTab(d.tab, d.seg); },
   'sheet-close'() { closeSheet(topSheet()); },
 };
@@ -166,6 +167,7 @@ document.addEventListener('input', e => {
   else if (el.matches('[data-tl]')) onTimeline(el);
   else if (el.matches('[data-pl-input]')) onPlatesInput(el);
   else if (el.matches('[data-ds-amt]')) onDoseInput(el);
+  else if (el.matches('[data-ls-range],[data-ls-in]')) onLogInput(el);
   else if (onHabitInput(el, false) || onHabitSearch(el)) { /* handled */ }
   else if (onWhatIfInput(el) || onPhotoInput(el)) { /* handled */ }
 });

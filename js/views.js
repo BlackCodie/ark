@@ -366,30 +366,6 @@ export function renderHabits() {
   return H;
 }
 
-/* ══════════════ BODY ══════════════ */
-export function vitalsCard(day) {
-  const v = view(), b = v.bio[day] || {};
-  const row = (ic, c, name, sub, ctrl) => `<div class="vrow" style="--c:${c}"><span class="vi">${icon(ic, 18)}</span>
-    <div><div class="vn">${name}</div><div class="vs">${sub}</div></div><div>${ctrl}</div></div>`;
-  const step = (f, val, d, unit, fmt = x => fmt1(x)) => `<div class="stepper">
-    <button class="circle sm" data-act="bio-step" data-f="${f}" data-d="${-d}" aria-label="less">${icon('minus', 16)}</button>
-    <span class="val num" style="min-width:66px;font-size:1.1rem">${val == null ? '—' : fmt(val) + (unit ? '<small style="font-size:.7rem;color:var(--t3)"> ' + unit + '</small>' : '')}</span>
-    <button class="circle sm" data-act="bio-step" data-f="${f}" data-d="${d}" aria-label="more">${icon('plus', 16)}</button></div>`;
-  let H = row('moon', '#7d7aff', 'Sleep', 'Hours last night', step('sleep', b.sleep, 0.5, 'h'));
-  H += `<div class="vrow" style="--c:#ffd60a;grid-template-columns:34px 1fr"><span class="vi">${icon('bolt', 18)}</span>
-    <div><div class="vn">Energy <span class="vs">${b.energy ? b.energy + ' / 10' : ''}</span></div>
-    <div class="scale fill" style="margin-top:8px">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n =>
-      `<button class="${b.energy === n ? 'on' : ''}" data-act="bio-set" data-f="energy" data-v="${n}">${n}</button>`).join('')}</div></div></div>`;
-  H += `<div class="vrow" style="--c:#5ee6b5;grid-template-columns:34px 1fr"><span class="vi">🙂</span>
-    <div><div class="vn">Mood <span class="vs">${b.mood != null ? MOODS[b.mood][1] : ''}</span></div>
-    <div class="moods">${MOODS.map((m, i) => `<button class="${b.mood === i ? 'on' : ''}" data-act="bio-set" data-f="mood" data-v="${i}" aria-label="${m[1]}">${m[0]}</button>`).join('')}</div></div></div>`;
-  H += row('drop', '#40c8e0', 'Water', 'Litres', step('water', b.water, 0.25, 'L', x => x.toFixed(2).replace(/0$/, '')));
-  H += row('meat', '#ff7a7a', 'Protein', 'Grams', `<div class="row" style="gap:6px"><span class="num" style="font-weight:700;min-width:44px;text-align:right">${b.prot || 0}g</span>
-    <button class="btn sm btn-glass" data-act="bio-step" data-f="prot" data-d="25">+25</button>
-    <button class="btn sm btn-glass" data-act="bio-step" data-f="prot" data-d="50">+50</button></div>`);
-  return H;
-}
-
 /* ══════════════ GROW ══════════════ */
 const LEVELS = ['Untrained', 'Novice', 'Competent', 'Proficient', 'Advanced', 'Expert'];
 export function renderGrow() {

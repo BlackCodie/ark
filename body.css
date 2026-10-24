@@ -154,20 +154,6 @@ body[data-tab="body"] .edge-title{display:none}
 .hud .d.up{color:var(--green)} .hud .d.down{color:#ff6b5a} .hud .d.flat{color:var(--t4)}
 .hud .b{height:4px;border-radius:2px;background:var(--fill-2);margin-top:7px;overflow:hidden}
 .hud .b i{display:block;height:100%;background:var(--hc)}
-.vin{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:6px 10px;align-items:center;padding:9px 0}
-.vin+.vin{border-top:.5px solid var(--sep)}
-.vin .vi{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;color:var(--c);background:color-mix(in srgb,var(--c) 18%,transparent);grid-row:1;align-self:center}
-.vin .top{grid-column:2;grid-row:1;display:flex;flex-direction:column;align-items:flex-start;gap:1px;min-width:0}
-.vin .nm{font-weight:600;font-size:.92rem}
-.vin .val{font-weight:700;font-family:var(--round);font-size:.86rem;white-space:nowrap}
-.vin .val small{font-size:.68rem;color:var(--t3);font-weight:600}
-.vin .val.none{color:var(--t4);font-weight:500}
-.vin .ctl{grid-column:3;grid-row:1;display:flex;gap:5px;justify-content:flex-end}
-.vin .ctl button{height:32px;min-width:42px;padding:0 8px;border-radius:10px;background:var(--fill-2);font-size:.8rem;font-weight:700;color:var(--t2);font-family:var(--round)}
-.vin .ctl button.x{min-width:30px;padding:0;color:var(--t4)}
-.vin .bar{height:4px;grid-column:2/4;grid-row:2}
-.vin .scale{grid-column:1/4;grid-row:2}
-.vin .scale.fill button{height:30px}
 .strip7{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
 .strip7>div{text-align:center;font-size:.62rem;font-weight:700;color:var(--t4)}
 .strip7>div b{display:block;border-radius:10px;padding:7px 0;margin-bottom:3px;font-size:.78rem;background:var(--fill-1);color:var(--t3);font-family:var(--round)}
@@ -607,3 +593,101 @@ html[data-theme="light"] .ba-sec:not(.open) .ba-hd .ba-ic svg{color:color-mix(in
   .ba-sec.w3a:not(.open) .ba-hd{flex-direction:row;align-items:center;gap:14px;padding-right:38px}
   .ba-sec.w3a:not(.open) .ba-hd>svg:last-child{top:50%;transform:translateY(-50%)}
 }
+
+/* ══ Logging (2026-10-24: "fancier, modern, easier") — js/logui.js and the dose sheet ══
+   Log today rows are glass cards of their own; tap one for its sheet: a big number you can type, − / +, a slider,
+   picks from your own days, Save. The check-in uses meters and mood faces. Supplements log your usual dose. */
+.lg-list{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.lg{position:relative;display:flex;align-items:center;gap:8px;padding:11px 10px 15px 11px;border-radius:20px;
+  background:linear-gradient(100deg,color-mix(in srgb,var(--c) 11%,transparent),transparent 58%),var(--fill-1);
+  box-shadow:inset 0 0 0 .5px color-mix(in srgb,var(--c) 20%,rgba(255,255,255,.06)),inset 0 1px 0 rgba(255,255,255,.05)}
+.lg-main{flex:1;min-width:0;display:flex;align-items:center;gap:12px;text-align:left;color:inherit;padding:0;background:none}
+.lg-main:active{opacity:.72}
+.lg-ic{flex:none;width:40px;height:40px;border-radius:13px;display:grid;place-items:center;color:var(--c);
+  background:color-mix(in srgb,var(--c) 18%,transparent);box-shadow:0 0 18px -7px var(--c)}
+.lg-tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.lg-n{font-weight:650;font-size:.95rem}
+.lg-h{font-size:.74rem;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lg.done .lg-h{color:var(--c);font-weight:650}
+.lg-v{flex:none;font-size:1.32rem;font-weight:800;letter-spacing:-.02em;white-space:nowrap}
+.lg-v small{font-size:.7rem;color:var(--t3);font-weight:650;margin-left:2px;letter-spacing:0}
+.lg-v i{font-style:normal;color:var(--t4);font-weight:500}
+.lg-chev{flex:none;display:grid;color:var(--t4);margin-right:2px}
+.lg-add{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:56px;height:46px;padding:0 8px;border-radius:15px;
+  color:var(--c);font-family:var(--round);font-weight:800;font-size:.92rem;line-height:1;
+  background:color-mix(in srgb,var(--c) 16%,transparent);box-shadow:inset 0 0 0 .5px color-mix(in srgb,var(--c) 42%,transparent)}
+.lg-add small{font-size:.6rem;font-weight:700;opacity:.75;margin-top:3px}
+.lg-add:active{transform:scale(.92)}
+.lg-bar{position:absolute;left:63px;right:12px;bottom:7px;height:3px;border-radius:3px;background:var(--fill-2);overflow:hidden}
+.lg-bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,color-mix(in srgb,var(--c) 50%,transparent),var(--c));
+  box-shadow:0 0 8px var(--c);transition:width .5s var(--ease-spring,ease)}
+
+.ls-hero{position:relative;overflow:hidden;text-align:center;padding:18px 12px 16px;border-radius:26px;margin-bottom:14px;
+  background:radial-gradient(90% 120% at 50% 0%,color-mix(in srgb,var(--c) 26%,transparent),transparent 70%),var(--fill-1);
+  box-shadow:inset 0 0 0 .5px color-mix(in srgb,var(--c) 32%,rgba(255,255,255,.06)),inset 0 1px 0 rgba(255,255,255,.07)}
+.ls-ic{display:inline-grid;place-items:center;width:44px;height:44px;border-radius:15px;color:var(--c);
+  background:color-mix(in srgb,var(--c) 20%,transparent);box-shadow:0 0 24px -6px var(--c)}
+.ls-row{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:10px}
+.ls-nudge{flex:none;width:52px;height:52px;border-radius:50%;display:grid;place-items:center;color:var(--c);
+  background:color-mix(in srgb,var(--c) 15%,transparent);box-shadow:inset 0 0 0 .5px color-mix(in srgb,var(--c) 38%,transparent)}
+.ls-nudge:active{transform:scale(.88)}
+.ls-val{flex:0 1 auto;min-width:0;display:flex;align-items:baseline;justify-content:center;gap:3px}
+.ls-in{min-width:0;max-width:6.2ch;border:0;border-radius:12px;background:transparent;color:var(--t1);font-size:2.9rem;font-weight:800;line-height:1.1;
+  text-align:center;padding:0;outline:none;letter-spacing:-.03em;caret-color:var(--c);-webkit-appearance:none;appearance:none}
+.ls-in:focus{background:color-mix(in srgb,var(--c) 10%,transparent)}
+.ls-val .u{font-size:1rem;font-weight:700;color:var(--t3)}
+.ls-note{margin-top:10px;font-size:.8rem;line-height:1.45;color:var(--t3)}
+.ls-note b{color:var(--t2);font-weight:650}
+.ls-range{-webkit-appearance:none;appearance:none;display:block;width:100%;height:36px;margin:2px 0 0;background:transparent;--p:50%}
+.ls-range:focus{outline:none}
+.ls-range::-webkit-slider-runnable-track{height:10px;border-radius:10px;
+  background:linear-gradient(90deg,color-mix(in srgb,var(--c) 60%,transparent),var(--c) var(--p),var(--fill-2) var(--p))}
+.ls-range::-webkit-slider-thumb{-webkit-appearance:none;width:30px;height:30px;margin-top:-10px;border-radius:50%;background:#fff;
+  box-shadow:0 0 0 5px color-mix(in srgb,var(--c) 40%,transparent),0 4px 14px rgba(0,0,0,.45)}
+.ls-range::-moz-range-track{height:10px;border-radius:10px;background:var(--fill-2)}
+.ls-range::-moz-range-progress{height:10px;border-radius:10px;background:var(--c)}
+.ls-range::-moz-range-thumb{width:30px;height:30px;border:0;border-radius:50%;background:#fff;box-shadow:0 0 0 5px color-mix(in srgb,var(--c) 40%,transparent)}
+.ls-scale{display:flex;justify-content:space-between;font-size:.7rem;color:var(--t4);margin:0 4px 14px}
+.ls-picks{margin-bottom:16px}
+.ls-clear{display:block;margin:10px auto 0;padding:8px 12px;color:var(--t3);font-size:.85rem;font-weight:600;background:none}
+.ls-week{margin-top:20px}
+.ls-bars{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;align-items:end;height:100px;margin-top:10px}
+.ls-bars span{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px;height:100%;font-size:.66rem;font-weight:600;color:var(--t4)}
+.ls-bars b{font-size:.6rem;color:var(--t3);font-weight:700;white-space:nowrap}
+.ls-bars i{width:100%;max-width:30px;border-radius:8px;background:color-mix(in srgb,var(--c) 32%,transparent)}
+.ls-bars span.t{color:var(--t1)}
+.ls-bars span.t i{background:linear-gradient(180deg,var(--c),color-mix(in srgb,var(--c) 60%,transparent));box-shadow:0 0 14px -3px var(--c)}
+
+.ds-cap{font-size:.7rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--c)}
+.ds-hero .ls-row{margin-top:8px}
+.ds-picks{margin-bottom:4px}
+
+.mtr-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:16px 0 8px}
+.mtr-v{font-size:.8rem;color:var(--t2);font-weight:650;white-space:nowrap}
+.mtr-v b{font-size:1.1rem;color:var(--c);font-weight:800}
+.mtr-v small{color:var(--t3);font-weight:600;margin-right:3px}
+.mtr{display:flex;gap:4px;height:42px;padding:4px;border-radius:15px;background:var(--fill-1);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.06)}
+.mtr button{position:relative;flex:1;min-width:0;border-radius:10px;overflow:hidden;font-family:var(--round);font-size:.78rem;font-weight:800;color:var(--t3);background:none;transition:transform .15s}
+.mtr button::before{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--c);opacity:0;transition:opacity .25s}
+.mtr button.f{color:var(--t1)}
+.mtr button.f::before{opacity:var(--o)}
+.mtr button.on{color:#0b0d10;box-shadow:0 0 16px -3px var(--c)}
+.mtr button.on::before{opacity:1}
+.mtr button span{position:relative}
+.mtr button:active{transform:scale(.88)}
+.mood2{display:flex;gap:6px}
+.mood2 button{flex:1;min-width:0;height:54px;border-radius:17px;display:grid;place-items:center;background:var(--fill-1);
+  transition:transform .25s var(--ease-spring,ease),background .2s,box-shadow .2s}
+.mood2 .e{font-size:1.45rem;filter:grayscale(1) opacity(.5);transition:filter .2s,transform .3s var(--ease-spring,ease)}
+.mood2 button.on{background:color-mix(in srgb,var(--c) 24%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 55%,transparent),0 8px 20px -10px var(--c)}
+.mood2 button.on .e{filter:none;transform:scale(1.2)}
+.mood2 button:active{transform:scale(.92)}
+.mood2-cap{text-align:center;font-size:.74rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--t2);margin-top:8px}
+
+.mic2 .est{white-space:normal;overflow:visible;line-height:1.35}
+.mic2 .tk{color:var(--t2);font-weight:750}
+.mic2-add{display:flex;flex-direction:column;align-items:center;justify-content:center;height:42px;line-height:1}
+.mic2-add small{font-size:.56rem;font-weight:700;color:var(--t3);margin-top:3px}
+.mic2-add.mine{color:var(--mc);background:color-mix(in srgb,var(--mc) 15%,transparent);box-shadow:inset 0 0 0 .5px color-mix(in srgb,var(--mc) 42%,transparent)}
+.mic2-add.mine small{color:inherit;opacity:.75}
+html[data-theme="light"] .mtr button.f{color:#0b0d10}
