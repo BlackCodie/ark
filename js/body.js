@@ -347,7 +347,7 @@ function vitalsInputs(v, t) {
 function secVitals(v) {
   const t = today();
   let H = `<div class="ba-h"><h2 style="font-size:1.05rem">Survivor vitals</h2><span class="k">vs yesterday</span></div>` + hud(v, t);
-  H += `<div class="ba-h"><h2 style="font-size:1.05rem">Log today</h2><span class="k">${fmtDay(t, { weekday: 'long' })}</span></div>` + card(vitalsInputs(v, t), 'tight vin-grid');
+  H += `<div class="ba-h"><h2 style="font-size:1.05rem">Log today</h2><span class="k">${fmtDay(t, { weekday: 'long' })}</span></div>` + card(vitalsInputs(v, t), 'tight');
   return H;
 }
 
@@ -479,7 +479,7 @@ export function renderBodyArch() {
     return H + card(`<div class="empty">Body Arch fills in after the first sync with ARK on your PC.</div>`);
   }
   lastSecs = sections(v);
-  return H + Object.values(lastSecs).join('');
+  return H + '<div class="ba-secs">' + Object.values(lastSecs).join('') + '</div>';
 }
 
 const SEC_DEFS = [
@@ -519,26 +519,31 @@ const SUMMARY = {
   'ba-endo': v => { const E = v.endo; if (!E) return 'not estimated yet'; const a = (E.axes || []).find(x => x.k === 'testosterone');
     return Math.round(E.confidence * 100) + ' % confidence' + (a ? ' · testosterone ' + a.score : ''); },
 };
-/* iPad and wider (2026-10-24): a section's blocks — each sub-header with its card — flow into two balanced columns
-   ("cols"), stay full width with more columns inside ("full"), or put the figure beside its stats ("split"). On an
-   iPhone it is the same single column as before; the CSS only switches on from 700 px. */
-const BA_LAYOUT = { 'ba-scan': 'split', 'ba-vit': 'full', 'ba-mic': 'full', 'ba-endo': 'full' };
-function baBody(id, html) {
-  const mode = BA_LAYOUT[id] || 'cols';
-  if (mode !== 'cols') return `<div class="ba-bd ba-${mode}">${html}</div>`;
-  const parts = html.split('<div class="ba-h"'), lead = parts.shift();
-  return '<div class="ba-bd ba-cols">' + (lead.trim() ? '<div class="ba-grp">' + lead + '</div>' : '')
-    + parts.map(p => '<div class="ba-grp"><div class="ba-h"' + p + '</div>').join('') + '</div>';
-}
+/* Section cards (2026-10-24): each folded section is a card with its own colour and icon; the summary shows one part
+   per line. Open, the header is the plain row it always was. */
+const SEC_LOOK = { 'ba-scan': ['hex', '#40c8e0'], 'ba-vit': ['heart', '#30d158'], 'ba-sys': ['chart', '#64d2ff'], 'ba-dev': ['dumbbell', '#ff9f0a'],
+  'ba-mind': ['brain', '#bf5af2'], 'ba-mic': ['pill', '#ffd60a'], 'ba-endo': ['bolt', '#ff375f'] };
 function sections(v) {
-  const out = {};
-  SEC_DEFS.forEach(([id, title, k, fn]) => {
-    const on = isOpen(id);
+  const out = {}, open = SEC_DEFS.map(d => isOpen(d[0])), fill = {};
+  // A card left alone at the end of a row stretches to fill it — two cards a row on a phone (w2), three on an iPad
+  // (w3a: one left over, w3b: two). Open sections always take the full width.
+  for (let i = 0; i < SEC_DEFS.length;) {
+    if (open[i]) { i++; continue; }
+    let j = i; while (j < SEC_DEFS.length && !open[j]) j++;
+    const run = SEC_DEFS.slice(i, j).map(d => d[0]), r3 = run.length % 3;
+    if (run.length % 2) fill[run[run.length - 1]] = ' w2';
+    run.slice(run.length - r3).forEach(id => { fill[id] = (fill[id] || '') + (r3 === 1 ? ' w3a' : ' w3b'); });
+    i = j;
+  }
+  SEC_DEFS.forEach(([id, title, k, fn], n) => {
+    const on = open[n];
     let sum = ''; try { sum = SUMMARY[id] ? SUMMARY[id](v) : k; } catch (e) { sum = k; }
-    const hd = `<button class="ba-hd" data-act="ba-toggle" data-sec="${id}" aria-expanded="${on}">
-      <span class="t"><h2>${title}</h2><span class="s">${esc(on ? k : sum)}</span></span>${icon('chev', 18)}</button>`;
-    out[id] = `<section class="ba-sec${on ? ' open' : ''}" id="${id}">${hd}
-      ${on ? baBody(id, fn(v)) : ''}</section>`;
+    const look = SEC_LOOK[id] || ['hex', '#40c8e0'];
+    const sub = on ? esc(k) : String(sum || '').split(' · ').map(x => '<i>' + esc(x) + '</i>').join('');
+    const hd = `<button class="ba-hd" data-act="ba-toggle" data-sec="${id}" aria-expanded="${on}" style="--ac:${look[1]}">
+      <span class="ba-ic">${icon(look[0], 19)}</span><span class="t"><h2>${title}</h2><span class="s">${sub}</span></span>${icon('chev', 18)}</button>`;
+    out[id] = `<section class="ba-sec${on ? ' open' : fill[id] || ''}" id="${id}">${hd}
+      ${on ? `<div class="ba-bd">${fn(v)}</div>` : ''}</section>`;
   });
   return out;
 }

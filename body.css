@@ -566,78 +566,44 @@ html[data-theme="light"] .br-cc{fill:rgba(40,44,90,.05);stroke:rgba(40,44,90,.18
 .fibre{display:flex;gap:2px;height:10px;border-radius:5px;overflow:hidden}.fibre i{display:block;height:100%}
 .sorebar{height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden;margin:2px 0 8px}.sorebar i{display:block;height:100%;border-radius:3px}
 
-/* ══ Body Arch · horizontal HUD layout (2026-10-23, phone first) ══
-   Bruno wanted Body Arch's cards to fit more across the screen and look like the scanner: Log today and the
-   supplements become two tiles a row (the 1–10 scales keep the full width), the body-age markers sit in two
-   columns, and every Body Arch card gets the HUD corner brackets the PC has. */
-.card.vin-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:10px}
-.vin-grid .vin{grid-template-columns:28px minmax(0,1fr);gap:7px 8px;padding:10px;border-radius:14px;background:var(--fill-1);align-content:start;min-width:0}
-.vin-grid .vin+.vin{border-top:0}
-.vin-grid .vin .vi{width:28px;height:28px;border-radius:8px}
-.vin-grid .vin .nm{font-size:.84rem}
-.vin-grid .vin .bar{grid-column:1/3;grid-row:2}
-.vin-grid .vin .ctl{grid-column:1/3;grid-row:auto;justify-content:stretch;gap:4px;min-width:0}
-.vin-grid .vin .ctl button{flex:1 1 0;min-width:0;height:30px;padding:0 2px;font-size:.72rem;border-radius:9px;white-space:nowrap}
-.vin-grid .vin .ctl button.x{flex:0 0 24px}
-.vin-grid .vin:has(.scale){grid-column:1/-1}
-.vin-grid .vin .scale{grid-column:1/3}
-
-.mic-list.card{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:10px}
-.mic-list .mic2{flex-direction:column;align-items:stretch;gap:8px;padding:10px;border-radius:14px;background:var(--fill-1);min-width:0}
-.mic-list .mic2+.mic2{border-top:0}
-.mic-list .mic2-main{grid-template-columns:36px minmax(0,1fr);gap:8px;align-items:start}
-.mic-list .mic2 .ring svg{width:36px;height:36px}
-.mic-list .mic2 .nm{font-size:.84rem}
-.mic-list .mic2 .amt{font-size:.7rem}
-.mic-list .mic2 .est{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-size:.68rem}
-.mic-list .mic2 .warn{font-size:.58rem}
-.mic-list .mic2-add{height:30px;min-width:0;width:100%}
-.mic-list .mic2-sep{grid-column:1/-1;border-top:0;padding:8px 2px 0}
-.mic-list .mic2.slim{padding:8px}
-.mic-list .mic2.slim .mic2-main{grid-template-columns:26px minmax(0,1fr)}
-.mic-list .mic2-dot{width:26px;height:26px;font-size:.8rem}
-.mic-list .mic2.slim .mic2-add{height:26px}
-
-.bage-m{display:grid !important;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
-.bage-m>div{flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:4px;padding:8px 10px;border-top:0 !important;border-radius:12px;background:var(--fill-1);font-size:.82rem}
-.bage-m>div b{font-size:.95rem;align-self:flex-start;margin:0;text-align:left}
-
-/* HUD frame: corner brackets inside every Body Arch card (the rim keeps ::before) */
-.ba-sec .card.frost::after,.ba-sec .gc.frost::after{content:"";position:absolute;inset:6px;pointer-events:none;z-index:2;--hudc:rgba(64,200,224,.5);
-  background:linear-gradient(var(--hudc),var(--hudc)) top left/12px 1.5px no-repeat,linear-gradient(var(--hudc),var(--hudc)) top left/1.5px 12px no-repeat,
-    linear-gradient(var(--hudc),var(--hudc)) bottom right/12px 1.5px no-repeat,linear-gradient(var(--hudc),var(--hudc)) bottom right/1.5px 12px no-repeat}
-html[data-theme="light"] .ba-sec .card.frost::after,html[data-theme="light"] .ba-sec .gc.frost::after{--hudc:rgba(10,132,160,.45)}
-
-/* ══ Body Arch on iPad and wider (2026-10-24) ══
-   The app was a 620 px column in the middle of an iPad. Body Arch now uses the width: the page grows to 1,240 px,
-   the scanner figure sits beside its stats, Systems / Develop / Mind flow their blocks into two balanced columns
-   (each header stays with its card), and the full-width blocks get more columns. iPhones are unchanged. */
-@media (min-width:700px){
-  body[data-tab="body"] .view{max-width:min(1240px,100%)}
-  .ba-bd.ba-cols{column-count:2;column-gap:16px}
-  .ba-bd.ba-cols>.ba-grp{break-inside:avoid;display:block;padding-bottom:6px}
-  .ba-bd.ba-cols>.ba-grp>.ba-h:first-child{margin-top:4px}
-  .ba-bd.ba-split{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px;align-items:start}
-  /* the four scanner stats stand as one column beside the figure, filling its height */
-  .ba-bd.ba-split{align-items:stretch}
-  .ba-bd.ba-split>.stat4{margin-top:0;grid-template-columns:1fr;grid-auto-rows:1fr}
-  .ba-bd.ba-split>.stat4>div{display:flex;flex-direction:column;justify-content:center;padding:16px 18px}
-  .ba-bd.ba-split>.stat4 .v{font-size:2.1rem}
-  .ba-full .hud{grid-template-columns:repeat(6,minmax(0,1fr))}
-  .card.vin-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
-  .mic-list.card{grid-template-columns:repeat(3,minmax(0,1fr))}
-  .ba-full .der2{grid-template-columns:repeat(3,minmax(0,1fr))}
-}
-/* the hormone list goes two-wide only where a row still has room for its name and curve */
-@media (min-width:900px){ .ba-full .hlist{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px} }
-@media (min-width:1100px){
-  .card.vin-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
-  .mic-list.card{grid-template-columns:repeat(4,minmax(0,1fr))}
-  .ba-full .der2{grid-template-columns:repeat(6,minmax(0,1fr))}
-}
-
-/* every screen: overlay chips wrap instead of running off the edge ("T…" on an iPhone, "R…" beside the iPad figure);
-   strength-per-kg names wrap instead of being cut */
-.modes{flex-wrap:wrap;overflow-x:visible;margin:10px 0 0;padding:0}
+/* long exercise and hormone names wrap instead of being cut ("Seated Overhead Press (Dumbbel…") */
 .rel-r .n{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.3}
 .hlist .tt{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.25}
+
+/* ══ Body Arch section cards (2026-10-24) ══
+   The folded sections were six full-width bars stacked down the page. They are now cards two to a row — each with
+   its own colour and icon, the title and the live summary one per line — and an open section spans the full width
+   with its content exactly as before. */
+.ba-secs{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;align-items:stretch}
+.ba-secs>.ba-sec{margin-bottom:0;min-width:0;grid-column:span 3}
+.ba-secs>.ba-sec.w2,.ba-secs>.ba-sec.open{grid-column:1/-1}
+.ba-hd .ba-ic{display:none}
+.ba-sec:not(.open) .ba-hd{position:relative;overflow:hidden;height:100%;flex-direction:column;align-items:flex-start;gap:10px;padding:14px 14px 15px;border-radius:22px;
+  background:radial-gradient(120% 95% at 0% 0%,color-mix(in srgb,var(--ac) 24%,transparent),transparent 62%),
+    linear-gradient(165deg,var(--fill-2),var(--fill-1));
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ac) 26%,rgba(255,255,255,.05)),inset 0 1px 0 rgba(255,255,255,.1),0 10px 26px -18px rgba(0,0,0,.9)}
+.ba-sec:not(.open) .ba-hd:active{transform:scale(.97);transition:transform .12s}
+.ba-sec:not(.open) .ba-hd .ba-ic{display:grid;place-items:center;flex:none;width:36px;height:36px;border-radius:12px;
+  background:color-mix(in srgb,var(--ac) 18%,transparent);box-shadow:0 0 18px -6px var(--ac)}
+.ba-sec:not(.open) .ba-hd .ba-ic svg{color:var(--ac)}
+html[data-theme="light"] .ba-sec:not(.open) .ba-hd .ba-ic svg{color:color-mix(in srgb,var(--ac) 72%,#000)}
+.ba-sec:not(.open) .ba-hd .t{gap:5px;width:100%}
+.ba-sec:not(.open) .ba-hd h2{font-size:1rem;letter-spacing:-.01em;line-height:1.15}
+.ba-sec:not(.open) .ba-hd .s{white-space:normal;overflow:visible;font-size:.74rem;line-height:1.4;color:var(--t2)}
+.ba-sec:not(.open) .ba-hd .s i{display:block;font-style:normal}
+.ba-sec:not(.open) .ba-hd .s i+i{color:var(--t3)}
+.ba-sec:not(.open) .ba-hd>svg:last-child{position:absolute;top:16px;right:12px;color:color-mix(in srgb,var(--ac) 70%,var(--t3))}
+.ba-sec:not(.open) .ba-hd::after{content:"";position:absolute;left:14px;right:14px;bottom:0;height:2px;border-radius:2px;
+  background:linear-gradient(90deg,var(--ac),transparent);opacity:.55}
+/* a card that fills its row lies flat: icon beside the text */
+@media (max-width:699px){
+  .ba-sec.w2:not(.open) .ba-hd{flex-direction:row;align-items:center;gap:14px;padding-right:38px}
+  .ba-sec.w2:not(.open) .ba-hd>svg:last-child{top:50%;transform:translateY(-50%)}
+}
+@media (min-width:700px){
+  .ba-secs>.ba-sec,.ba-secs>.ba-sec.w2{grid-column:span 2}
+  .ba-secs>.ba-sec.w3b{grid-column:span 3}
+  .ba-secs>.ba-sec.w3a,.ba-secs>.ba-sec.open{grid-column:1/-1}
+  .ba-sec.w3a:not(.open) .ba-hd{flex-direction:row;align-items:center;gap:14px;padding-right:38px}
+  .ba-sec.w3a:not(.open) .ba-hd>svg:last-child{top:50%;transform:translateY(-50%)}
+}

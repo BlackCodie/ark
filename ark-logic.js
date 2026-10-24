@@ -3236,7 +3236,7 @@ function relativeStrength(sessions, weights, today, opts = {}) {
     if (!lifts.length)
         return { ...base, weight, why: 'Needs a lift done 3+ times in the last ' + weeks + ' weeks, at least once in the last 4.' };
     const med = (xs) => { const s = xs.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
-    const sPct = med(lifts.map(l => l.pct)), index = Math.round(med(lifts.map(l => l.relPct)) * 10) / 10;
+    const sPct = Math.round(med(lifts.map(l => l.pct)) * 10) / 10, index = Math.round(med(lifts.map(l => l.relPct)) * 10) / 10;
     const kg = (x) => (x > 0 ? '+' : '') + x + ' kg';
     let verdict;
     if (weight.pct > 1) {
