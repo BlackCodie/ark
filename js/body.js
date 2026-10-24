@@ -351,6 +351,22 @@ function secVitals(v) {
   return H;
 }
 
+/* What a supplement row says about it now — the store for banked nutrients, else the live blood estimate. */
+function estOf(S) {
+  return S ? (S.store && S.store.v != null ? S.store.label + ' ' + S.store.v + S.store.unit.replace(/^%/, '%') : S.store && S.store.text ? S.store.label.replace(' (estimate)', '') + ': ' + S.store.text : S.recent || S.sp.where === 'gut' ? S.line : '') : '';
+}
+/* Real time: the estimates move with the clock, so they refresh every minute while Body Arch or a dose sheet is on
+   screen (they were worked out once when the page drew and then sat still). Only the text changes — no redraw. */
+setInterval(() => {
+  if (document.hidden) return;
+  if (document.body.dataset.tab === 'body') document.querySelectorAll('.mic2-main[data-k]').forEach(b => {
+    const el = b.querySelector('.est'); if (!el) return;
+    const t = estOf(standing(b.dataset.k)); if (t && el.textContent !== t) el.textContent = t;
+  });
+  const s = topSheet(), a = document.activeElement;
+  if (s && s.id === 'dose' && !(a && /INPUT|TEXTAREA/.test(a.tagName) && s.el.contains(a))) s.refresh();
+}, 60e3);
+
 /* ── micros: every dose has a time; the kinetics model says what is in you now ── */
 function secMicros(v) {
   const t = today(), D = v.bioDefs;
@@ -373,7 +389,7 @@ function secMicros(v) {
     const pct = m.limit ? (a > 0 ? 1 : 0) : Math.min(1, a / (m.goal || 1));
     const col = over ? '#ff453a' : m.c;
     const S = slim ? null : standing(m.k);
-    const est = S ? (S.store && S.store.v != null ? S.store.label + ' ' + S.store.v + S.store.unit.replace(/^%/, '%') : S.store && S.store.text ? S.store.label.replace(' (estimate)', '') + ': ' + S.store.text : S.recent || S.sp.where === 'gut' ? S.line : '') : '';   // no dose, no claim
+    const est = estOf(S);   // no dose, no claim
     const step = (m.steps || [])[0];
     return `<div class="mic2${slim ? ' slim' : ''}" style="--mc:${col}">
         <button class="mic2-main" data-act="dose-sheet" data-k="${m.k}" aria-label="${esc(m.name)} — log a dose and see the estimate">
@@ -503,6 +519,17 @@ const SUMMARY = {
   'ba-endo': v => { const E = v.endo; if (!E) return 'not estimated yet'; const a = (E.axes || []).find(x => x.k === 'testosterone');
     return Math.round(E.confidence * 100) + ' % confidence' + (a ? ' · testosterone ' + a.score : ''); },
 };
+/* iPad and wider (2026-10-24): a section's blocks — each sub-header with its card — flow into two balanced columns
+   ("cols"), stay full width with more columns inside ("full"), or put the figure beside its stats ("split"). On an
+   iPhone it is the same single column as before; the CSS only switches on from 700 px. */
+const BA_LAYOUT = { 'ba-scan': 'split', 'ba-vit': 'full', 'ba-mic': 'full', 'ba-endo': 'full' };
+function baBody(id, html) {
+  const mode = BA_LAYOUT[id] || 'cols';
+  if (mode !== 'cols') return `<div class="ba-bd ba-${mode}">${html}</div>`;
+  const parts = html.split('<div class="ba-h"'), lead = parts.shift();
+  return '<div class="ba-bd ba-cols">' + (lead.trim() ? '<div class="ba-grp">' + lead + '</div>' : '')
+    + parts.map(p => '<div class="ba-grp"><div class="ba-h"' + p + '</div>').join('') + '</div>';
+}
 function sections(v) {
   const out = {};
   SEC_DEFS.forEach(([id, title, k, fn]) => {
@@ -511,7 +538,7 @@ function sections(v) {
     const hd = `<button class="ba-hd" data-act="ba-toggle" data-sec="${id}" aria-expanded="${on}">
       <span class="t"><h2>${title}</h2><span class="s">${esc(on ? k : sum)}</span></span>${icon('chev', 18)}</button>`;
     out[id] = `<section class="ba-sec${on ? ' open' : ''}" id="${id}">${hd}
-      ${on ? `<div class="ba-bd">${fn(v)}</div>` : ''}</section>`;
+      ${on ? baBody(id, fn(v)) : ''}</section>`;
   });
   return out;
 }

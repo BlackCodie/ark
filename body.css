@@ -607,3 +607,37 @@ html[data-theme="light"] .br-cc{fill:rgba(40,44,90,.05);stroke:rgba(40,44,90,.18
   background:linear-gradient(var(--hudc),var(--hudc)) top left/12px 1.5px no-repeat,linear-gradient(var(--hudc),var(--hudc)) top left/1.5px 12px no-repeat,
     linear-gradient(var(--hudc),var(--hudc)) bottom right/12px 1.5px no-repeat,linear-gradient(var(--hudc),var(--hudc)) bottom right/1.5px 12px no-repeat}
 html[data-theme="light"] .ba-sec .card.frost::after,html[data-theme="light"] .ba-sec .gc.frost::after{--hudc:rgba(10,132,160,.45)}
+
+/* ══ Body Arch on iPad and wider (2026-10-24) ══
+   The app was a 620 px column in the middle of an iPad. Body Arch now uses the width: the page grows to 1,240 px,
+   the scanner figure sits beside its stats, Systems / Develop / Mind flow their blocks into two balanced columns
+   (each header stays with its card), and the full-width blocks get more columns. iPhones are unchanged. */
+@media (min-width:700px){
+  body[data-tab="body"] .view{max-width:min(1240px,100%)}
+  .ba-bd.ba-cols{column-count:2;column-gap:16px}
+  .ba-bd.ba-cols>.ba-grp{break-inside:avoid;display:block;padding-bottom:6px}
+  .ba-bd.ba-cols>.ba-grp>.ba-h:first-child{margin-top:4px}
+  .ba-bd.ba-split{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px;align-items:start}
+  /* the four scanner stats stand as one column beside the figure, filling its height */
+  .ba-bd.ba-split{align-items:stretch}
+  .ba-bd.ba-split>.stat4{margin-top:0;grid-template-columns:1fr;grid-auto-rows:1fr}
+  .ba-bd.ba-split>.stat4>div{display:flex;flex-direction:column;justify-content:center;padding:16px 18px}
+  .ba-bd.ba-split>.stat4 .v{font-size:2.1rem}
+  .ba-full .hud{grid-template-columns:repeat(6,minmax(0,1fr))}
+  .card.vin-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .mic-list.card{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .ba-full .der2{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+/* the hormone list goes two-wide only where a row still has room for its name and curve */
+@media (min-width:900px){ .ba-full .hlist{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px} }
+@media (min-width:1100px){
+  .card.vin-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .mic-list.card{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .ba-full .der2{grid-template-columns:repeat(6,minmax(0,1fr))}
+}
+
+/* every screen: overlay chips wrap instead of running off the edge ("T…" on an iPhone, "R…" beside the iPad figure);
+   strength-per-kg names wrap instead of being cut */
+.modes{flex-wrap:wrap;overflow-x:visible;margin:10px 0 0;padding:0}
+.rel-r .n{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.3}
+.hlist .tt{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.25}

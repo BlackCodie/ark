@@ -802,6 +802,7 @@ const ROWS = [
     ['Hammer Curl (Dumbbell)', 'dumbbell', 'hammer', undefined, ['Hammer Curl', 'Hammer Curls']],
     ['Hammer Curl (Cable)', 'cable', 'hammer'],
     ['Preacher Curl (EZ Bar)', 'ez', 'curl', { biceps_t: 0.7 }],
+    ['Preacher Curl (Barbell)', 'barbell', 'curl', { biceps_t: 0.7 }, ['Barbell Preacher Curl']],
     ['Preacher Curl (Dumbbell)', 'dumbbell', 'curl', { biceps_t: 0.7 }],
     ['Preacher Curl (Machine)', 'machine', 'curl', { biceps_t: 0.6 }, ['Preacher Curl', 'Machine Preacher Curl']],
     ['Incline Curl (Dumbbell)', 'dumbbell', 'curl', { biceps_t: 0.75 }, ['Incline Dumbbell Curl']],
@@ -4855,6 +4856,7 @@ function groupVolume(rows, ctx = {}) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PK = void 0;
 exports.pkFor = pkFor;
+exports.doseEvents = doseEvents;
 exports.pkNow = pkNow;
 exports.amountAt = amountAt;
 exports.cutoffBefore = cutoffBefore;
@@ -4898,12 +4900,17 @@ exports.PK = {
         note: 'Plasma holds ~26 mg; absorption falls with dose (≈85 % of 100 mg, ≈50 % of 1 g) and the kidneys clear the excess within hours — it is not stored.',
         timing: '~50 mg with collagen 30–60 min before tendon work supports collagen synthesis. Split large doses.',
         src: 'Levine et al. 1996 (PNAS) vitamin C PK; Shaw et al. 2017 (AJCN)' },
-    vitd: { name: 'Vitamin D3', unit: 'IU', toMass: 0.025, mass: 'µg', F: () => 0.7, tAbs: 4, tElim: 24, plasmaShare: 1, baseline: null, where: 'blood', storeTau: 22,
-        note: 'The dose becomes 25(OH)D over days; that circulating form has a ~15-day half-life, so it tracks your average intake over the last ~6 weeks. ~100 IU/day ≈ +0.7 ng/mL at steady state.',
+    // plasmaShare 0.12: cholecalciferol leaves the blood for fat and liver within hours — 50,000 IU peaks at roughly
+    // 30 ng/mL of D3 in serum, not the ~290 ng/mL "all of it in 3 L of plasma" gave (2026-10-24).
+    vitd: { name: 'Vitamin D3', unit: 'IU', toMass: 0.025, mass: 'µg', F: () => 0.7, tAbs: 4, tElim: 24, plasmaShare: 0.12, baseline: null, where: 'blood', storeTau: 22,
+        note: 'Most of a dose moves into fat and the liver within hours; the liver turns it into 25(OH)D over days. That circulating form has a ~15-day half-life, so it tracks your average intake over the last ~6 weeks. ~100 IU/day ≈ +0.7 ng/mL at steady state.',
         timing: 'With a meal that has fat. Daily or weekly works — the store smooths it out.',
         src: 'Heaney et al. 2003 (AJCN) dose-response; Jones 2008 25(OH)D half-life' },
-    b12: { name: 'Vitamin B12', unit: 'mcg', toMass: 1, mass: 'µg', F: d => Math.min(1, (Math.min(d, 1.5) + 0.01 * Math.max(0, d - 1.5)) / Math.max(d, 1e-9)), tAbs: 3, tElim: 144, plasmaShare: 0.2, baseline: 1.2, where: 'blood', storeTau: 90,
-        note: 'Intrinsic factor absorbs ~1.5 µg per dose; above that only ~1 % gets through. The liver stores years\' worth (~2–5 mg).',
+    // B12 absorbed through intrinsic factor passes slowly (~8–12 h) and the liver takes nearly all of it: three 9 µg doses
+    // raise the circulating active form (holoTC, ~a fifth of serum B12) by only ~20–30 % (the CobaSorb test). The old
+    // share (0.2 for 6 days) read a 2.4 µg tablet as +25 % on all serum B12 for days (2026-10-24).
+    b12: { name: 'Vitamin B12', unit: 'mcg', toMass: 1, mass: 'µg', F: d => Math.min(1, (Math.min(d, 1.5) + 0.01 * Math.max(0, d - 1.5)) / Math.max(d, 1e-9)), tAbs: 4, tElim: 16, plasmaShare: 0.015, baseline: 1.2, where: 'blood', storeTau: 90,
+        note: 'Intrinsic factor absorbs ~1.5 µg per dose; above that only ~1 % gets through. Absorbed B12 goes mostly to the liver, which stores years\' worth (~2–5 mg) — the blood level barely moves after a tablet.',
         timing: 'Any time. Large oral doses work only through the 1 % route.', src: 'Heyssel 1966; Carmel 2008 B12 absorption' },
     sel: { name: 'Selenium', unit: 'mcg', toMass: 1, mass: 'µg', F: () => 0.8, tAbs: 1.5, tElim: 48, plasmaShare: 0.3, baseline: 300, where: 'blood', storeTau: 30,
         note: 'Plasma carries ~300 µg; it is built into selenoproteins (thyroid, antioxidant enzymes) over weeks.',
@@ -4945,6 +4952,21 @@ exports.PK = {
         timing: 'Shifts the clock best a few hours before your usual bedtime; for jet lag more than nightly use.', src: 'Zhdanova 2001; AASM guideline' },
 };
 function pkFor(k) { return exports.PK[k] || null; }
+/**
+ * One nutrient's doses as the gut sees them: entries within 20 minutes of the first count as ONE dose at that time.
+ * Absorption falls with dose for most minerals (and vitamin C, B12), so 16 taps of +25 µg in twelve seconds are one
+ * 400 µg intake, not sixteen small ones each absorbed at the small-dose rate (2026-10-24).
+ */
+function doseEvents(k, doses, toMass = 1) {
+    const ds = (doses || []).filter(d => d && d.k === k && Number(d.amount) > 0 && isFinite(Number(d.amount)))
+        .map(d => ({ at: Date.parse(d.at), m: Number(d.amount) * toMass })).filter(d => isFinite(d.at)).sort((a, b) => a.at - b.at);
+    const out = [];
+    ds.forEach(d => { const last = out[out.length - 1]; if (last && d.at - last.at <= 20 * 60e3)
+        last.m += d.m;
+    else
+        out.push({ at: d.at, m: d.m }); });
+    return out;
+}
 const H = 3600e3;
 /**
  * Amount of the absorbed excess still in the body (in `mass` units) at time t
@@ -4977,7 +4999,7 @@ function pkNow(k, doses, now) {
     const spec = exports.PK[k];
     if (!spec)
         return null;
-    const ds = doses.filter(d => d.k === k && Number(d.amount) > 0 && isFinite(Number(d.amount))).map(d => ({ at: Date.parse(d.at), m: Number(d.amount) * spec.toMass })).filter(d => isFinite(d.at));
+    const ds = doseEvents(k, doses, spec.toMass);
     const at = (t) => ds.reduce((a, d) => a + bateman(spec, d.m, (t - d.at) / H), 0);
     const inBody = at(now);
     const share = spec.where === 'blood' ? spec.plasmaShare : 1;
@@ -5010,6 +5032,7 @@ function pkNow(k, doses, now) {
             }
         }
     return { k, spec, inBody, extraInBlood: inBody * share, inBlood: spec.baseline === null ? null : spec.baseline + inBody * share,
+        pctOfBaseline: spec.baseline ? Math.round(inBody * share / spec.baseline * 1000) / 10 : null,
         pending, absorbedToday, peakAt: peakV > 0 ? peakT : null, clearAt, curve };
 }
 /** Caffeine (mg) still in the body at a given clock time — the sleep-relevant number. */
@@ -5017,10 +5040,7 @@ function amountAt(k, doses, t) {
     const spec = exports.PK[k];
     if (!spec)
         return 0;
-    return doses.filter(d => d.k === k && Number(d.amount) > 0 && isFinite(Number(d.amount))).reduce((a, d) => {
-        const at = Date.parse(d.at);
-        return a + (isFinite(at) ? bateman(spec, Number(d.amount) * spec.toMass, (t - at) / H) : 0);
-    }, 0);
+    return doseEvents(k, doses, spec.toMass).reduce((a, d) => a + bateman(spec, d.m, (t - d.at) / H), 0);
 }
 /**
  * Latest time a dose of `amount` can be taken so that at most `limit` remains

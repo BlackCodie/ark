@@ -50,7 +50,9 @@ export function standing(k, now = Date.now()) {
     out.sub = sp.baseline !== null ? 'Your body keeps some from food — ARK only estimates what you log.' : '';
   } else if (sp.baseline !== null) {
     const extra = P.extraInBlood;
-    out.line = extra >= sp.baseline * 0.005 ? `~${fmtAmt(extra, u)} extra in your blood from your doses` : 'Cleared — nothing extra circulating now';
+    // As a share of what the blood normally holds: "+1.7 mg" means nothing beside a ~290 mg pool (2026-10-24).
+    const pct = P.pctOfBaseline, pctTxt = pct == null ? '' : pct < 0.1 ? ' (under 0.1 % of the usual ~' + fmtAmt(sp.baseline, u) + ')' : ' (+' + pct + ' % on the usual ~' + fmtAmt(sp.baseline, u) + ')';
+    out.line = extra >= sp.baseline * 0.005 ? `+${fmtAmt(extra, u)} in your blood now${pctTxt}` : 'Cleared — back to your usual level';
     out.sub = 'On top of what your body keeps from food, which ARK does not know.';
   } else {
     out.line = P.extraInBlood >= 0.05 ? `~${fmtAmt(P.extraInBlood, u)} circulating from your doses` : 'Cleared — nothing circulating now';
@@ -149,7 +151,7 @@ export function doseSheet(k, preset) {
         H0 += `<section class="card frost pk-now"><div class="eyebrow">Estimated now</div><div class="pk-big">${esc(S.line)}</div>
           ${S.sub ? `<div class="sub">${esc(S.sub)}</div>` : ''}
           ${S.recent && S.P.curve.some(p => p.v > 0) && sp.where !== 'gut' ? `<div style="margin-top:10px">${curveSvg(S.P)}</div>
-            <div class="row num sub" style="gap:14px;margin-top:4px;font-size:.78rem">${dosed && S.P.peakAt ? `<span>Peak ~${hm(S.P.peakAt)}</span>` : ''}${dosed && S.P.clearAt ? `<span>Clears ~${hm(S.P.clearAt)}</span>` : ''}${S.P.pending > 0.01 ? `<span>${fmtAmt(S.P.pending, sp.mass)} still absorbing</span>` : ''}</div>` : ''}
+            <div class="row num sub" style="gap:14px;margin-top:4px;font-size:.78rem">${dosed && S.P.peakAt ? `<span>${S.P.peakAt < Date.now() ? 'Peaked' : 'Peaks'} ~${hm(S.P.peakAt)}</span>` : ''}${dosed && S.P.clearAt ? `<span>Clears ~${hm(S.P.clearAt)}</span>` : ''}${S.P.pending > 0.01 ? `<span>${fmtAmt(S.P.pending, sp.mass)} still absorbing</span>` : ''}</div>` : ''}
           ${S.store ? `<div class="pk-store"><span>${esc(S.store.label)}</span><b style="${S.store.color ? 'color:' + S.store.color : ''}">${S.store.text ? esc(S.store.text) : esc(String(S.store.v)) + '<small> ' + esc(S.store.unit) + '</small>'}</b></div><div class="sub" style="line-height:1.45">${esc(S.store.note)}</div>` : ''}
           <p class="sub" style="margin:10px 0 0;line-height:1.45">Estimate from your dose times and population-average kinetics — people differ by ±30–50 %. Not a lab value.</p></section>`;
       }
