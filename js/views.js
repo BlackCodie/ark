@@ -6,7 +6,7 @@
    and says when it is waiting for a fresh one.
    ══════════════════════════════════════════════════════════════════════ */
 import { renderLab } from './system.js';
-import { weatherCard } from './weather.js';
+import { weatherCard, hasWeather } from './weather.js';
 import { fuelCard } from './daily.js';
 import {
   L, state, view, emit, changed, esc, icon, today, shiftDay, fmt1, fmtMins, fmtDay, daysBetween, homeMove, anywhere, caState, checkCa, onPublicCopy, pair,
@@ -15,6 +15,7 @@ import {
 import { staleNote } from './more.js';
 import { routineCard, renderBooks } from './routines.js';
 import { mindGlance } from './mind.js';
+import { regulars, usualOf, takenAt, fmtAmt, hm } from './doses.js';
 
 export const PILLAR = {
   body: ['Body', '#30d158'], mind: ['Mind', '#7d7aff'], income: ['Income', '#ff9f0a'],
@@ -180,42 +181,14 @@ export function renderToday() {
       <p>Everything you log here lands in ARK on your PC. Start with whatever is easiest today.</p></section>`;
   }
 
-  H += weatherCard();
-  H += `<section class="card frost rings">
-    <div>${ringsSvg([
-      { v: total ? done / total : 0, c: C.habits },
-      { v: weekSessions / (s.weeklyWorkouts || 3), c: C.train },
-      { v: pm / (s.practiceMins || 30), c: C.practice },
-    ])}</div>
-    <div class="ring-legend">
-      <div class="rl" style="--c:${C.habits}"><div class="k">Habits</div><div class="v num">${done}<small>/ ${total}</small></div></div>
-      <div class="rl" style="--c:${C.train}"><div class="k">Workouts · week</div><div class="v num">${weekSessions}<small>/ ${s.weeklyWorkouts}</small></div></div>
-      <div class="rl" style="--c:${C.practice}"><div class="k">Practice</div><div class="v num">${pm}<small>/ ${s.practiceMins} min</small></div></div>
-    </div></section>`;
+  // 2026-10-25 ("make Today more useful"): the day at a glance first — readiness beside the three rings — then what
+  // to do, tickable right here (the plan, your habits, your supplements), then logging, routine, fuel, mind and the
+  // week. Weather sits under the day once a place is set; until then it and Apple Health are slim rows at the bottom.
+  H += dayHero(v, t, done, total, weekSessions, pm, s);
+  const wx = hasWeather();
+  if (wx) H += weatherCard();
 
-  // Straight under the rings: log something, today's routine, the week at a glance (Daily Quests removed 2026-10-03).
-  H += `<div class="sec"><h2>Quick log</h2></div><section class="quick">
-    ${quick('weigh-sheet', 'scale', '#40c8e0', 'Weigh-in', lastWeightLabel(v))}
-    ${quick('vitals-sheet', 'moon', '#7d7aff', 'Vitals', v.bio[t] ? 'Logged today' : 'Sleep · energy · mood')}
-    ${quick('practice-sheet', 'timer', '#30d158', 'Practice', pm ? pm + ' min today' : 'Log a session')}
-    ${quick('note-sheet', 'note', '#ffb340', 'Note', 'Goes to your Journal')}
-  </section>`;
-  H += routineCard();
-
-  H += `<div class="sec"><h2>This week</h2><button class="link" data-act="review-sheet">Review</button></div><section class="card frost"><div class="week">` +
-    [6, 5, 4, 3, 2, 1, 0].map(i => {
-      const k = shiftDay(t, -i), frac = total ? doneOn(v, k) / total : 0;
-      const trained = v.workouts.some(w => w.date === k);
-      return `<div class="wd${i === 0 ? ' today' : ''}">${fmtDay(k, { weekday: 'narrow' })}
-        ${ringSvg(frac, C.habits, 34, 5)}<span class="pip${trained ? ' on' : ''}"></span></div>`;
-    }).join('') + `</div></section>`;
-
-  H += fuelCard(v);
-  H += healthCard(v, t);
-  H += mindGlance();
-
-
-  /* up next — one list, each item doable from here */
+  /* the plan — one list, each item doable from here */
   const items = [];
   if (state.workout) {
     items.push(state.workout.edit
@@ -237,12 +210,6 @@ export function renderToday() {
       items.push({ ic: 'dumbbell', c: C.train, t: 'Log your first workout', st: 'Pick exercises as you go', act: 'start-empty' });
     }
   }
-  const left = v.habits.filter(h => !(v.habitLog[t] && v.habitLog[t][h.id]));
-  if (total) {
-    if (left.length) items.push({ ic: 'check', c: C.habits, t: left.length + ' habit' + (left.length === 1 ? '' : 's') + ' left',
-      st: left.slice(0, 3).map(h => h.icon + ' ' + h.name).join('  ·  '), act: 'tab', tab: 'habits' });
-    else items.push({ done: true, ic: 'check', c: C.habits, t: 'All habits done', st: 'Day complete' });
-  }
   if (!v.bio[t] || v.bio[t].sleep == null) items.push({ ic: 'moon', c: C.vitals, t: 'Log sleep & energy', st: 'Ten seconds — it drives your readiness', act: 'vitals-sheet' });
   // Sunday: the week is in.
   if (new Date().getDay() === 0 && (v.workouts.length || Object.keys(v.habitLog).length)) items.push({ ic: 'chart', c: '#bf5af2', t: 'Your week in review', st: 'What you did, next to last week', act: 'review-sheet' });
@@ -261,19 +228,99 @@ export function renderToday() {
     if (d === null || d >= 1) items.push({ ic: 'sprout', c: C.practice, t: 'Practice ' + sk.name,
       st: (d === null ? 'Not practiced yet' : d === 1 ? 'Last: yesterday' : 'Last: ' + d + ' days ago') + (sk.ev ? ' · ' + sk.ev.label + ' in 90 days' : ''), act: 'practice-sheet', skill: sk.id });
   }
-  H += `<div class="sec"><h2>Up next</h2></div><section class="list frost plan">` + items.map(it => `
+  H += `<div class="sec"><h2>Today's plan</h2></div><section class="list frost plan">` + items.map(it => `
     <button class="li${it.done ? ' done' : ''}" ${it.act ? `data-act="${it.act}"` : 'disabled'} ${it.tab ? `data-tab="${it.tab}"` : ''} ${it.seg ? `data-seg="${it.seg}"` : ''} ${it.skill ? `data-skill="${esc(it.skill)}"` : ''} style="--c:${it.c}">
       <span class="ic">${it.done ? icon('tick', 18, 2.6) : icon(it.ic, 19)}</span>
       <span class="tx"><div class="tt">${esc(it.t)}</div><div class="st">${esc(it.st)}</div></span>
       ${it.act ? `<span class="chev">${icon('chev', 16)}</span>` : ''}
     </button>`).join('') + `</section>`;
+  H += habitStrip(v, t);
+  H += suppStrip(v, t);
 
-  const J = (v.journal || []).slice(0, 4);
+  H += `<div class="sec"><h2>Quick log</h2></div><section class="qrow">
+    ${quick('weigh-sheet', 'scale', '#40c8e0', 'Weigh-in', lastWeightLabel(v))}
+    ${quick('vitals-sheet', 'moon', '#7d7aff', 'Vitals', v.bio[t] && v.bio[t].sleep != null ? 'Logged' : 'Sleep · mood')}
+    ${quick('meal-new', 'meat', '#ff7a7a', 'Meal', 'Protein · kcal')}
+    ${quick('practice-sheet', 'timer', '#30d158', 'Practice', pm ? pm + ' min' : 'A session')}
+    ${quick('note-sheet', 'note', '#ffb340', 'Note', 'Journal')}
+  </section>`;
+  H += routineCard();
+  H += fuelCard(v);
+  H += mindGlance();
+  H += weekCard(v, t, total);
+  H += healthCard(v, t);
+  if (!wx) H += weatherCard();
+
+  const J = (v.journal || []).slice(0, 3);
   H += `<div class="sec"><h2>Journal</h2><button class="link" data-act="journal-sheet">${J.length ? 'See all' : 'Open'}</button></div>`;
-  H += J.length ? `<section class="list frost">${J.map(e => journalRow(e)).join('')}</section>`
+  H += J.length ? `<section class="list frost today-j">${J.map(e => journalRow(e)).join('')}</section>`
     : `<div class="card frost empty">Workouts, practice, weigh-ins and your notes land here — from the phone and the PC.</div>`;
   H += `<div class="foot" data-sync-label>${esc(syncLabel().text)}</div>`;
   return H;
+}
+/* ── Today's parts (2026-10-25) ── */
+const READY = r => r >= 90 ? 'Elite condition' : r >= 80 ? 'Peak ready' : r >= 70 ? 'Good to train' : r >= 55 ? 'Train smart' : r >= 40 ? 'Go light' : 'Recover';
+const readyCol = r => r == null ? 'var(--t3)' : r >= 80 ? '#30d158' : r >= 60 ? '#ffd60a' : r >= 40 ? '#ff9f0a' : '#ff453a';
+/** Days in a row with at least one habit done (today counts once it has one) — the PC's habit streak. */
+function dayStreak(v, t) {
+  let n = 0;
+  for (let i = 0; i < 365; i++) {
+    const k = shiftDay(t, -i), any = Object.values(v.habitLog[k] || {}).some(Boolean);
+    if (any) n++; else if (i > 0) break;
+  }
+  return n;
+}
+/** The day at a glance: readiness (today's, else the last score dimmed and dated — never a made-up one) beside the rings. */
+function dayHero(v, t, done, total, weekSessions, pm, s) {
+  const r = v.readiness[t];
+  let back = null; if (r == null) for (let i = 1; i <= 3 && back == null; i++) { const x = v.readiness[shiftDay(t, -i)]; if (x != null) back = { v: x, i }; }
+  const rv = r != null ? r : back ? back.v : null, streak = dayStreak(v, t);
+  const sub = r != null ? "From today's vitals" : back ? (back.i === 1 ? 'Yesterday' : back.i + ' days ago') + ' · log sleep to update' : 'Log sleep or energy to score today';
+  const wg = s.weeklyWorkouts || 3, pg = s.practiceMins || 30;
+  return `<section class="card frost day-hero">
+    <div class="dh-top">
+      <div class="dh-rings">${ringsSvg([{ v: total ? done / total : 0, c: C.habits }, { v: weekSessions / wg, c: C.train }, { v: pm / pg, c: C.practice }], 118)}</div>
+      <button class="dh-ready${r == null && back ? ' old' : ''}" data-act="vitals-sheet" style="--rc:${readyCol(rv)}" aria-label="Readiness ${rv ?? 'not scored'} — log vitals">
+        <span class="eyebrow">Readiness</span><b class="num">${rv ?? '—'}</b><span class="l">${rv == null ? 'Not scored yet' : READY(rv)}</span><span class="s">${esc(sub)}</span>
+      </button>
+    </div>
+    <div class="dh-leg">
+      <button data-act="tab" data-tab="habits" style="--c:${C.habits}"><b class="num">${done}<small>/${total}</small></b><span>Habits</span></button>
+      <button data-act="tab" data-tab="train" style="--c:${C.train}"><b class="num">${weekSessions}<small>/${wg}</small></b><span>Workouts · wk</span></button>
+      <button data-act="practice-sheet" style="--c:${C.practice}"><b class="num">${pm}<small>/${pg}</small></b><span>Practice min</span></button>
+    </div>
+    ${streak > 1 ? `<div class="dh-streak">🔥 ${streak}-day habit streak${done ? '' : ' — tick one today to keep it'}</div>` : ''}
+  </section>`;
+}
+/** Every habit, tickable from Today — the ones left first. The same tick as Boards (time-stamped, amount remembered). */
+function habitStrip(v, t) {
+  if (!v.habits.length) return '';
+  const L0 = v.habits.map((h, i) => ({ h, i, on: !!(v.habitLog[t] && v.habitLog[t][h.id]) })).sort((a, b) => a.on - b.on);
+  const n = L0.filter(x => x.on).length;
+  return `<div class="sec"><h2>Habits</h2><button class="link" data-act="tab" data-tab="habits">${n} of ${L0.length} · Boards</button></div>
+    <div class="hstrip">${L0.map(({ h, i, on }) => `<button class="hs${on ? ' on' : ''}" data-act="hb-tick" data-id="${esc(h.id)}" style="--hc:${esc(h.color || L.HABIT_COLORS[i % L.HABIT_COLORS.length])}" aria-pressed="${on}" aria-label="${esc(h.name)} today">
+      <span class="e">${esc(h.icon || '•')}</span><span class="n">${esc(h.name)}</span><span class="ck">${on ? icon('tick', 13, 3.2) : ''}</span></button>`).join('')}</div>`;
+}
+/** The supplements you take (3+ days of the last 30): one tap logs your usual dose; taken ones show the time. */
+function suppStrip(v, t) {
+  const R = regulars(v, t); if (!R.length) return '';
+  const amt = (v.bio[t] || {}).micros || {};
+  const rows = R.map(m => { const at = takenAt(m.k, t); return { m, at, taken: at != null || (amt[m.k] || 0) > 0, u: usualOf(m.k) }; }).sort((a, b) => a.taken - b.taken);
+  const n = rows.filter(x => x.taken).length;
+  return `<div class="sec"><h2>Supplements</h2><button class="link" data-act="today-mic">${n} of ${rows.length} taken</button></div>
+    <div class="sstrip">${rows.map(({ m, at, taken, u }) => taken
+      ? `<button class="ss on" style="--mc:${m.c}" data-act="dose-sheet" data-k="${m.k}" aria-label="${esc(m.name)} — taken${at ? ' at ' + hm(at) : ''}"><span class="e">${m.icon}</span><span class="tx"><span class="n">${esc(m.name)}</span><small>✓ taken ${at ? hm(at) : 'today'}</small></span></button>`
+      : `<button class="ss" style="--mc:${m.c}" data-act="${u ? 'dose-quick' : 'dose-sheet'}" data-k="${m.k}"${u ? ` data-v="${u.amount}"` : ''} aria-label="${u ? 'Log your usual ' + fmtAmt(u.amount, m.unit) + ' of ' : 'Log '}${esc(m.name)}"><span class="e">${m.icon}</span><span class="tx"><span class="n">${esc(m.name)}</span><b class="num">${u ? '+ ' + fmtAmt(u.amount, m.unit) : 'Log a dose'}</b></span><span class="add">${icon('plus', 14, 2.6)}</span></button>`).join('')}</div>`;
+}
+/** The week: habit ring, a dot on training days, and that day's readiness. */
+function weekCard(v, t, total) {
+  return `<div class="sec"><h2>This week</h2><button class="link" data-act="review-sheet">Review</button></div><section class="card frost"><div class="week">` +
+    [6, 5, 4, 3, 2, 1, 0].map(i => {
+      const k = shiftDay(t, -i), frac = total ? doneOn(v, k) / total : 0, rd = v.readiness[k];
+      const trained = v.workouts.some(w => w.date === k);
+      return `<div class="wd${i === 0 ? ' today' : ''}">${fmtDay(k, { weekday: 'narrow' })}
+        ${ringSvg(frac, C.habits, 34, 5)}<span class="pip${trained ? ' on' : ''}"></span><b class="rd num" style="color:${readyCol(rd)}">${rd ?? '·'}</b></div>`;
+    }).join('') + `</div><div class="wk-key"><span><i style="background:${C.habits}"></i>habits done</span><span><i style="background:var(--orange)"></i>trained</span><span>numbers: readiness</span></div></section>`;
 }
 /** The "open anywhere" card shows on the PC-served copy once it is paired and nothing is waiting to sync. */
 function mv0() { const a = anywhere(); return a && !state.pending.length ? a : null; }
@@ -293,8 +340,8 @@ function healthCard(v, t) {
     ['timer', '#ff9f0a', 'Exercise', b.exmin, x => Math.round(x), 'min'],
     ['moon', '#bf5af2', 'REM', b.rem, x => fmtH(x), 'h'],
   ].filter(x => x[3] != null && x[3] !== 0);
-  if (!T.length && !h) return `<div class="sec"><h2>Apple Health</h2></div><button class="card frost hl-cta" data-act="health-sheet">
-    <span class="ic-dot" style="--c:#ff375f">${icon('heart', 17)}</span><span><b>Connect Apple Health</b><small>Sleep, heart rate, HRV, steps, daylight and VO₂max feed readiness, the mind model and the hormone estimate.</small></span>
+  if (!T.length && !h) return `<button class="card frost hl-cta slim-cta" data-act="health-sheet">
+    <span class="ic-dot" style="--c:#ff375f">${icon('heart', 17)}</span><span><b>Connect Apple Health</b><small>Sleep, HRV, steps and daylight feed readiness and the estimates</small></span>
     <span class="chev">${icon('chev', 16)}</span></button>`;
   const asOf = h && h.ts ? new Date(h.ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) + (h.day === t ? '' : ' · ' + fmtDay(h.day, { day: 'numeric', month: 'short' })) : '';
   return `<div class="sec"><h2>Apple Health</h2><button class="link" data-act="health-sheet">${asOf ? 'as of ' + esc(asOf) : 'Set up'}</button></div>
@@ -312,12 +359,11 @@ export function journalRow(e, del = false) {
     + (canDel ? `<button class="circle sm" data-act="note-del" data-id="${esc(e.id ?? '')}" data-sid="${esc(e.sid || '')}" aria-label="Delete note">${icon('trash', 15)}</button>` : '') + `</div>`;
 }
 function quick(act, ic, c, title, sub) {
-  return `<button class="qt frost" data-act="${act}" style="--c:${c}"><span class="qi">${icon(ic, 19)}</span>
-    <span><b>${esc(title)}</b><small>${esc(sub)}</small></span></button>`;
+  return `<button class="qb" data-act="${act}" style="--c:${c}"><span class="qi">${icon(ic, 21)}</span><b>${esc(title)}</b><small>${esc(sub)}</small></button>`;
 }
 function lastWeightLabel(v) {
   const k = Object.keys(v.weights).sort().pop();
-  return k ? `${fmt1(v.weights[k])} kg · ${k === today() ? 'today' : fmtDay(k, { day: 'numeric', month: 'short' })}` : 'No weigh-ins yet';
+  return k ? `${fmt1(v.weights[k])} kg${k === today() ? ' · today' : ''}` : 'None yet';
 }
 
 /* ══════════════ HABITS ══════════════ */
@@ -476,6 +522,13 @@ export const actions = {
     bioPatch(t, { [d.f]: next || null });
   },
   'grow-seg'(d) { state.growSeg = d.seg; changed(); },
+  'today-mic'() {
+    const o = state.settings.baOpen || (state.settings.baOpen = { 'ba-scan': true }); o['ba-mic'] = true;
+    document.querySelector('[data-act="tab"][data-tab="body"]')?.click();
+    // Body Arch draws, then settles its figure — land on Supplements after both, below the floating header.
+    const go = () => { const el = document.getElementById('ba-mic'); if (el) window.scrollTo({ top: window.scrollY + el.getBoundingClientRect().top - 70, behavior: 'instant' }); };
+    [120, 450].forEach(ms => setTimeout(go, ms));
+  },
   'ca-recheck'() { haptic(); caState.trusted = null; checkCa().then(() => toast(caState.trusted ? 'Certificate trusted ✓' : 'Not trusted yet — finish the steps in Settings')); },
   'tree-set'(d) {
     const cur = ((view().tree || []).flatMap(p => p.skills).find(s => s.id === d.skill) || {}).status;

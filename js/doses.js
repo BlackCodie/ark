@@ -21,6 +21,20 @@ export const fmtAmt = (n, unit) => {
 export const doses = () => view().doses || [];
 export const defOf = k => ((view().bioDefs || {}).micros || []).find(m => m.k === k) || null;
 const dayOf = t => L.dayKey(new Date(t));
+/** When you last took it today (ms), or null. */
+export function takenAt(k, t = today()) {
+  const a = doses().filter(x => x.k === k && dayOf(Date.parse(x.at)) === t).map(x => Date.parse(x.at));
+  return a.length ? Math.max(...a) : null;
+}
+/** What you take regularly: logged on 3+ different days in the last 30 (a dose or a day's total), most recent first. */
+export function regulars(v = view(), t = today()) {
+  const D = v.bioDefs; if (!D || !D.micros) return [];
+  const last = {}, days = {}, cut = L.shiftDayKey(t, -30);
+  const saw = (k, day) => { if (!day || day > t) return; if (!last[k] || day > last[k]) last[k] = day; if (day >= cut) (days[k] = days[k] || new Set()).add(day); };
+  (v.doses || []).forEach(x => saw(x.k, dayOf(Date.parse(x.at))));
+  Object.keys(v.bio || {}).forEach(day => { const mc = (v.bio[day] || {}).micros || {}; Object.keys(mc).forEach(k => { if (mc[k] > 0) saw(k, day); }); });
+  return D.micros.filter(m => days[m.k] && days[m.k].size >= 3).sort((x, y) => (last[y.k] || '').localeCompare(last[x.k] || ''));
+}
 /** What you usually take of it — remembered from your own doses (logic/pk.ts usualDose), or null. */
 export const usualOf = k => L.usualDose(k, doses());
 

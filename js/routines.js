@@ -43,10 +43,10 @@ export function routineCard() {
       <div class="chips scroll1 rt-pick">${rs.map(x => { const n = logFor(t, x.id).length;
         return `<button class="chip ${x.id === r.id ? 'on' : ''}" data-act="rt-sel" data-id="${esc(x.id)}">${esc(x.icon || '•')} ${esc(x.name)}${n ? ` <small>${n}/${x.steps.length}</small>` : ''}</button>`; }).join('')}</div>
       <div class="rt-prog"><span class="t"><i style="width:${r.steps.length ? done.length / r.steps.length * 100 : 0}%"></i></span><b class="num">${done.length}/${r.steps.length}</b></div>
-      ${r.steps.map((st, i) => { const on = done.includes(i), tags = tagsOf(st);
+      ${r.steps.map((st, i, all) => { const on = done.includes(i), tags = tagsOf(st), next = all.findIndex((x, j) => !done.includes(j)) === i;
         return `<button class="rt-step${on ? ' on' : ''}" data-act="rt-check" data-id="${esc(r.id)}" data-i="${i}" aria-pressed="${on}">
           <span class="ck">${icon('tick', 15, 3)}</span><span class="tx"><span class="tt">${esc(st.t)}</span>
-          ${tags.length ? `<span class="rt-tag">${tags.map(esc).join(' · ')}</span>` : ''}${st.why && !on ? `<span class="why">${esc(st.why)}</span>` : ''}</span></button>`; }).join('')}
+          ${tags.length ? `<span class="rt-tag">${tags.map(esc).join(' · ')}</span>` : ''}${st.why && next ? `<span class="why">${esc(st.why)}</span>` : ''}</span></button>`; }).join('')}
       ${!r.steps.length ? '<div class="empty">No steps yet — tap Edit to add some.</div>' : ''}
     </section>`;
 }

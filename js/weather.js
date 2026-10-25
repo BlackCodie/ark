@@ -20,10 +20,11 @@ async function refresh(force = false) {
   } catch (e) { /* offline — the last reading stays */ }
   busy = false;
 }
+export const hasWeather = () => !!loc();
 export function weatherCard() {
   const p = loc();
-  if (!p) return `<section class="card frost wx wx-set"><div class="wx-h"><span class="wx-ic">⛅</span><div><b>Weather</b><div class="sub">Set your location once — ARK reads the day's weather and what it means for your body.</div></div></div>
-    <div class="row" style="gap:8px;margin-top:10px"><button class="btn sm btn-prominent" data-act="wx-here">${icon('target', 15)} Use my location</button><button class="btn sm btn-glass" data-act="wx-city">Search a city</button></div></section>`;
+  if (!p) return `<section class="card frost wx wx-set slim-cta"><span class="wx-ic">⛅</span><span class="tx"><b>Weather</b><small>Set a place once — the day's weather and what it means for you</small></span>
+    <button class="btn sm btn-glass" data-act="wx-here" aria-label="Use my location">${icon('target', 15)}</button><button class="btn sm btn-glass" data-act="wx-city">City</button></section>`;
   const c = state.weatherCache, W = c && c.lat === p.lat && c.lon === p.lon ? c.w : null;
   setTimeout(() => refresh(), 0);
   if (!W) return `<section class="card frost wx"><div class="sub">Loading the weather for ${esc(p.name || 'your location')}…</div></section>`;
