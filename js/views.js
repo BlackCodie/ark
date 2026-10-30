@@ -9,13 +9,13 @@ import { renderLab } from './system.js';
 import { weatherCard, hasWeather } from './weather.js';
 import { fuelCard } from './daily.js';
 import {
-  L, state, view, emit, changed, esc, icon, today, shiftDay, fmt1, fmtMins, fmtDay, daysBetween, homeMove, anywhere, caState, checkCa, onPublicCopy, pair,
+  L, state, view, rawView, carriedFrom, emit, changed, esc, icon, today, shiftDay, fmt1, fmtMins, fmtDay, daysBetween, homeMove, anywhere, caState, checkCa, onPublicCopy, pair,
   ringsSvg, ringSvg, sparkSvg, barsSvg, syncLabel, paired, haptic, toast, scheduleSync,
 } from './core.js';
 import { staleNote } from './more.js';
 import { routineCard, renderBooks } from './routines.js';
 import { mindGlance } from './mind.js';
-import { regulars, usualOf, takenAt, fmtAmt, hm } from './doses.js';
+import { regulars, usualOf, takenAt, carriedDose, fmtAmt, hm } from './doses.js';
 
 export const PILLAR = {
   body: ['Body', '#30d158'], mind: ['Mind', '#7d7aff'], income: ['Income', '#ff9f0a'],
@@ -143,7 +143,8 @@ export function renderToday() {
   const weekSessions = v.workouts.filter(w => w.date >= ws && w.date <= t).length;
   const todays = v.workouts.filter(w => w.date === t);
   const pm = practiceMinsOn(v, t);
-  const gap = L.daysSinceCapture(v, t);
+  // What you actually logged — carried days (logic/carry.ts) never count as you being here.
+  const gap = L.daysSinceCapture(rawView(), t), rb = rawView().bio[t] || {}, cs = carriedFrom(t, 'sleep');
 
   let H = hdr(longDate(), 'Today', syncButton()) + staleNote();
   const any = mv0();
@@ -210,7 +211,7 @@ export function renderToday() {
       items.push({ ic: 'dumbbell', c: C.train, t: 'Log your first workout', st: 'Pick exercises as you go', act: 'start-empty' });
     }
   }
-  if (!v.bio[t] || v.bio[t].sleep == null) items.push({ ic: 'moon', c: C.vitals, t: 'Log sleep & energy', st: 'Ten seconds — it drives your readiness', act: 'vitals-sheet' });
+  if (!(rb.sleep > 0)) items.push({ ic: 'moon', c: C.vitals, t: 'Log sleep & energy', st: cs ? '↻ Using ' + cday(cs, t) + "'s " + String(+(+(v.bio[t] || {}).sleep).toFixed(2)) + ' h until you do' : 'Ten seconds — it drives your readiness', act: 'vitals-sheet' });
   // Sunday: the week is in.
   if (new Date().getDay() === 0 && (v.workouts.length || Object.keys(v.habitLog).length)) items.push({ ic: 'chart', c: '#bf5af2', t: 'Your week in review', st: 'What you did, next to last week', act: 'review-sheet' });
   const goal = v.goals.filter(g => g.status === 'active').sort((a, b) => (a.priority || 2) - (b.priority || 2) || (a.due || '9').localeCompare(b.due || '9'))[0];
@@ -239,7 +240,7 @@ export function renderToday() {
 
   H += `<div class="sec"><h2>Quick log</h2></div><section class="qrow">
     ${quick('weigh-sheet', 'scale', '#40c8e0', 'Weigh-in', lastWeightLabel(v))}
-    ${quick('vitals-sheet', 'moon', '#7d7aff', 'Vitals', v.bio[t] && v.bio[t].sleep != null ? 'Logged' : 'Sleep · mood')}
+    ${quick('vitals-sheet', 'moon', '#7d7aff', 'Vitals', rb.sleep > 0 ? 'Logged' : cs ? '↻ Carried' : 'Sleep · mood')}
     ${quick('meal-new', 'meat', '#ff7a7a', 'Meal', 'Protein · kcal')}
     ${quick('practice-sheet', 'timer', '#30d158', 'Practice', pm ? pm + ' min' : 'A session')}
     ${quick('note-sheet', 'note', '#ffb340', 'Note', 'Journal')}
@@ -259,6 +260,11 @@ export function renderToday() {
   return H;
 }
 /* ── Today's parts (2026-10-25) ── */
+/** "yesterday", or the weekday of an earlier day. */
+const cday = (k, t) => (k === shiftDay(t, -1) ? 'yesterday' : fmtDay(k, { weekday: 'short' }));
+/** The readiness inputs carried into a day (logic/carry.ts), and the real day they came from. */
+const READY_IN = ['sleep', 'energy', 'mood', 'stress', 'hrv', 'rhr'];
+const carriedInputs = (v, k) => { const c = (v.carry || {})[k] || {}; const f = READY_IN.filter(x => c[x]); return f.length ? { fields: f, from: c[f[0]], days: [...new Set(f.map(x => c[x]))].sort().reverse() } : null; };
 const READY = r => r >= 90 ? 'Elite condition' : r >= 80 ? 'Peak ready' : r >= 70 ? 'Good to train' : r >= 55 ? 'Train smart' : r >= 40 ? 'Go light' : 'Recover';
 const readyCol = r => r == null ? 'var(--t3)' : r >= 80 ? '#30d158' : r >= 60 ? '#ffd60a' : r >= 40 ? '#ff9f0a' : '#ff453a';
 /** Days in a row with at least one habit done (today counts once it has one) — the PC's habit streak. */
@@ -275,12 +281,13 @@ function dayHero(v, t, done, total, weekSessions, pm, s) {
   const r = v.readiness[t];
   let back = null; if (r == null) for (let i = 1; i <= 3 && back == null; i++) { const x = v.readiness[shiftDay(t, -i)]; if (x != null) back = { v: x, i }; }
   const rv = r != null ? r : back ? back.v : null, streak = dayStreak(v, t);
-  const sub = r != null ? "From today's vitals" : back ? (back.i === 1 ? 'Yesterday' : back.i + ' days ago') + ' · log sleep to update' : 'Log sleep or energy to score today';
+  const ci = r != null ? carriedInputs(v, t) : null;
+  const sub = r != null ? (ci ? '↻ ' + ci.days.map(k => cday(k, t)).join(' & ') + "'s numbers carried — log to update" : "From today's vitals") : back ? (back.i === 1 ? 'Yesterday' : back.i + ' days ago') + ' · log sleep to update' : 'Log sleep or energy to score today';
   const wg = s.weeklyWorkouts || 3, pg = s.practiceMins || 30;
   return `<section class="card frost day-hero">
     <div class="dh-top">
       <div class="dh-rings">${ringsSvg([{ v: total ? done / total : 0, c: C.habits }, { v: weekSessions / wg, c: C.train }, { v: pm / pg, c: C.practice }], 118)}</div>
-      <button class="dh-ready${r == null && back ? ' old' : ''}" data-act="vitals-sheet" style="--rc:${readyCol(rv)}" aria-label="Readiness ${rv ?? 'not scored'} — log vitals">
+      <button class="dh-ready${r == null && back ? ' old' : ''}${ci ? ' carried' : ''}" data-act="vitals-sheet" style="--rc:${readyCol(rv)}" aria-label="Readiness ${rv ?? 'not scored'} — log vitals">
         <span class="eyebrow">Readiness</span><b class="num">${rv ?? '—'}</b><span class="l">${rv == null ? 'Not scored yet' : READY(rv)}</span><span class="s">${esc(sub)}</span>
       </button>
     </div>
@@ -305,10 +312,16 @@ function habitStrip(v, t) {
 function suppStrip(v, t) {
   const R = regulars(v, t); if (!R.length) return '';
   const amt = (v.bio[t] || {}).micros || {};
-  const rows = R.map(m => { const at = takenAt(m.k, t); return { m, at, taken: at != null || (amt[m.k] || 0) > 0, u: usualOf(m.k) }; }).sort((a, b) => a.taken - b.taken);
-  const n = rows.filter(x => x.taken).length;
-  return `<div class="sec"><h2>Supplements</h2><button class="link" data-act="today-mic">${n} of ${rows.length} taken</button></div>
-    <div class="sstrip">${rows.map(({ m, at, taken, u }) => taken
+  const rawToday = (rawView().doses || []).filter(x => L.dayKey(new Date(x.at)) === t), rawAmt = (rawView().bio[t] || {}).micros || {};
+  const rows = R.map(m => {
+    const real = rawToday.some(x => x.k === m.k) || (rawAmt[m.k] || 0) > 0, carried = !real && !!carriedDose(m.k, t) && (amt[m.k] || 0) > 0;
+    return { m, at: takenAt(m.k, t), taken: real || carried, carried, u: usualOf(m.k) };
+  }).sort((a, b) => (a.taken - b.taken) || (b.carried - a.carried));
+  const n = rows.filter(x => x.taken && !x.carried).length, nc = rows.filter(x => x.carried).length;
+  return `<div class="sec"><h2>Supplements</h2><button class="link" data-act="today-mic">${n} of ${rows.length} taken${nc ? ' · ' + nc + ' assumed' : ''}</button></div>
+    <div class="sstrip">${rows.map(({ m, at, taken, carried, u }) => carried
+      ? `<button class="ss on carry" style="--mc:${m.c}" data-act="dose-sheet" data-k="${m.k}" aria-label="${esc(m.name)} — assumed from an earlier day, tap to confirm"><span class="e">${m.icon}</span><span class="tx"><span class="n">${esc(m.name)}</span><small>↻ assumed ${at ? hm(at) : ''}</small></span></button>`
+      : taken
       ? `<button class="ss on" style="--mc:${m.c}" data-act="dose-sheet" data-k="${m.k}" aria-label="${esc(m.name)} — taken${at ? ' at ' + hm(at) : ''}"><span class="e">${m.icon}</span><span class="tx"><span class="n">${esc(m.name)}</span><small>✓ taken ${at ? hm(at) : 'today'}</small></span></button>`
       : `<button class="ss" style="--mc:${m.c}" data-act="${u ? 'dose-quick' : 'dose-sheet'}" data-k="${m.k}"${u ? ` data-v="${u.amount}"` : ''} aria-label="${u ? 'Log your usual ' + fmtAmt(u.amount, m.unit) + ' of ' : 'Log '}${esc(m.name)}"><span class="e">${m.icon}</span><span class="tx"><span class="n">${esc(m.name)}</span><b class="num">${u ? '+ ' + fmtAmt(u.amount, m.unit) : 'Log a dose'}</b></span><span class="add">${icon('plus', 14, 2.6)}</span></button>`).join('')}</div>`;
 }
@@ -319,15 +332,15 @@ function weekCard(v, t, total) {
       const k = shiftDay(t, -i), frac = total ? doneOn(v, k) / total : 0, rd = v.readiness[k];
       const trained = v.workouts.some(w => w.date === k);
       return `<div class="wd${i === 0 ? ' today' : ''}">${fmtDay(k, { weekday: 'narrow' })}
-        ${ringSvg(frac, C.habits, 34, 5)}<span class="pip${trained ? ' on' : ''}"></span><b class="rd num" style="color:${readyCol(rd)}">${rd ?? '·'}</b></div>`;
-    }).join('') + `</div><div class="wk-key"><span><i style="background:${C.habits}"></i>habits done</span><span><i style="background:var(--orange)"></i>trained</span><span>numbers: readiness</span></div></section>`;
+        ${ringSvg(frac, C.habits, 34, 5)}<span class="pip${trained ? ' on' : ''}"></span><b class="rd num${rd != null && carriedInputs(v, k) ? ' c' : ''}" style="color:${readyCol(rd)}">${rd ?? '·'}</b></div>`;
+    }).join('') + `</div><div class="wk-key"><span><i style="background:${C.habits}"></i>habits done</span><span><i style="background:var(--orange)"></i>trained</span><span>numbers: readiness${[6, 5, 4, 3, 2, 1, 0].some(i => carriedInputs(v, shiftDay(t, -i))) ? ' · faint = carried' : ''}</span></div></section>`;
 }
 /** The "open anywhere" card shows on the PC-served copy once it is paired and nothing is waiting to sync. */
 function mv0() { const a = anywhere(); return a && !state.pending.length ? a : null; }
 
 /** What Apple Health sent (via the Shortcut) for today and last night. Only fields that arrived are shown. */
 function healthCard(v, t) {
-  const b = v.bio[t] || {}, h = v.health;
+  const b = rawView().bio[t] || {}, h = v.health;
   const fmtH = x => { const hh = Math.floor(x), mm = Math.round((x - hh) * 60); return hh + ':' + String(mm).padStart(2, '0'); };
   const T = [
     ['moon', '#7d7aff', 'Sleep', b.sleep, x => fmtH(x), 'h'],
@@ -512,12 +525,12 @@ export const actions = {
   },
   'bio-set'(d) {
     haptic();
-    const t = today(), cur = (view().bio[t] || {})[d.f];
+    const t = today(), cur = (rawView().bio[t] || {})[d.f];   // a carried value is not "already set" — tapping it confirms it
     const val = Number(d.v);
     bioPatch(t, { [d.f]: cur === val ? null : val });
   },
   'bio-step'(d) {
-    const t = today(), cur = Number((view().bio[t] || {})[d.f]) || 0;
+    const t = today(), cur = Number((rawView().bio[t] || {})[d.f]) || 0;
     const next = Math.max(0, Math.round((cur + Number(d.d)) * 100) / 100);
     bioPatch(t, { [d.f]: next || null });
   },

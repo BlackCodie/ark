@@ -16,7 +16,7 @@ function reviewFor(back) {
   const names = Object.fromEntries((v.skills || []).map(s => [s.id, s.name]));
   const practice = (v.practiceLog || []).map(p => ({ skill: names[p.skill] || 'Practice', date: String(p.date || ''), mins: p.mins || 0 }));
   const until = back ? shiftDay(start, 6) : t;
-  return L.weeklyReview({ workouts: v.workouts, habits: v.habits, habitLog: v.habitLog, weights: v.weights, practice, bio: v.bio, readiness: v.readiness }, start, until);
+  return L.weeklyReview({ workouts: v.workouts, habits: v.habits, habitLog: v.habitLog, weights: v.weights, practice, bio: (v.raw || v).bio, readiness: (v.raw || v).readiness }, start, until);   // the week as logged, no carried days
 }
 const pct = x => Math.round(x * 100);
 function delta(cur, prev, fmt = x => String(x), unitWord = '') {

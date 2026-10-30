@@ -691,3 +691,38 @@ html[data-theme="light"] .ba-sec:not(.open) .ba-hd .ba-ic svg{color:color-mix(in
 .mic2-add.mine{color:var(--mc);background:color-mix(in srgb,var(--mc) 15%,transparent);box-shadow:inset 0 0 0 .5px color-mix(in srgb,var(--mc) 42%,transparent)}
 .mic2-add.mine small{color:inherit;opacity:.75}
 html[data-theme="light"] .mtr button.f{color:#0b0d10}
+
+/* ══ Carried values (2026-10-30, logic/carry.ts) — a day you did not log takes the previous day's numbers.
+   They are always told apart from what you logged: faded, with ↻ and the day they came from. ══ */
+.lg.carried{background:repeating-linear-gradient(135deg,transparent 0 7px,rgba(255,255,255,.018) 7px 14px),var(--fill-1)}
+.lg.carried .lg-v{opacity:.55}
+.lg.carried .lg-h{color:color-mix(in srgb,var(--c) 70%,var(--t3));font-weight:650}
+.lg.carried .lg-bar i{opacity:.4;box-shadow:none}
+.mtr.carried button.f::before{opacity:calc(var(--o) * .45)}
+.mtr.carried button.on{box-shadow:inset 0 0 0 1.5px var(--c)}
+.mtr.carried button.on::before{opacity:.45}
+.mtr-v .cf{font-size:.66rem;font-weight:700;color:var(--t3);letter-spacing:0}
+.mood2.carried button.on{background:transparent;box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--c) 70%,transparent)}
+.mood2.carried button.on .e{transform:scale(1.08);filter:saturate(.6)}
+.hud>div.cr .v{opacity:.6}
+.hud .cr-m{font-size:.62rem;color:var(--t3);margin-left:2px;letter-spacing:0}
+.ss.carry{background:repeating-linear-gradient(135deg,transparent 0 7px,rgba(255,255,255,.02) 7px 14px),var(--fill-1);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--mc) 35%,transparent)}
+.ss.carry .n{color:var(--t2)}
+.ss.carry small{color:color-mix(in srgb,var(--mc) 70%,var(--t3))}
+.mic2 .tk.cr{color:var(--t3);font-weight:650}
+.ls-bars span.c i{opacity:.35}
+.ls-bars span.c b{color:var(--t4)}
+.wd .rd.c{opacity:.45}
+.nlog span.c i{opacity:.4}
+.dh-ready.carried b{opacity:.75}
+.ds-carry .tt{color:var(--t2)}
+.ds-carry .btn{flex:none;height:32px;padding:0 10px;font-size:.78rem}
+.ds-carry .btn+.btn{margin-left:6px}
+.ds-carry-note{margin:12px 2px 0;line-height:1.45}
+.ds-carry-note .link{font-size:.8rem;font-weight:650;color:var(--accent,#40c8e0);padding:0;background:none}
+.store-spark{display:block;width:100%;height:54px;margin-top:10px}
+.ds-carry .st{white-space:normal;line-height:1.35}
+.ds-carry{flex-wrap:wrap;row-gap:8px}
+.mood2-cap .cf{display:block;margin-top:3px;font-size:.68rem;font-weight:650;letter-spacing:0;text-transform:none;color:var(--t3)}
+.strip7 .c b{opacity:.5}

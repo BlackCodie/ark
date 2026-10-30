@@ -64,7 +64,7 @@ function load() {
 export const state = load();
 if (!state.device) state.device = uid();
 
-let ver = 0, viewCache = null, viewVer = -1, saveTm = null;
+let ver = 0, viewCache = null, viewVer = -1, viewMin = -1, saveTm = null;
 const listeners = new Set();
 export function onChange(fn) { listeners.add(fn); }
 export function changed(opts = {}) {
@@ -78,11 +78,51 @@ export function save() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); }
   catch (e) { toast('Could not save on this phone — storage is full'); }
 }
-/** The phone's view of your data: last snapshot + queued changes. */
+/** The phone's view of your data: last snapshot + queued changes, made live (below). Rebuilt when anything changes
+ *  and once a minute, so carried doses arrive at their clock time and muscles move through recovery on time. */
 export function view() {
-  if (viewVer !== ver) { viewCache = L.projectSnapshot(state.snapshot, state.pending); viewVer = ver; }
+  const min = Math.floor(Date.now() / 60e3);
+  if (viewVer !== ver || viewMin !== min) { viewCache = live(L.projectSnapshot(state.snapshot, state.pending)); viewVer = ver; viewMin = min; }
   return viewCache;
 }
+/**
+ * What the screens read (2026-10-30, "when I don't log, use the previous day's stats" + "engines on the real clock"):
+ *   • a day you did not log takes your previous day's numbers (logic/src/carry.ts) — marked in v.carry with the day
+ *     they came from, never stored; v.raw keeps your logs exactly as logged for anything that asks what you did;
+ *   • readiness is worked out here for every day with the PC's own formula — the moment you log, not after a sync;
+ *   • each muscle's recovery state moves on the clock (muscleStateAt), not frozen at the PC's last snapshot.
+ */
+let soreLive = null, soreKey = '';
+function live(v) {
+  if (!v || !v.bio) return v;
+  const now = Date.now(), t = today();
+  const C = L.carryForward(v.bio, v.doses || [], t, now);
+  const out = { ...v, bio: C.bio, doses: C.doses, carry: C.from, raw: { bio: v.bio, doses: v.doses || [], readiness: v.readiness || {} } };
+  const D = v.bioDefs || {};
+  if (D.goals) {
+    const rd = { ...(v.readiness || {}) };
+    for (const k of Object.keys(C.bio)) { const r = L.readiness(C.bio[k], D.goals, D.tags || [], D.base || null); if (r != null) rd[k] = Math.round(r); }
+    out.readiness = rd;
+  }
+  const B = v.body;
+  if (B && Array.isArray(B.muscles) && B.muscles.length) {
+    const key = (v.workouts || []).length + ':' + Math.floor(now / 6e5);
+    if (soreKey !== key) { try { soreLive = L.sorenessByMuscle(v.workouts || [], B.muscles.map(m => m.slug), now); } catch (e) { soreLive = {}; } soreKey = key; }
+    let fresh = 0, recovering = 0, ready = 0, untouched = 0, touched7 = 0;
+    const muscles = B.muscles.map(m => {
+      const st = L.muscleStateAt(m, now, ((soreLive || {})[m.slug] || {}).level || 0);
+      if (st === 'fresh') fresh++; else if (st === 'recovering') recovering++; else if (st === 'untouched') untouched++; else ready++;
+      if (m.last && now - m.last < 7 * 864e5) touched7++;
+      return { ...m, state: st, hoursSince: m.last ? Math.round((now - m.last) / 36e5 * 10) / 10 : null };
+    });
+    out.body = { ...B, muscles, counts: { ...(B.counts || {}), fresh, recovering, ready, untouched, touched7 } };
+  }
+  return out;
+}
+/** Your logs exactly as logged — no carried values. For anything that asks what you actually did. */
+export function rawView() { const v = view(); return v && v.raw ? { ...v, bio: v.raw.bio, doses: v.raw.doses, readiness: v.raw.readiness } : v; }
+/** The real day a carried value on `day` came from ('sleep', 'dose:creatine' …), or null when it was logged. */
+export function carriedFrom(day, key) { const c = (view() || {}).carry || {}; return (c[day] && c[day][key]) || null; }
 export const paired = () => !!state.token;
 
 /**

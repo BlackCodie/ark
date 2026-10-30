@@ -7,7 +7,7 @@
    light, cold, meditation, training, your check-in, HRV and the endocrine
    estimate. Every state lists what moved it. Estimates, not measurements.
    ══════════════════════════════════════════════════════════════════════ */
-import { L, state, view, emit, changed, esc, icon, today, fmtDay, haptic, openSheet, topSheet, closeSheet } from './core.js';
+import { L, state, view, rawView, carriedFrom, emit, changed, esc, icon, today, fmtDay, haptic, openSheet, topSheet, closeSheet } from './core.js';
 import { bioPatch, MOODS } from './views.js';
 import { bedtimeTonight } from './doses.js';
 import { meter, moodRow, ENERGY_WORDS, STRESS_WORDS } from './logui.js';
@@ -55,7 +55,7 @@ export function mindInput(now = Date.now()) {
 }
 let cache = null, cacheKey = '';
 export function mindNow() {
-  const v = view(), key = (v.rev || 0) + ':' + state.pending.length + ':' + Math.floor(Date.now() / 300e3);
+  const v = view(), key = (v.rev || 0) + ':' + state.pending.length + ':' + Math.floor(Date.now() / 60e3);   // focus and alertness follow the clock
   if (cache && key === cacheKey) return cache;
   cache = L.mind(mindInput()); cacheKey = key;
   return cache;
@@ -189,11 +189,11 @@ export function secMind(v) {
   H0 += `<div class="ba-h"><h2 style="font-size:1.05rem">Check in</h2><span class="k">${lv ? esc(lv.n) : 'how are you, really?'}</span></div>
     <section class="card frost tight">
       <div class="eyebrow" style="margin-bottom:8px">Mood</div>
-      ${moodRow(levels, d.mood)}
-      ${meter('energy', 'Energy', '#ffd60a', d.energy, ENERGY_WORDS)}
-      ${meter('stress', 'Stress', '#bf5af2', d.stress, STRESS_WORDS)}
+      ${moodRow(levels, d.mood, carriedFrom(t, 'mood'))}
+      ${meter('energy', 'Energy', '#ffd60a', d.energy, ENERGY_WORDS, carriedFrom(t, 'energy'))}
+      ${meter('stress', 'Stress', '#bf5af2', d.stress, STRESS_WORDS, carriedFrom(t, 'stress'))}
       <div class="nlog">${days.map((k, i) => { const m = moods[i], c = m != null && levels[m] ? levels[m].c : '';
-        return `<span><i style="height:${m != null ? 12 + m * 7 : 4}px;${c ? 'background:' + c : ''}"></i>${fmtDay(k, { weekday: 'narrow' })}</span>`; }).join('')}</div>
+        return `<span class="${carriedFrom(k, 'mood') ? 'c' : ''}"><i style="height:${m != null ? 12 + m * 7 : 4}px;${c ? 'background:' + c : ''}"></i>${fmtDay(k, { weekday: 'narrow' })}</span>`; }).join('')}</div>
     </section>`;
   return H0;
 }
@@ -243,5 +243,5 @@ function stateSheet(k) {
 export const actions = {
   'mind-region'(d) { haptic(); sel = d.k; changed(); },
   'mind-state'(d) { haptic(); stateSheet(d.k); },
-  'mind-sick'() { haptic(); const t = today(); bioPatch(t, { sick: (view().bio[t] || {}).sick ? null : 1 }); },
+  'mind-sick'() { haptic(); const t = today(); bioPatch(t, { sick: (rawView().bio[t] || {}).sick ? null : 1 }); },
 };

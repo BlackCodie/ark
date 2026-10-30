@@ -203,7 +203,7 @@ export function healthSheet() {
   const sheet = openSheet({
     id: 'health', title: 'Apple Health',
     render: () => {
-      const h = view().health, v = view(), t = today(), b = v.bio[t] || {};
+      const h = view().health, v = view(), t = today(), b = (v.raw || v).bio[t] || {};   // what arrived — never carried
       const got = ['sleep', 'rhr', 'hrv', 'steps', 'active', 'daylight', 'vo2', 'bed', 'wake'].filter(k => b[k] != null);
       const url = healthUrl(), http = /^http:/.test(url);
       // On autopilot the morning upload lands by itself; say so when today's has not come.

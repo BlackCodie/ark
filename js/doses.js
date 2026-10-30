@@ -8,7 +8,7 @@
    AMOUNTS, never lab measurements, and every screen says so.
    ══════════════════════════════════════════════════════════════════════ */
 import { inW } from './logui.js';
-import { L, state, view, emit, emitUndoable, dropPending, esc, icon, today, fmt1, uid, toast, haptic, openSheet, topSheet, closeSheet } from './core.js';
+import { L, state, view, rawView, carriedFrom, emit, emitUndoable, dropPending, esc, icon, today, fmt1, uid, toast, haptic, openSheet, topSheet, closeSheet } from './core.js';
 
 const H = 3600e3;
 export const hm = t => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
@@ -26,17 +26,21 @@ export function takenAt(k, t = today()) {
   const a = doses().filter(x => x.k === k && dayOf(Date.parse(x.at)) === t).map(x => Date.parse(x.at));
   return a.length ? Math.max(...a) : null;
 }
-/** What you take regularly: logged on 3+ different days in the last 30 (a dose or a day's total), most recent first. */
-export function regulars(v = view(), t = today()) {
-  const D = v.bioDefs; if (!D || !D.micros) return [];
+/** What you take regularly: logged on 3+ different days in the last 30 (a dose or a day's total), most recent first.
+ *  Only real logs count — a carried day must not keep a supplement "regular" on its own. */
+export function regulars(v0 = view(), t = today()) {
+  const D = v0.bioDefs; if (!D || !D.micros) return [];
+  const v = v0.raw ? { bio: v0.raw.bio, doses: v0.raw.doses } : v0;
   const last = {}, days = {}, cut = L.shiftDayKey(t, -30);
   const saw = (k, day) => { if (!day || day > t) return; if (!last[k] || day > last[k]) last[k] = day; if (day >= cut) (days[k] = days[k] || new Set()).add(day); };
   (v.doses || []).forEach(x => saw(x.k, dayOf(Date.parse(x.at))));
   Object.keys(v.bio || {}).forEach(day => { const mc = (v.bio[day] || {}).micros || {}; Object.keys(mc).forEach(k => { if (mc[k] > 0) saw(k, day); }); });
   return D.micros.filter(m => days[m.k] && days[m.k].size >= 3).sort((x, y) => (last[y.k] || '').localeCompare(last[x.k] || ''));
 }
-/** What you usually take of it — remembered from your own doses (logic/pk.ts usualDose), or null. */
-export const usualOf = k => L.usualDose(k, doses());
+/** What you usually take of it — remembered from the doses you logged (logic/pk.ts usualDose), or null. */
+export const usualOf = k => L.usualDose(k, rawView().doses || []);
+/** Today's doses of it were carried from an earlier day (the real day), or null. */
+export const carriedDose = (k, t = today()) => carriedFrom(t, 'dose:' + k);
 
 /** Where one nutrient stands now — the numbers the list rows and the sheet share. */
 export function standing(k, now = Date.now()) {
@@ -84,9 +88,16 @@ function storeOf(k) {
   const days = n => L.dailyTotals(k, D, t, n, x => dayOf(x));
   const any = n => days(n).some(x => x > 0);
   if (k === 'creatine') {
-    if (!any(90)) return null;
-    const sat = L.creatineSaturation(days(90));
-    return { label: 'Muscle creatine store', v: Math.round(sat * 100), unit: '% saturated', note: sat >= 0.95 ? 'Saturated — keep the daily dose to stay there.' : 'Fills faster with bigger daily doses; timing does not matter.' };
+    if (!any(120)) return null;
+    // By the hour (logic/pk.ts creatineStoreAt): a dose fills the store over the hours after it, a day without one lets it fall.
+    const C = L.creatineStoreAt(D, Date.now()), dd = x => new Date(x).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    const avg = Math.round(D.filter(x => x.k === 'creatine' && Date.now() - Date.parse(x.at) < 7 * 864e5).reduce((a, x) => a + Number(x.amount), 0) / 7 * 10) / 10;
+    const note = C.sat >= 0.95 ? 'Saturated — a daily dose keeps it there.'
+      : C.trend === 'rising' ? 'Filling' + (C.absorbing >= 0.1 ? ' — ' + fmtAmt(C.absorbing, 'g') + ' of your last dose is still being taken up' : '')
+        + (C.fullAt ? '. Full around ' + dd(C.fullAt) + ' at your recent ' + avg + ' g a day.' : avg > 0 ? '. At your recent ' + avg + ' g a day it levels off near ' + Math.round(Math.min(1, avg / 2) * 100) + ' % — about 2 g a day keeps it full.' : '.')
+      : C.trend === 'falling' ? 'Emptying — no creatine in the last 24 h' + (C.baseAt ? '; back near your baseline around ' + dd(C.baseAt) + ' without more.' : '.')
+      : 'Holding steady.';
+    return { label: 'Muscle creatine store', v: Math.round(C.sat * 100), unit: '% saturated' + (C.trend === 'rising' ? ' ↑' : C.trend === 'falling' ? ' ↓' : ''), note, series: C.series };
   }
   if (k === 'vitd') {
     const lab = labFor(/vitamin\s*d|25.?oh/i);
@@ -127,7 +138,7 @@ export function bedtimeTonight() {
 export function logDose(k, amount, at) {
   const def = defOf(k), a = Number(amount);
   if (!(a > 0)) return;
-  const t0 = today(), cur = ((view().bio[t0] || {}).micros || {})[k] || 0;
+  const t0 = today(), cur = ((rawView().bio[t0] || {}).micros || {})[k] || 0;
   const before = L.microSafety(k, cur);
   emit('dose.add', { dose: { id: 'd' + uid(), k, amount: a, at: new Date(at).toISOString() } });
   haptic();
@@ -151,6 +162,19 @@ function curveSvg(P) {
     <line x1="${X(now)}" x2="${X(now)}" y1="4" y2="${h - 14}" stroke="rgba(255,255,255,.5)" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
     ${ticks}</svg>`;
 }
+/** A store's last 30 days (one point a day, then now) as a small line. */
+function storeSpark(pts) {
+  if (!pts || pts.length < 2) return '';
+  const W = 320, h = 54, x0 = pts[0].t, x1 = pts[pts.length - 1].t;
+  const X = t => 2 + (t - x0) / ((x1 - x0) || 1) * (W - 4), Y = v => h - 12 - Math.max(0, Math.min(1, v)) * (h - 18);
+  const line = pts.map((p, i) => (i ? 'L' : 'M') + X(p.t).toFixed(1) + ',' + Y(p.v).toFixed(1)).join(' ');
+  return `<svg class="store-spark" viewBox="0 0 ${W} ${h}" preserveAspectRatio="none" role="img" aria-label="The store over the last 30 days">
+    <line x1="2" x2="${W - 2}" y1="${Y(1)}" y2="${Y(1)}" stroke="rgba(255,255,255,.14)" stroke-dasharray="3 4" vector-effect="non-scaling-stroke"/>
+    <path d="${line} L${X(x1)},${h - 12} L${X(x0)},${h - 12} Z" fill="rgba(48,209,88,.14)"/>
+    <path d="${line}" fill="none" stroke="#30d158" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
+    <circle cx="${X(x1)}" cy="${Y(pts[pts.length - 1].v)}" r="3" fill="#30d158"/>
+    <text x="2" y="${h - 1}" font-size="9" fill="rgba(235,240,245,.45)" font-family="system-ui">30 days ago</text><text x="${W - 2}" y="${h - 1}" text-anchor="end" font-size="9" fill="rgba(235,240,245,.45)" font-family="system-ui">now</text></svg>`;
+}
 const trimN = n => String(+(+n).toFixed(3));
 const WHEN = [[0, 'Now'], [30, '30 min ago'], [60, '1 h ago'], [120, '2 h ago'], [240, '4 h ago']];
 /** The Log button says exactly what will be saved. */
@@ -166,7 +190,7 @@ export function doseSheet(k, preset) {
     id: 'dose', title: def.icon + ' ' + def.name,
     render: () => {
       const v = view(), t = today(), S = standing(k), sp = S && S.sp, u = usualOf(k);
-      const todayAmt = ((v.bio[t] || {}).micros || {})[k] || 0;
+      const todayAmt = ((v.bio[t] || {}).micros || {})[k] || 0, cfrom = carriedDose(k, t);
       const saf = L.microSafety(k, todayAmt);
       const mine = doses().filter(x => x.k === k && dayOf(Date.parse(x.at)) === t).sort((a, b) => b.at.localeCompare(a.at));
       const dosed = doses().some(x => x.k === k && Date.now() - Date.parse(x.at) < 72 * 3600e3);
@@ -188,17 +212,22 @@ export function doseSheet(k, preset) {
         <div class="chips ds-when">${WHEN.map(([o, l]) => `<button class="chip ${ds.off === o ? 'on' : ''}" style="--accent:${def.c || '#40c8e0'}" data-act="ds-off" data-v="${o}">${l}</button>`).join('')}
           <input class="inp ds-in" type="time" data-ds-time aria-label="Time taken"></div>
         <button class="btn btn-prominent block ds-go" style="margin-top:16px;--accent:${def.c || '#40c8e0'}" data-act="ds-log" data-ds-btn>${esc(logLabel(def))}</button>`;
-      H0 += `<div class="stat3" style="margin-top:16px"><div class="frost"><div class="v num">${fmtAmt(todayAmt, '')}</div><div class="k">Today · ${esc(def.unit)}</div></div>
+      H0 += `<div class="stat3" style="margin-top:16px"><div class="frost"><div class="v num">${fmtAmt(todayAmt, '')}</div><div class="k">Today · ${esc(def.unit)}${cfrom ? ' · ↻ assumed' : ''}</div></div>
         <div class="frost"><div class="v num">${def.limit ? 'max ' + (def.goal || 0) : fmtAmt(def.goal, '')}</div><div class="k">${def.limit ? 'Limit' : 'Daily goal'}</div></div>
         <div class="frost"><div class="v num" style="${saf ? 'color:' + (saf.level === 'over' ? '#ff453a' : '#ffb340') : ''}">${saf ? fmtAmt(saf.ul, '') : '—'}</div><div class="k">Upper limit</div></div></div>`;
-      if (mine.length) H0 += `<div class="grp-h">Today</div><section class="list frost">${mine.map(x => `<div class="li"><span class="tx"><div class="tt num">${fmtAmt(x.amount, def.unit)}</div><div class="st">${hm(Date.parse(x.at))}${pend.has(x.id) ? ' · not synced yet' : ''}</div></span>
+      if (mine.length) H0 += `<div class="grp-h">Today</div><section class="list frost">${mine.map(x => x.src === 'carry'
+        // Carried from an earlier day (logic/carry.ts): assumed, not logged — confirm it or say you did not take it.
+        ? `<div class="li ds-carry"><span class="tx"><div class="tt num">↻ ${fmtAmt(x.amount, def.unit)}</div><div class="st">${hm(Date.parse(x.at))} · assumed — you took it then on ${esc(new Date(x.from + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }))}</div></span>
+          <button class="btn sm btn-glass" data-act="ds-keep" data-id="${esc(x.id)}">Taken ✓</button><button class="btn sm btn-glass" data-act="ds-skip">Not today</button></div>`
+        : `<div class="li"><span class="tx"><div class="tt num">${fmtAmt(x.amount, def.unit)}</div><div class="st">${hm(Date.parse(x.at))}${pend.has(x.id) ? ' · not synced yet' : ''}</div></span>
         <button class="circle sm" data-act="ds-del" data-id="${esc(x.id)}" aria-label="Delete the ${hm(Date.parse(x.at))} dose">${icon('trash', 15)}</button></div>`).join('')}</section>`;
+      else if (cfrom) H0 += `<p class="sub ds-carry-note">↻ You took it on ${esc(new Date(cfrom + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }))} — ARK assumes the same today once its time comes. <button class="link" data-act="ds-skip">Not today</button></p>`;
       if (S) {
         H0 += `<section class="card frost pk-now" style="margin-top:16px"><div class="eyebrow">Estimated now</div><div class="pk-big">${esc(S.line)}</div>
           ${S.sub ? `<div class="sub">${esc(S.sub)}</div>` : ''}
           ${S.recent && S.P.curve.some(p => p.v > 0) && sp.where !== 'gut' ? `<div style="margin-top:10px">${curveSvg(S.P)}</div>
             <div class="row num sub" style="gap:14px;margin-top:4px;font-size:.78rem">${dosed && S.P.peakAt ? `<span>${S.P.peakAt < Date.now() ? 'Peaked' : 'Peaks'} ~${hm(S.P.peakAt)}</span>` : ''}${dosed && S.P.clearAt ? `<span>Clears ~${hm(S.P.clearAt)}</span>` : ''}${S.P.pending > 0.01 ? `<span>${fmtAmt(S.P.pending, sp.mass)} still absorbing</span>` : ''}</div>` : ''}
-          ${S.store ? `<div class="pk-store"><span>${esc(S.store.label)}</span><b style="${S.store.color ? 'color:' + S.store.color : ''}">${S.store.text ? esc(S.store.text) : esc(String(S.store.v)) + '<small> ' + esc(S.store.unit) + '</small>'}</b></div><div class="sub" style="line-height:1.45">${esc(S.store.note)}</div>` : ''}
+          ${S.store ? `<div class="pk-store"><span>${esc(S.store.label)}</span><b style="${S.store.color ? 'color:' + S.store.color : ''}">${S.store.text ? esc(S.store.text) : esc(String(S.store.v)) + '<small> ' + esc(S.store.unit) + '</small>'}</b></div><div class="sub" style="line-height:1.45">${esc(S.store.note)}</div>${S.store.series ? storeSpark(S.store.series) : ''}` : ''}
           <p class="sub" style="margin:10px 0 0;line-height:1.45">Estimate from your dose times and population-average kinetics — people differ by ±30–50 %. Not a lab value.</p></section>`;
       }
       if (sp) H0 += `<div class="grp-h">How it works</div><section class="card frost tight pk-info"><p>${esc(sp.note)}</p><p><b>Timing</b> ${esc(sp.timing)}</p>
@@ -230,6 +259,11 @@ export const actions = {
     logDose(ds.k, amt, doseAt());
     ds.amt = amt; ds.custom = ''; const t = document.querySelector('[data-ds-time]'); if (t) t.value = '';
   },
+  'ds-keep'(d) {
+    const x = doses().find(y => y.id === d.id); if (!x) return;
+    logDose(x.k, x.amount, Date.parse(x.at));   // a real dose at that time replaces the carried ones
+  },
+  'ds-skip'() { haptic(); emit('bio.nocarry', { day: today(), key: 'dose:' + ds.k, on: true }); toast('Not taken today — ARK stops assuming it'); },
   'ds-del'(d) {
     const ev = state.pending.find(e => !e.seq && e.type === 'dose.add' && e.data.dose && e.data.dose.id === d.id);
     if (ev) { dropPending(ev.id); toast('Dose removed'); return; }

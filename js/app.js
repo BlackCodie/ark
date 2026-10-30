@@ -60,17 +60,46 @@ function render() {
   if (p.rev !== dataRev || Date.now() - p.at > 60000) {
     // Body Arch is long; when it is already built, patch only the sections that changed.
     if (!(id === 'body' && p.rev >= 0 && patchBodyArch())) {
-      p.el.innerHTML = fn();
-      if (after) after();
+      const html = fn();
+      // Same page as before (the clock tick below often changes nothing): leave the DOM alone.
+      if (html !== p.html) {
+        // Side-scrolling strips keep their place across a redraw.
+        const SCR = '.hstrip,.sstrip,.scroll1,.jump-in', keep = [].map.call(p.el.querySelectorAll(SCR), e => e.scrollLeft);
+        p.el.innerHTML = html; p.html = html;
+        [].forEach.call(p.el.querySelectorAll(SCR), (e, j) => { if (keep[j]) e.scrollLeft = keep[j]; });
+        if (after) after();
+      }
     }
     p.rev = dataRev; p.at = Date.now();
   }
+  fadeAll(p.el);
   tabbar.style.setProperty('--i', i);
   tabbar.querySelectorAll('.tab').forEach((b, j) => { b.classList.toggle('on', j === i); b.setAttribute('aria-selected', j === i); });
   tabbar.classList.toggle('hide', !paired());
   document.getElementById('edge-title').textContent = label;
   updatePill();
 }
+/* Side-scrolling rows fade at an edge only where there is more to scroll (2026-10-30: the section bar's "Mind" and
+   the scanner's "T…" read as cut off, not as rows you can swipe). */
+const FADE = '.jump,.modes,.hstrip,.sstrip,.scroll1';
+function fadeEdges(el) {
+  const l = el.scrollLeft > 2, r = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
+  el.classList.toggle('fade-l', l); el.classList.toggle('fade-r', r);
+}
+function fadeAll(root) { if (root) root.querySelectorAll(FADE).forEach(fadeEdges); }
+document.addEventListener('scroll', e => { const t = e.target; if (t && t.matches && t.matches(FADE)) fadeEdges(t); }, { capture: true, passive: true });
+window.addEventListener('resize', () => fadeAll(document));
+/* The clock (2026-10-30, "engines on the real clock"): once a minute, while you are looking and not touching, the open
+   tab is redrawn from a fresh view — carried doses arrive at their time, muscles move through recovery, readiness,
+   focus and the stores follow the clock. Body Arch swaps only the sections that changed; a sheet refreshes itself. */
+let lastTouch = 0;
+['pointerdown', 'keydown', 'scroll', 'touchmove'].forEach(t => window.addEventListener(t, () => { lastTouch = Date.now(); }, { passive: true, capture: true }));
+setInterval(() => {
+  if (document.hidden || !paired() || Date.now() - lastTouch < 4000 || topSheet()) return;
+  const a = document.activeElement; if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) return;
+  if (state.workout && state.tab === 'train') return;   // the workout logger runs its own timer
+  dataRev++; render();
+}, 60e3);
 let rTm = 0;
 function scheduleRender() { cancelAnimationFrame(rTm); rTm = requestAnimationFrame(() => { render(); refreshSheets(); }); }
 

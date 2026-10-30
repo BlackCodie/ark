@@ -165,7 +165,7 @@ export const actions = {
       st.doses.forEach(x => emit('dose.add', { dose: { id: pre + x.k + '-' + Date.now().toString(36), k: x.k, amount: x.amount, at: new Date().toISOString() } }));
       toast('Logged ' + tagsOf({ doses: st.doses }).join(' + '));
     }
-    if (!on) (view().doses || []).filter(x => String(x.id || '').startsWith(pre)).forEach(x => emit('dose.del', { id: x.id }));
+    if (!on) ((view().raw || view()).doses || []).filter(x => String(x.id || '').startsWith(pre)).forEach(x => emit('dose.del', { id: x.id }));
   },
   'rt-manage'() { manageSheet(); },
   'rt-edit'(d) { editSheet(d.id); },

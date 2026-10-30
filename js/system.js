@@ -46,8 +46,10 @@ export function planCard(v = view()) {
 }
 
 /* ── daily quests ── */
+// Quests and experiments judge what you actually logged — never values carried from an earlier day (logic/carry.ts).
+const rawOf = v => (v.raw ? { bio: v.raw.bio || {}, doses: v.raw.doses || [], readiness: v.raw.readiness || {} } : { bio: v.bio || {}, doses: v.doses || [], readiness: v.readiness || {} });
 function questData(v, day) {
-  return { day, now: Date.now(), workouts: v.workouts || [], bio: v.bio || {}, weights: v.weights || {}, doses: v.doses || [], habitLog: v.habitLog || {},
+  return { day, now: Date.now(), workouts: v.workouts || [], bio: rawOf(v).bio, weights: v.weights || {}, doses: rawOf(v).doses, habitLog: v.habitLog || {},
     journal: v.journal || [], measures: v.measures || {} };
 }
 export function questsNow(v = view()) {
@@ -55,7 +57,7 @@ export function questsNow(v = view()) {
   if (v.quests && v.quests.day === t && Array.isArray(v.quests.list) && v.quests.list.length) return v.quests.list;
   // This phone sees the day first: write the list and send it, so the PC keeps the same one.
   const list = L.dailyQuests({ today: t, now: Date.now(), plan: planNow(v), fatigue: fatigueNow(v).level, goals: ((v.bioDefs || {}).goals) || {},
-    bio: v.bio || {}, weights: v.weights || {}, doses: v.doses || [], habits: (v.habits || []).length, bedtime: L.bedtimeFor(v.bio || {}, t),
+    bio: rawOf(v).bio, weights: v.weights || {}, doses: rawOf(v).doses, habits: (v.habits || []).length, bedtime: L.bedtimeFor(rawOf(v).bio, t),
     experiments: v.experiments || [], measures: v.measures || {} });
   if (!state.pending.some(e => e.type === 'quests.set' && e.data && e.data.day === t)) setTimeout(() => emit('quests.set', { day: t, list }), 0);
   return list;
@@ -270,7 +272,7 @@ function whatIfRun() {
 }
 
 /* ── experiments (Grow → Lab) ── */
-const expData = v => ({ bio: v.bio || {}, readiness: v.readiness || {}, weights: v.weights || {}, doses: v.doses || [] });
+const expData = v => ({ ...rawOf(v), weights: v.weights || {} });
 export function renderLab() {
   const v = view(), t = today(), X = (v.experiments || []).slice().reverse();
   let H = `<p class="sub" style="line-height:1.45;margin:0 2px 12px">Test one change at a time. ARK compares up to 4 weeks before the start with the days since, and calls a change clear only when it beats your normal day-to-day noise.</p>`;

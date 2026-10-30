@@ -730,6 +730,12 @@ details.proto .why{font-size:.8rem;color:var(--t3);line-height:1.5;margin:8px 0 
 .anywhere .aw-step>b{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:#03130d;font-size:.8rem}
 .anywhere .aw-step.done>b{background:#30d158}
 .anywhere .aw-step.wait{opacity:.5}
+.anywhere .aw-step .row{flex-wrap:wrap}
+.anywhere .aw-step .btn{white-space:nowrap}
+/* side-scrolling rows: a soft edge where there is more to swipe (js/app.js fadeEdges) */
+.fade-r{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 40px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 40px),transparent)}
+.fade-l{-webkit-mask-image:linear-gradient(90deg,transparent,#000 40px);mask-image:linear-gradient(90deg,transparent,#000 40px)}
+.fade-l.fade-r{-webkit-mask-image:linear-gradient(90deg,transparent,#000 40px,#000 calc(100% - 40px),transparent);mask-image:linear-gradient(90deg,transparent,#000 40px,#000 calc(100% - 40px),transparent)}
 .anywhere .tt{font-weight:600}
 .anywhere .sub{line-height:1.45;margin-top:2px}
 
