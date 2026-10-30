@@ -123,6 +123,7 @@ exports.recoveryWindow = recoveryWindow;
 exports.setTarget = setTarget;
 exports.derivedStrength = derivedStrength;
 exports.bodyState = bodyState;
+exports.muscleStateAt = muscleStateAt;
 exports.systemicRecoveryFactor = systemicRecoveryFactor;
 const soreness_1 = require("./soreness");
 const physique_1 = require("./physique");
@@ -290,6 +291,7 @@ function bodyState(input) {
             soreness: sore, strength: str.value, strengthManual: str.manual,
             strengthDerived: str.derived, strengthFrom: str.from, mobility: mob, priority,
             cat: cats[slug] || null, vol, injury: inj,
+            due: t.last ? { recovering: Math.round(t.last + loEff * 36e5), ready: Math.round(t.last + hiEff * 36e5) } : null,
         };
         if (state === 'fresh')
             fresh++;
@@ -381,6 +383,24 @@ function bodyState(input) {
  * window without ever inventing a wildly different one, and scaled by the
  * engine's own confidence so a sparse estimate barely moves it.
  */
+/**
+ * A muscle's recovery state at `now` (2026-10-30, "engines on the real clock"): from the times its window turns
+ * (`due`, worked out by bodyState with your last session's sets and the systemic factor) and its soreness now. The
+ * phone's Scanner then moves on the clock between syncs instead of freezing at the PC's last snapshot. Older
+ * snapshots without `due` fall back to the stored recovery window.
+ */
+function muscleStateAt(m, now, sore = 0) {
+    const last = Number(m.last) || 0;
+    if (!last)
+        return 'untouched';
+    const due = m.due || (m.recWindow ? { recovering: last + m.recWindow.lo * 36e5, ready: last + m.recWindow.hi * 36e5 } : null);
+    let st = !due ? (m.state || 'ready') : now < due.recovering ? 'fresh' : now < due.ready ? 'recovering' : now - last < 14 * 864e5 ? 'ready' : 'detrained';
+    if (sore >= 3)
+        st = 'fresh';
+    else if (sore === 2 && st === 'ready')
+        st = 'recovering';
+    return st;
+}
 function systemicRecoveryFactor(report) {
     if (!report || !report.derived)
         return { ...exports.NEUTRAL_SYSTEMIC };
@@ -413,6 +433,160 @@ function systemicRecoveryFactor(report) {
                 : cap < 45 ? 'low recovery capacity' : 'systemic load';
     }
     return { factor, reason, confidence: conf, capacity: cap, stress, anabolic: anab, energy };
+}
+
+  },
+  "./carry": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CARRY_KEYS = exports.CARRY_ADD = exports.CARRY_SET = exports.CARRY_DAYS = void 0;
+exports.carryForward = carryForward;
+exports.carriedFrom = carriedFrom;
+exports.isCarryKey = isCarryKey;
+/**
+ * CARRY-FORWARD — a day you did not log takes your previous day's numbers
+ * (the user, 2026-10-30: "when I don't log anything make it so it logs the previous day's stats").
+ *
+ * Nothing is stored. Carried values are worked out from your real logs every time they are needed, each one
+ * marked with the real day it came from, and any real log replaces them at once. A chain of carried days stops
+ * CARRY_DAYS after the real value it started from — after that a gap is a gap again, so a week away is not filled
+ * with numbers from a week ago.
+ *
+ *   • Readings of the night and the morning (sleep, deep and REM sleep, bedtime, wake time, HRV, resting heart
+ *     rate, energy, mood, stress) carry into today as well — last night happened whether or not you logged it.
+ *   • Running totals (water, protein, calories, steps, active energy, exercise minutes, daylight) carry only into
+ *     days that are over: today's total is what you have logged so far.
+ *   • Supplements: each of the previous day's doses repeats at the same clock time, today only once that time has
+ *     passed — the kinetics then run on the real clock. A real dose of a supplement that day replaces all of its
+ *     carried ones.
+ *   • A field or supplement you cleared for a day (`nocarry`) stays empty, and the chain stops there.
+ *
+ * Things that are not stats are never carried: workouts, habits, tags, meals, body weight (a carried weigh-in
+ * would draw a flat line on the weight trend).
+ */
+const dates_1 = require("./dates");
+const series_1 = require("./series");
+exports.CARRY_DAYS = 7;
+/** Night and morning readings — carried into today too. */
+exports.CARRY_SET = ['sleep', 'deep', 'rem', 'bed', 'wake', 'hrv', 'rhr', 'energy', 'mood', 'stress'];
+/** Running totals — carried only into days that are over. */
+exports.CARRY_ADD = ['water', 'prot', 'cal', 'steps', 'active', 'exmin', 'daylight'];
+/** For these a stored 0 means "not logged" (the PC stores 0 for an empty total); mood 0 and a 00:00 bedtime are real. */
+const ZERO_IS_EMPTY = new Set(['sleep', 'deep', 'rem', 'hrv', 'rhr', 'energy', 'stress', 'water', 'prot', 'cal', 'steps', 'active', 'exmin', 'daylight']);
+const isEmpty = (f, v) => v === null || v === undefined || v === '' || (ZERO_IS_EMPTY.has(f) && !(Number(v) > 0));
+const isDayKey = (k) => /^\d{4}-\d{2}-\d{2}$/.test(k);
+/** The same local clock time as `atIso`, on `day`. */
+function sameClock(day, atIso) {
+    const src = new Date(atIso), [y, m, d] = day.split('-').map(Number);
+    return new Date(y, m - 1, d, src.getHours(), src.getMinutes(), src.getSeconds()).getTime();
+}
+function carryForward(bio0, doses0, today, now, opts = {}) {
+    var _a;
+    const LIMIT = (_a = opts.days) !== null && _a !== void 0 ? _a : exports.CARRY_DAYS;
+    const dayOf = opts.dayKeyOf || ((t) => { const d = new Date(t); const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); });
+    const bioIn = bio0 || {};
+    const realDoses = (doses0 || []).filter(d => d && d.k && Number(d.amount) > 0 && isFinite(Date.parse(d.at)));
+    const bio = {};
+    const from = {};
+    for (const k of Object.keys(bioIn))
+        if (isDayKey(k))
+            bio[k] = { ...bioIn[k], micros: { ...((bioIn[k] || {}).micros || {}) } };
+    // real doses by day and supplement
+    const realBy = {};
+    for (const d of realDoses) {
+        const day = dayOf(Date.parse(d.at));
+        ((realBy[day] = realBy[day] || {})[d.k] = realBy[day][d.k] || []).push(d);
+    }
+    const days = [...Object.keys(bio), ...Object.keys(realBy)].filter(k => isDayKey(k) && k <= today).sort();
+    if (!days.length)
+        return { bio, doses: realDoses.slice().sort((a, b) => Date.parse(a.at) - Date.parse(b.at)), from };
+    const carried = [];
+    const dosesOn = {}; // real + carried, by day
+    let prev = null;
+    for (let day = days[0]; day <= today; day = (0, series_1.shiftDayKey)(day, 1)) {
+        const rec = bio[day] || { micros: {} };
+        const no = new Set(Array.isArray(rec.nocarry) ? rec.nocarry.map(String) : []);
+        const fr = {};
+        const p = prev ? bio[prev] : null, pf = prev ? (from[prev] || {}) : {};
+        const over = day < today;
+        if (p && prev) {
+            for (const f of [...exports.CARRY_SET, ...exports.CARRY_ADD]) {
+                if (!isEmpty(f, rec[f]) || no.has(f) || isEmpty(f, p[f]))
+                    continue;
+                if (!over && exports.CARRY_ADD.includes(f))
+                    continue;
+                const origin = pf[f] || prev;
+                if ((0, dates_1.daysBetween)(origin, day) > LIMIT)
+                    continue;
+                rec[f] = p[f];
+                fr[f] = origin;
+            }
+        }
+        // supplements: real doses stand; a supplement with none today repeats yesterday's at the same clock times
+        const mine = {};
+        for (const k of Object.keys(realBy[day] || {}))
+            mine[k] = realBy[day][k].slice();
+        if (prev) {
+            const pd = dosesOn[prev] || {};
+            for (const k of Object.keys(pd)) {
+                if (mine[k] && mine[k].length)
+                    continue;
+                if (no.has('dose:' + k))
+                    continue;
+                if (Number((rec.micros || {})[k]) > 0)
+                    continue; // a real day total logged without a time
+                const origin = pf['dose:' + k] || prev;
+                if ((0, dates_1.daysBetween)(origin, day) > LIMIT)
+                    continue;
+                const list = [];
+                pd[k].forEach((d, i) => {
+                    const at = sameClock(day, d.at);
+                    if (!over && at > now)
+                        return; // today: only once that time has passed
+                    list.push({ id: 'carry:' + k + ':' + day + ':' + i, k, amount: Number(d.amount), at: new Date(at).toISOString(), src: 'carry', from: origin });
+                });
+                if (list.length) {
+                    mine[k] = list;
+                    carried.push(...list);
+                    rec.micros = rec.micros || {};
+                    rec.micros[k] = Math.round(list.reduce((s, d) => s + d.amount, 0) * 1000) / 1000;
+                    fr['dose:' + k] = origin;
+                }
+            }
+            // day totals logged without dose times (older entries): closed days only
+            if (over && p) {
+                const pm = p.micros || {};
+                for (const k of Object.keys(pm)) {
+                    if (mine[k] || !(Number(pm[k]) > 0) || Number((rec.micros || {})[k]) > 0 || no.has('dose:' + k))
+                        continue;
+                    const origin = pf['micros:' + k] || pf['dose:' + k] || prev;
+                    if ((0, dates_1.daysBetween)(origin, day) > LIMIT)
+                        continue;
+                    rec.micros = rec.micros || {};
+                    rec.micros[k] = Number(pm[k]);
+                    fr['micros:' + k] = origin;
+                }
+            }
+        }
+        dosesOn[day] = mine;
+        if (Object.keys(fr).length)
+            from[day] = fr;
+        const has = Object.keys(rec).some(k => k !== 'micros' && rec[k] !== undefined) || Object.keys(rec.micros || {}).length;
+        if (has || bio[day])
+            bio[day] = rec;
+        prev = day;
+    }
+    const all = [...realDoses, ...carried].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+    return { bio, doses: all, from };
+}
+/** Was this field (or 'dose:<k>') carried on this day, and from which real day? */
+function carriedFrom(res, day, key) {
+    return (res && res.from[day] && res.from[day][key]) || null;
+}
+exports.CARRY_KEYS = [...exports.CARRY_SET, ...exports.CARRY_ADD];
+/** A key a `bio.nocarry` event may name: a carried field, or a supplement as 'dose:<k>'. */
+function isCarryKey(k) {
+    return typeof k === 'string' && (exports.CARRY_KEYS.includes(k) || /^dose:[a-z0-9_-]{1,24}$/i.test(k));
 }
 
   },
@@ -2600,6 +2774,7 @@ __exportStar(require("./labs"), exports);
 __exportStar(require("./muscle"), exports);
 __exportStar(require("./charts"), exports);
 __exportStar(require("./weekly"), exports);
+__exportStar(require("./carry"), exports);
 
   },
   "./labs": function (exports, module, require) {
@@ -4863,6 +5038,7 @@ exports.amountAt = amountAt;
 exports.cutoffBefore = cutoffBefore;
 exports.dailyTotals = dailyTotals;
 exports.creatineSaturation = creatineSaturation;
+exports.creatineStoreAt = creatineStoreAt;
 exports.vitaminDStatus = vitaminDStatus;
 exports.omega3Index = omega3Index;
 exports.builtEffect = builtEffect;
@@ -5116,6 +5292,91 @@ function creatineSaturation(dailyGrams) {
             x += (target - x) * 0.1;
     }
     return Math.max(0, Math.min(1, x));
+}
+const CR = { theta: 2.5, perGram: 0.012, upPerDay: 0.8, downPerDay: 0.1, maint: 2 };
+function crSim(events, from, to, x0, sample) {
+    const H = 3600e3, N = Math.max(0, Math.ceil((to - from) / H));
+    const cdf = (t) => t <= 0 ? 0 : 1 - Math.exp(-t / CR.theta) * (1 + t / CR.theta);
+    const U = new Float64Array(N + 1);
+    for (const e of events) {
+        if (e.at > to)
+            continue;
+        const h0 = (e.at - from) / H;
+        for (let j = -1; j < 48; j++) {
+            const hh = Math.floor(h0) + j;
+            if (hh < 0 || hh > N)
+                continue;
+            const a = Math.max(0, hh - h0), b = hh + 1 - h0;
+            if (b <= 0)
+                continue;
+            U[hh] += e.m * (cdf(b) - cdf(a));
+        }
+    }
+    const kUp = 1 - Math.pow(1 - CR.upPerDay, 1 / 24), kDn = 1 - Math.pow(1 - CR.downPerDay, 1 / 24);
+    const ev = events.filter(e => e.at <= to).sort((p, q) => p.at - q.at);
+    let x = x0, lo = 0, hi = 0, i24 = 0;
+    for (let h = 0; h <= N; h++) {
+        const t = Math.min(to, from + h * H);
+        while (hi < ev.length && ev[hi].at <= t)
+            i24 += ev[hi++].m;
+        while (lo < hi && ev[lo].at <= t - 24 * H)
+            i24 -= ev[lo++].m;
+        const target = Math.min(1, Math.max(0, i24) / CR.maint);
+        if (target >= x)
+            x += Math.min(CR.perGram * U[h], (target - x) * kUp);
+        else
+            x += (target - x) * kDn;
+        if (sample)
+            sample(t, x);
+    }
+    return Math.max(0, Math.min(1, x));
+}
+function creatineStoreAt(doses, now) {
+    const H = 3600e3, D = 24 * H;
+    const ev = doseEvents('creatine', doses).filter(e => e.at <= now);
+    const start = Math.floor((now - 120 * D) / H) * H;
+    const mid = new Date(now);
+    mid.setHours(0, 0, 0, 0);
+    const marks = new Set();
+    for (let i = 30; i >= 1; i--) {
+        const d = new Date(mid);
+        d.setDate(d.getDate() - i + 1);
+        marks.add(Math.floor((d.getTime() - start) / H));
+    }
+    const series = [];
+    let step = 0, sixAgo = 0;
+    const sat = crSim(ev, start, now, 0, (t, x) => {
+        if (marks.has(step))
+            series.push({ t, v: Math.round(x * 1000) / 1000 });
+        if (t <= now - 6 * H)
+            sixAgo = x;
+        step++;
+    });
+    series.push({ t: now, v: Math.round(sat * 1000) / 1000 });
+    const in24h = ev.filter(e => e.at > now - D).reduce((a, e) => a + e.m, 0);
+    const cdf = (t) => t <= 0 ? 0 : 1 - Math.exp(-t / CR.theta) * (1 + t / CR.theta);
+    const absorbing = ev.reduce((a, e) => a + e.m * (1 - cdf((now - e.at) / H)), 0);
+    const d = sat - sixAgo;
+    const trend = d > 0.002 ? 'rising' : d < -0.002 ? 'falling' : 'steady';
+    // projection at your recent average, one dose a day at 08:00
+    const avg7 = ev.filter(e => e.at > now - 7 * D).reduce((a, e) => a + e.m, 0) / 7;
+    let fullAt = null, baseAt = null;
+    if (avg7 > 0 && sat < 0.95) {
+        const fut = [];
+        for (let i = 1; i <= 90; i++) {
+            const dd = new Date(mid);
+            dd.setDate(dd.getDate() + i);
+            dd.setHours(8);
+            fut.push({ at: dd.getTime(), m: avg7 });
+        }
+        crSim([...ev, ...fut], now, now + 90 * D, sat, (t, x) => { if (fullAt === null && x >= 0.95)
+            fullAt = t; });
+    }
+    else if (avg7 === 0 && sat >= 0.1) {
+        crSim(ev, now, now + 90 * D, sat, (t, x) => { if (baseAt === null && x < 0.1)
+            baseAt = t; });
+    }
+    return { sat, in24h: Math.round(in24h * 100) / 100, absorbing: Math.round(absorbing * 100) / 100, trend, fullAt, baseAt, series };
 }
 /**
  * Circulating 25(OH)D (ng/mL-equivalent, internal): the measured value if a
@@ -7700,6 +7961,7 @@ const readiness_1 = require("./readiness");
 const bloodwork_1 = require("./bloodwork");
 const strong_1 = require("./strong");
 const habitlog_1 = require("./habitlog");
+const carry_1 = require("./carry");
 function emptySnapshot() {
     return {
         v: 1, rev: 0, appliedSeq: 0, day: (0, dates_1.dayKey)(new Date()),
@@ -7941,6 +8203,19 @@ function applyEvent(s, e) {
             if (d.on && i < 0)
                 list.push(d.tag);
             if (!d.on && i >= 0)
+                list.splice(i, 1);
+            return;
+        }
+        case 'bio.nocarry': {
+            // 'Not today' for a carried value (carry.ts): the field or supplement stays empty that day, and its chain stops.
+            if (!isDay(d.day) || !(0, carry_1.isCarryKey)(d.key))
+                return;
+            const day = s.bio[d.day] || (s.bio[d.day] = {});
+            const list = Array.isArray(day.nocarry) ? day.nocarry : (day.nocarry = []);
+            const i = list.indexOf(d.key);
+            if (d.on !== false && i < 0)
+                list.push(d.key);
+            if (d.on === false && i >= 0)
                 list.splice(i, 1);
             return;
         }

@@ -483,18 +483,21 @@ export function closeSheet(s = topSheet()) {
   s.onClose && s.onClose();
 }
 function dragToDismiss(s) {
-  let y0 = null, dy = 0;
+  let y0 = null, dy = 0, centred = false;
   s.el.addEventListener('pointerdown', e => {
     const onHeader = e.target.closest('.grab,.sheet-h');
     const body = s.el.querySelector('.sheet-body');
     if (!onHeader && !(body && body.scrollTop <= 0 && e.target.closest('.sheet-body') && e.pointerType === 'touch')) return;
     if (e.target.closest('button,input,textarea,select')) return;
+    // On an iPad the sheet is centred with translateX(-50%) from the stylesheet — keep it while dragging, or the
+    // sheet jumped sideways by half its width the moment a swipe began (2026-10-30).
+    centred = window.matchMedia('(min-width:700px)').matches;
     y0 = e.clientY; dy = 0; s.el.style.transition = 'none';
   });
   window.addEventListener('pointermove', e => {
     if (y0 === null) return;
     dy = Math.max(0, e.clientY - y0);
-    s.el.style.transform = (s.el.style.transform.includes('-50%') ? 'translateX(-50%) ' : '') + `translateY(${dy}px)`;
+    s.el.style.transform = (centred ? 'translateX(-50%) ' : '') + `translateY(${dy}px)`;
   });
   const end = () => {
     if (y0 === null) return;

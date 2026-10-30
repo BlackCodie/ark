@@ -332,6 +332,9 @@ textarea.inp{height:auto;min-height:96px;padding:13px 16px;resize:none;line-heig
   .tabbar.hide{transform:translate(-50%,140%)}
   .sheet{max-width:560px;left:50%;right:auto;width:560px;transform:translate(-50%,calc(100% + 40px))}
   .sheet.on{transform:translateX(-50%)}
+  /* A full-height sheet (a habit's page, the workout, the exercise picker) is centred too. It used to keep
+     left:0 from .sheet.full and still take the -50% shift, so half of it sat off the left edge (2026-10-30). */
+  .sheet.full{left:50%;right:auto;width:min(720px,calc(100% - 32px));top:calc(var(--safe-t) + 14px)}
 }
 
 /* ══════════════ v2: editing, gym tools, settings ══════════════ */
