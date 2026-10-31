@@ -1,6 +1,6 @@
 /* ARK Mobile — bottom sheets: pairing, sync & settings, and the quick logs. */
 import {
-  L, state, view, carriedFrom, emit, changed, esc, icon, today, shiftDay, fmt1, fmtDay, fmtMins, ago,
+  L, state, view, emit, changed, esc, icon, today, shiftDay, fmt1, fmtDay, fmtMins, ago,
   openSheet, closeSheet, topSheet, toast, haptic, pair, unpair, syncNow, syncLabel, hubBase, syncState, pcAsOf, pcAgeMin, onPublicCopy } from './core.js';
 import { pillarColor, journalRow, MOODS } from './views.js';
 import { logRows, meter, moodRow, ENERGY_WORDS } from './logui.js';
@@ -88,6 +88,19 @@ async function qrScan() {
 }
 
 /* ── sync & settings ── */
+/** Every device you sync and where it stands (2026-10-31): the PC's last publish, then each phone and iPad. */
+function devicesList() {
+  const D = ((view() || {}).devices) || [];
+  if (!state.token || (!D.length && !state.snapshot)) return '';
+  const pcAge = pcAgeMin();
+  const pc = `<div class="li"><span class="ic" style="--c:#40c8e0">${icon('chart', 17)}</span><span class="tx"><div class="tt">ARK on your PC</div>
+    <div class="st">${state.snapshot && state.snapshot.generated ? 'published ' + esc(pcAsOf()) + (pcAge != null && pcAge >= 15 ? ' — open ARK on the PC to update' : '') : 'not heard from yet'}</div></span>
+    <span class="dev-dot ${pcAge != null && pcAge < 15 ? 'ok' : ''}"></span></div>`;
+  const rows = D.map(d => { const me = d.id === state.device, fresh = Date.now() - d.last < 15 * 60e3;
+    return `<div class="li"><span class="ic" style="--c:${me ? '#30d158' : '#bf5af2'}">${icon(/ipad/i.test(d.name) ? 'note' : 'heart', 17)}</span><span class="tx"><div class="tt">${esc(d.name)}${me ? ' · this one' : ''}</div>
+      <div class="st">${d.last ? 'last sent ' + esc(ago(d.last)) : 'paired'} · ${d.via === 'github' ? 'through GitHub' : 'on home Wi-Fi'}</div></span><span class="dev-dot ${fresh ? 'ok' : ''}"></span></div>`; }).join('');
+  return `<div class="grp-h">Your devices</div><section class="list frost devs" style="margin-bottom:14px">${pc}${rows}</section>`;
+}
 export function syncSheet() {
   openSheet({
     id: 'sync', title: 'Sync & settings',
@@ -109,6 +122,7 @@ export function syncSheet() {
           ? `<button class="btn btn-tint block" data-act="sync-now" ${syncState.busy ? 'disabled' : ''}>${icon('sync', 17)} Sync now</button>`
           : `<button class="btn btn-prominent block" data-act="pair-sheet">Connect to your PC</button>`}
       </section>
+      ${devicesList()}
       <section class="list frost" style="margin-bottom:4px">
         <button class="li" data-act="notify-sheet" style="--c:#ff453a"><span class="ic">${icon('bell', 18)}</span><span class="tx"><div class="tt">Notifications</div>
           <div class="st">${state.push.on ? 'On — habits, vitals, weigh-in, rest timer' : 'Reminders sent by your PC'}</div></span><span class="chev">${icon('chev', 16)}</span></button>
@@ -171,7 +185,7 @@ export function vitalsSheet() {
     const v = view(), t = today(), b = v.bio[t] || {}, D = v.bioDefs || {};
     const levels = D.levels && D.levels.length ? D.levels : MOODS.map(m => ({ e: m[0], n: m[1], c: '#5ee6b5' }));
     return `${logRows(v, t, ['sleep', 'water', 'prot'])}
-      <section class="card frost tight" style="margin-top:10px">${meter('energy', 'Energy', '#ffd60a', b.energy, ENERGY_WORDS, carriedFrom(t, 'energy'))}<div class="eyebrow" style="margin:14px 0 8px">Mood</div>${moodRow(levels, b.mood, carriedFrom(t, 'mood'))}</section>
+      <section class="card frost tight" style="margin-top:10px">${meter('energy', 'Energy', '#ffd60a', b.energy, ENERGY_WORDS)}<div class="eyebrow" style="margin:14px 0 8px">Mood</div>${moodRow(levels, b.mood)}</section>
       <p class="sub" style="margin-top:12px;line-height:1.5">Every tap is saved. ARK on your PC turns these into today's readiness.</p>`;
   } });
 }

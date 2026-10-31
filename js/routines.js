@@ -33,6 +33,11 @@ const tagsOf = st => [
 ];
 
 /* ── Today: the routine card ── */
+/** One line for Today's list: the routine for now and how far through it you are. */
+export function routineLine() {
+  const r = current(); if (!r) return null;
+  return { icon: r.icon || '•', name: r.name, done: logFor(today(), r.id).length, total: r.steps.length };
+}
 export function routineCard() {
   const rs = routines(), r = current(); if (!r) return '';
   const t = today(), done = logFor(t, r.id);

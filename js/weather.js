@@ -21,6 +21,13 @@ async function refresh(force = false) {
   busy = false;
 }
 export const hasWeather = () => !!loc();
+/** One line for Today's list: "⛅ 14° Cloudy · ↑16° ↓9°", or null until a place is set and read. */
+export function weatherLine() {
+  const p = loc(); if (!p) return null;
+  const c = state.weatherCache, W = c && c.lat === p.lat && c.lon === p.lon ? c.w : null;
+  setTimeout(() => refresh(), 0);
+  return W ? { icon: W.icon, text: W.temp + '° ' + W.text + (W.hi != null ? ' · ↑' + W.hi + '° ↓' + W.lo + '°' : '') } : { icon: '⛅', text: 'Loading the weather for ' + (p.name || 'your place') + '…' };
+}
 export function weatherCard() {
   const p = loc();
   if (!p) return `<section class="card frost wx wx-set slim-cta"><span class="wx-ic">⛅</span><span class="tx"><b>Weather</b><small>Set a place once — the day's weather and what it means for you</small></span>

@@ -189,15 +189,20 @@ export function secMind(v) {
   H0 += `<div class="ba-h"><h2 style="font-size:1.05rem">Check in</h2><span class="k">${lv ? esc(lv.n) : 'how are you, really?'}</span></div>
     <section class="card frost tight">
       <div class="eyebrow" style="margin-bottom:8px">Mood</div>
-      ${moodRow(levels, d.mood, carriedFrom(t, 'mood'))}
-      ${meter('energy', 'Energy', '#ffd60a', d.energy, ENERGY_WORDS, carriedFrom(t, 'energy'))}
-      ${meter('stress', 'Stress', '#bf5af2', d.stress, STRESS_WORDS, carriedFrom(t, 'stress'))}
+      ${moodRow(levels, d.mood)}
+      ${meter('energy', 'Energy', '#ffd60a', d.energy, ENERGY_WORDS)}
+      ${meter('stress', 'Stress', '#bf5af2', d.stress, STRESS_WORDS)}
       <div class="nlog">${days.map((k, i) => { const m = moods[i], c = m != null && levels[m] ? levels[m].c : '';
         return `<span class="${carriedFrom(k, 'mood') ? 'c' : ''}"><i style="height:${m != null ? 12 + m * 7 : 4}px;${c ? 'background:' + c : ''}"></i>${fmtDay(k, { weekday: 'narrow' })}</span>`; }).join('')}</div>
     </section>`;
   return H0;
 }
 
+/** One line for Today's list: focus now and the best window. */
+export function mindLine() {
+  const M = mindNow(), A = M.alert;
+  return 'Focus ' + M.states.focus.v + ' now' + (A.best ? ' · best ' + hm(A.best.from) + '–' + hm(A.best.to) : '') + (A.caffeineCutoff ? ' · coffee by ' + hm(A.caffeineCutoff) : '');
+}
 /** The small read-out for Today. */
 export function mindGlance() {
   const M = mindNow(), A = M.alert, f = M.states.focus;

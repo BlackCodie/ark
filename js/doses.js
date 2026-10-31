@@ -8,7 +8,7 @@
    AMOUNTS, never lab measurements, and every screen says so.
    ══════════════════════════════════════════════════════════════════════ */
 import { inW } from './logui.js';
-import { L, state, view, rawView, carriedFrom, emit, emitUndoable, dropPending, esc, icon, today, fmt1, uid, toast, haptic, openSheet, topSheet, closeSheet } from './core.js';
+import { L, state, view, rawView, emit, emitUndoable, dropPending, esc, icon, today, fmt1, uid, toast, haptic, openSheet, topSheet, closeSheet } from './core.js';
 
 const H = 3600e3;
 export const hm = t => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
@@ -39,8 +39,6 @@ export function regulars(v0 = view(), t = today()) {
 }
 /** What you usually take of it — remembered from the doses you logged (logic/pk.ts usualDose), or null. */
 export const usualOf = k => L.usualDose(k, rawView().doses || []);
-/** Today's doses of it were carried from an earlier day (the real day), or null. */
-export const carriedDose = (k, t = today()) => carriedFrom(t, 'dose:' + k);
 
 /** Where one nutrient stands now — the numbers the list rows and the sheet share. */
 export function standing(k, now = Date.now()) {
@@ -190,7 +188,7 @@ export function doseSheet(k, preset) {
     id: 'dose', title: def.icon + ' ' + def.name,
     render: () => {
       const v = view(), t = today(), S = standing(k), sp = S && S.sp, u = usualOf(k);
-      const todayAmt = ((v.bio[t] || {}).micros || {})[k] || 0, cfrom = carriedDose(k, t);
+      const todayAmt = ((v.bio[t] || {}).micros || {})[k] || 0;
       const saf = L.microSafety(k, todayAmt);
       const mine = doses().filter(x => x.k === k && dayOf(Date.parse(x.at)) === t).sort((a, b) => b.at.localeCompare(a.at));
       const dosed = doses().some(x => x.k === k && Date.now() - Date.parse(x.at) < 72 * 3600e3);
@@ -212,16 +210,11 @@ export function doseSheet(k, preset) {
         <div class="chips ds-when">${WHEN.map(([o, l]) => `<button class="chip ${ds.off === o ? 'on' : ''}" style="--accent:${def.c || '#40c8e0'}" data-act="ds-off" data-v="${o}">${l}</button>`).join('')}
           <input class="inp ds-in" type="time" data-ds-time aria-label="Time taken"></div>
         <button class="btn btn-prominent block ds-go" style="margin-top:16px;--accent:${def.c || '#40c8e0'}" data-act="ds-log" data-ds-btn>${esc(logLabel(def))}</button>`;
-      H0 += `<div class="stat3" style="margin-top:16px"><div class="frost"><div class="v num">${fmtAmt(todayAmt, '')}</div><div class="k">Today · ${esc(def.unit)}${cfrom ? ' · ↻ assumed' : ''}</div></div>
+      H0 += `<div class="stat3" style="margin-top:16px"><div class="frost"><div class="v num">${fmtAmt(todayAmt, '')}</div><div class="k">Today · ${esc(def.unit)}</div></div>
         <div class="frost"><div class="v num">${def.limit ? 'max ' + (def.goal || 0) : fmtAmt(def.goal, '')}</div><div class="k">${def.limit ? 'Limit' : 'Daily goal'}</div></div>
         <div class="frost"><div class="v num" style="${saf ? 'color:' + (saf.level === 'over' ? '#ff453a' : '#ffb340') : ''}">${saf ? fmtAmt(saf.ul, '') : '—'}</div><div class="k">Upper limit</div></div></div>`;
-      if (mine.length) H0 += `<div class="grp-h">Today</div><section class="list frost">${mine.map(x => x.src === 'carry'
-        // Carried from an earlier day (logic/carry.ts): assumed, not logged — confirm it or say you did not take it.
-        ? `<div class="li ds-carry"><span class="tx"><div class="tt num">↻ ${fmtAmt(x.amount, def.unit)}</div><div class="st">${hm(Date.parse(x.at))} · assumed — you took it then on ${esc(new Date(x.from + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }))}</div></span>
-          <button class="btn sm btn-glass" data-act="ds-keep" data-id="${esc(x.id)}">Taken ✓</button><button class="btn sm btn-glass" data-act="ds-skip">Not today</button></div>`
-        : `<div class="li"><span class="tx"><div class="tt num">${fmtAmt(x.amount, def.unit)}</div><div class="st">${hm(Date.parse(x.at))}${pend.has(x.id) ? ' · not synced yet' : ''}</div></span>
+      if (mine.length) H0 += `<div class="grp-h">Today</div><section class="list frost">${mine.map(x => `<div class="li"><span class="tx"><div class="tt num">${fmtAmt(x.amount, def.unit)}</div><div class="st">${hm(Date.parse(x.at))}${pend.has(x.id) ? ' · not synced yet' : ''}</div></span>
         <button class="circle sm" data-act="ds-del" data-id="${esc(x.id)}" aria-label="Delete the ${hm(Date.parse(x.at))} dose">${icon('trash', 15)}</button></div>`).join('')}</section>`;
-      else if (cfrom) H0 += `<p class="sub ds-carry-note">↻ You took it on ${esc(new Date(cfrom + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }))} — ARK assumes the same today once its time comes. <button class="link" data-act="ds-skip">Not today</button></p>`;
       if (S) {
         H0 += `<section class="card frost pk-now" style="margin-top:16px"><div class="eyebrow">Estimated now</div><div class="pk-big">${esc(S.line)}</div>
           ${S.sub ? `<div class="sub">${esc(S.sub)}</div>` : ''}
@@ -259,11 +252,6 @@ export const actions = {
     logDose(ds.k, amt, doseAt());
     ds.amt = amt; ds.custom = ''; const t = document.querySelector('[data-ds-time]'); if (t) t.value = '';
   },
-  'ds-keep'(d) {
-    const x = doses().find(y => y.id === d.id); if (!x) return;
-    logDose(x.k, x.amount, Date.parse(x.at));   // a real dose at that time replaces the carried ones
-  },
-  'ds-skip'() { haptic(); emit('bio.nocarry', { day: today(), key: 'dose:' + ds.k, on: true }); toast('Not taken today — ARK stops assuming it'); },
   'ds-del'(d) {
     const ev = state.pending.find(e => !e.seq && e.type === 'dose.add' && e.data.dose && e.data.dose.id === d.id);
     if (ev) { dropPending(ev.id); toast('Dose removed'); return; }

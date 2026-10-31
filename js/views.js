@@ -6,16 +6,16 @@
    and says when it is waiting for a fresh one.
    ══════════════════════════════════════════════════════════════════════ */
 import { renderLab } from './system.js';
-import { weatherCard, hasWeather } from './weather.js';
+import { weatherLine } from './weather.js';
 import { fuelCard } from './daily.js';
 import {
-  L, state, view, rawView, carriedFrom, emit, changed, esc, icon, today, shiftDay, fmt1, fmtMins, fmtDay, daysBetween, homeMove, anywhere, caState, checkCa, onPublicCopy, pair,
+  L, state, view, rawView, emit, emitUndoable, uid, ago, openSheet, changed, esc, icon, today, shiftDay, fmt1, fmtMins, fmtDay, daysBetween, homeMove, anywhere, caState, checkCa, onPublicCopy, pair,
   ringsSvg, ringSvg, sparkSvg, barsSvg, syncLabel, paired, haptic, toast, scheduleSync,
 } from './core.js';
 import { staleNote } from './more.js';
-import { routineCard, renderBooks } from './routines.js';
-import { mindGlance } from './mind.js';
-import { regulars, usualOf, takenAt, carriedDose, fmtAmt, hm } from './doses.js';
+import { routineCard, routineLine, renderBooks } from './routines.js';
+import { mindLine } from './mind.js';
+import { regulars, usualOf, takenAt, fmtAmt, hm } from './doses.js';
 
 export const PILLAR = {
   body: ['Body', '#30d158'], mind: ['Mind', '#7d7aff'], income: ['Income', '#ff9f0a'],
@@ -144,7 +144,7 @@ export function renderToday() {
   const todays = v.workouts.filter(w => w.date === t);
   const pm = practiceMinsOn(v, t);
   // What you actually logged — carried days (logic/carry.ts) never count as you being here.
-  const gap = L.daysSinceCapture(rawView(), t), rb = rawView().bio[t] || {}, cs = carriedFrom(t, 'sleep');
+  const gap = L.daysSinceCapture(rawView(), t), rb = rawView().bio[t] || {};
 
   let H = hdr(longDate(), 'Today', syncButton()) + staleNote();
   const any = mv0();
@@ -182,37 +182,27 @@ export function renderToday() {
       <p>Everything you log here lands in ARK on your PC. Start with whatever is easiest today.</p></section>`;
   }
 
-  // 2026-10-25 ("make Today more useful"): the day at a glance first — readiness beside the three rings — then what
-  // to do, tickable right here (the plan, your habits, your supplements), then logging, routine, fuel, mind and the
-  // week. Weather sits under the day once a place is set; until then it and Apple Health are slim rows at the bottom.
+  // 2026-10-31 ("too many things on Today — add a tasks list"): the day at a glance, your tasks (with ARK's suggestions
+  // for the day under them), habits and supplements to tick, quick logging — and everything else as one line each on a
+  // single card, a tap away. Today's numbers are what you logged today: zero until you log.
   H += dayHero(v, t, done, total, weekSessions, pm, s);
-  const wx = hasWeather();
-  if (wx) H += weatherCard();
 
-  /* the plan — one list, each item doable from here */
+  /* ARK's suggestions for the day — each doable from here */
   const items = [];
   if (state.workout) {
     items.push(state.workout.edit
       ? { ic: 'pencil', c: C.train, t: 'Editing a past workout', st: fmtDay(state.workout.edit.date, { weekday: 'long', day: 'numeric', month: 'short' }) + ' · not saved yet', act: 'open-workout' }
       : { ic: 'dumbbell', c: C.train, t: 'Workout in progress', st: 'Tap to continue', act: 'open-workout' });
-  } else if (todays.length) {
-    const w = todays[todays.length - 1];
-    items.push({ done: true, ic: 'dumbbell', c: C.train, t: 'Workout logged', st: `${(w.exercises || []).length} exercises · ${Math.round(w.volume).toLocaleString()} ${w.unit || 'kg'}` });
-  } else {
+  } else if (!todays.length) {
     const tn = trainNext(v);
     if (tn.length) {
       const names = tn.map(m => GROUPS[m.group][0]).join(' · ');
       const why = tn[0].state === 'detrained' ? 'Adaptation is fading — retrain first'
         : tn[0].state === 'untouched' ? 'Never trained yet' : 'Recovered and under weekly target';
       items.push({ ic: 'dumbbell', c: C.train, t: 'Train ' + names, st: why, act: 'start-suggested' });
-    } else if (v.workouts.length) {
-      items.push({ ic: 'dumbbell', c: C.train, t: 'Rest day', st: 'Everything is still recovering' });
-    } else {
-      items.push({ ic: 'dumbbell', c: C.train, t: 'Log your first workout', st: 'Pick exercises as you go', act: 'start-empty' });
-    }
+    } else if (!v.workouts.length) items.push({ ic: 'dumbbell', c: C.train, t: 'Log your first workout', st: 'Pick exercises as you go', act: 'start-empty' });
   }
-  if (!(rb.sleep > 0)) items.push({ ic: 'moon', c: C.vitals, t: 'Log sleep & energy', st: cs ? '↻ Using ' + cday(cs, t) + "'s " + String(+(+(v.bio[t] || {}).sleep).toFixed(2)) + ' h until you do' : 'Ten seconds — it drives your readiness', act: 'vitals-sheet' });
-  // Sunday: the week is in.
+  if (!(rb.sleep > 0)) items.push({ ic: 'moon', c: C.vitals, t: 'Log sleep & energy', st: 'Ten seconds — it drives your readiness', act: 'vitals-sheet' });
   if (new Date().getDay() === 0 && (v.workouts.length || Object.keys(v.habitLog).length)) items.push({ ic: 'chart', c: '#bf5af2', t: 'Your week in review', st: 'What you did, next to last week', act: 'review-sheet' });
   const goal = v.goals.filter(g => g.status === 'active').sort((a, b) => (a.priority || 2) - (b.priority || 2) || (a.due || '9').localeCompare(b.due || '9'))[0];
   if (goal) {
@@ -220,51 +210,30 @@ export function renderToday() {
     const st = next ? 'Next: ' + next.t : goal.type === 'numeric' ? `${fmt1(goal.current || 0)} / ${fmt1(goal.target || 0)} ${goal.unit || ''}` : Math.round(L.goalProgress(goal, goal.habitRate) * 100) + '% there';
     items.push({ ic: 'target', c: C.goal, t: goal.title, st, act: 'tab', tab: 'grow', seg: 'goals' });
   }
-  // A skill's last day is its last practice or the last time the rest of ARK saw you do it (sk.ev from the PC:
-  // nights logged, workouts…) — "Practice Sleep engineering · Not practiced yet" sat beside 29 logged nights.
+  // A skill's last day is its last practice or the last time the rest of ARK saw you do it (sk.ev from the PC).
   const lastOf = x => { const p = x.last ? L.dayKey(new Date(x.last)) : ''; const e = (x.ev && x.ev.last) || ''; return p > e ? p : e; };
   const sk = v.skills.filter(x => x.status !== 'archived').sort((a, b) => lastOf(a).localeCompare(lastOf(b)))[0];
   if (sk) {
     const lk = lastOf(sk), d = lk ? daysBetween(lk, t) : null;
     if (d === null || d >= 1) items.push({ ic: 'sprout', c: C.practice, t: 'Practice ' + sk.name,
-      st: (d === null ? 'Not practiced yet' : d === 1 ? 'Last: yesterday' : 'Last: ' + d + ' days ago') + (sk.ev ? ' · ' + sk.ev.label + ' in 90 days' : ''), act: 'practice-sheet', skill: sk.id });
+      st: (d === null ? 'Not practiced yet' : d === 1 ? 'Last: yesterday' : 'Last: ' + d + ' days ago'), act: 'practice-sheet', skill: sk.id });
   }
-  H += `<div class="sec"><h2>Today's plan</h2></div><section class="list frost plan">` + items.map(it => `
-    <button class="li${it.done ? ' done' : ''}" ${it.act ? `data-act="${it.act}"` : 'disabled'} ${it.tab ? `data-tab="${it.tab}"` : ''} ${it.seg ? `data-seg="${it.seg}"` : ''} ${it.skill ? `data-skill="${esc(it.skill)}"` : ''} style="--c:${it.c}">
-      <span class="ic">${it.done ? icon('tick', 18, 2.6) : icon(it.ic, 19)}</span>
-      <span class="tx"><div class="tt">${esc(it.t)}</div><div class="st">${esc(it.st)}</div></span>
-      ${it.act ? `<span class="chev">${icon('chev', 16)}</span>` : ''}
-    </button>`).join('') + `</section>`;
+  H += tasksCard(v, t, items);
   H += habitStrip(v, t);
   H += suppStrip(v, t);
 
   H += `<div class="sec"><h2>Quick log</h2></div><section class="qrow">
     ${quick('weigh-sheet', 'scale', '#40c8e0', 'Weigh-in', lastWeightLabel(v))}
-    ${quick('vitals-sheet', 'moon', '#7d7aff', 'Vitals', rb.sleep > 0 ? 'Logged' : cs ? '↻ Carried' : 'Sleep · mood')}
+    ${quick('vitals-sheet', 'moon', '#7d7aff', 'Vitals', rb.sleep > 0 ? 'Logged' : 'Sleep · mood')}
     ${quick('meal-new', 'meat', '#ff7a7a', 'Meal', 'Protein · kcal')}
     ${quick('practice-sheet', 'timer', '#30d158', 'Practice', pm ? pm + ' min' : 'A session')}
     ${quick('note-sheet', 'note', '#ffb340', 'Note', 'Journal')}
   </section>`;
-  H += routineCard();
-  H += fuelCard(v);
-  H += mindGlance();
-  H += weekCard(v, t, total);
-  H += healthCard(v, t);
-  if (!wx) H += weatherCard();
-
-  const J = (v.journal || []).slice(0, 3);
-  H += `<div class="sec"><h2>Journal</h2><button class="link" data-act="journal-sheet">${J.length ? 'See all' : 'Open'}</button></div>`;
-  H += J.length ? `<section class="list frost today-j">${J.map(e => journalRow(e)).join('')}</section>`
-    : `<div class="card frost empty">Workouts, practice, weigh-ins and your notes land here — from the phone and the PC.</div>`;
+  H += `<div class="sec"><h2>More</h2></div>` + moreList(v, t);
   H += `<div class="foot" data-sync-label>${esc(syncLabel().text)}</div>`;
   return H;
 }
-/* ── Today's parts (2026-10-25) ── */
-/** "yesterday", or the weekday of an earlier day. */
-const cday = (k, t) => (k === shiftDay(t, -1) ? 'yesterday' : fmtDay(k, { weekday: 'short' }));
-/** The readiness inputs carried into a day (logic/carry.ts), and the real day they came from. */
-const READY_IN = ['sleep', 'energy', 'mood', 'stress', 'hrv', 'rhr'];
-const carriedInputs = (v, k) => { const c = (v.carry || {})[k] || {}; const f = READY_IN.filter(x => c[x]); return f.length ? { fields: f, from: c[f[0]], days: [...new Set(f.map(x => c[x]))].sort().reverse() } : null; };
+/* ── Today's parts ── */
 const READY = r => r >= 90 ? 'Elite condition' : r >= 80 ? 'Peak ready' : r >= 70 ? 'Good to train' : r >= 55 ? 'Train smart' : r >= 40 ? 'Go light' : 'Recover';
 const readyCol = r => r == null ? 'var(--t3)' : r >= 80 ? '#30d158' : r >= 60 ? '#ffd60a' : r >= 40 ? '#ff9f0a' : '#ff453a';
 /** Days in a row with at least one habit done (today counts once it has one) — the PC's habit streak. */
@@ -276,18 +245,19 @@ function dayStreak(v, t) {
   }
   return n;
 }
+/** A day copied from the one before (logic/carry.ts) — drawn faint in the week. */
+const copiedDay = (v, k) => !!(v.carry || {})[k];
 /** The day at a glance: readiness (today's, else the last score dimmed and dated — never a made-up one) beside the rings. */
 function dayHero(v, t, done, total, weekSessions, pm, s) {
   const r = v.readiness[t];
   let back = null; if (r == null) for (let i = 1; i <= 3 && back == null; i++) { const x = v.readiness[shiftDay(t, -i)]; if (x != null) back = { v: x, i }; }
   const rv = r != null ? r : back ? back.v : null, streak = dayStreak(v, t);
-  const ci = r != null ? carriedInputs(v, t) : null;
-  const sub = r != null ? (ci ? '↻ ' + ci.days.map(k => cday(k, t)).join(' & ') + "'s numbers carried — log to update" : "From today's vitals") : back ? (back.i === 1 ? 'Yesterday' : back.i + ' days ago') + ' · log sleep to update' : 'Log sleep or energy to score today';
+  const sub = r != null ? "From today's vitals" : back ? (back.i === 1 ? 'Yesterday' : back.i + ' days ago') + ' · log sleep to score today' : 'Log sleep or energy to score today';
   const wg = s.weeklyWorkouts || 3, pg = s.practiceMins || 30;
   return `<section class="card frost day-hero">
     <div class="dh-top">
       <div class="dh-rings">${ringsSvg([{ v: total ? done / total : 0, c: C.habits }, { v: weekSessions / wg, c: C.train }, { v: pm / pg, c: C.practice }], 118)}</div>
-      <button class="dh-ready${r == null && back ? ' old' : ''}${ci ? ' carried' : ''}" data-act="vitals-sheet" style="--rc:${readyCol(rv)}" aria-label="Readiness ${rv ?? 'not scored'} — log vitals">
+      <button class="dh-ready${r == null && back ? ' old' : ''}" data-act="vitals-sheet" style="--rc:${readyCol(rv)}" aria-label="Readiness ${rv ?? 'not scored'} — log vitals">
         <span class="eyebrow">Readiness</span><b class="num">${rv ?? '—'}</b><span class="l">${rv == null ? 'Not scored yet' : READY(rv)}</span><span class="s">${esc(sub)}</span>
       </button>
     </div>
@@ -298,6 +268,31 @@ function dayHero(v, t, done, total, weekSessions, pm, s) {
     </div>
     ${streak > 1 ? `<div class="dh-streak">🔥 ${streak}-day habit streak${done ? '' : ' — tick one today to keep it'}</div>` : ''}
   </section>`;
+}
+/** The to-do list (logic/tasks.ts) — on every device; ARK's suggestions for the day sit under it. */
+let taskPop = '';
+function tasksCard(v, t, sugg) {
+  const T = L.tasksForToday(v.tasks || [], t, iso => L.dayKey(new Date(iso)));
+  const all = T.open.length + T.doneToday.length, frac = all ? T.doneToday.length / all : 0;
+  const head = T.open.length ? T.open.length + ' to do' + (T.overdue ? ' · ' + T.overdue + ' late' : '') : T.doneToday.length ? 'All done ✓' : 'Nothing on your list';
+  const row = x => `<div class="tk${x.done ? ' done' : ''}${x.pri ? ' pri' : ''}${taskPop === x.id ? ' pop' : ''}">
+      <button class="tk-ck" data-act="task-toggle" data-id="${esc(x.id)}" aria-pressed="${x.done}" aria-label="${esc(x.t)} — mark ${x.done ? 'not done' : 'done'}">${icon('tick', 14, 3)}</button>
+      <span class="tk-t">${esc(x.t)}${x.due && !x.done ? `<span class="tk-due${x.due < t ? ' late' : ''}">${x.due === t ? 'today' : fmtDay(x.due, { day: 'numeric', month: 'short' })}</span>` : ''}</span>
+      <button class="tk-star" data-act="task-pri" data-id="${esc(x.id)}" aria-pressed="${x.pri}" aria-label="${x.pri ? 'Unstar' : 'Star'} ${esc(x.t)}">★</button>
+      <button class="tk-del" data-act="task-del" data-id="${esc(x.id)}" aria-label="Delete ${esc(x.t)}">${icon('x', 13)}</button></div>`;
+  const S = sugg.slice(0, 3);
+  const out = `<section class="card frost tasks">
+    <div class="tk-top">
+      <div class="tk-ring">${ringSvg(frac, '#30d158', 50, 5, all ? T.doneToday.length + '/' + all : '·')}</div>
+      <div class="tk-hd"><div class="eyebrow">Tasks · on every device</div><b>${esc(head)}</b></div>
+    </div>
+    <div class="tk-add"><input class="tk-in" data-task-in maxlength="140" placeholder="Add a task…" enterkeyhint="done" autocomplete="off" aria-label="New task"><button class="tk-go" data-act="task-add" aria-label="Add the task">${icon('plus', 18, 2.6)}</button></div>
+    ${all ? `<div class="tk-list">${T.open.map(row).join('')}${T.doneToday.map(row).join('')}</div>` : ''}
+    ${S.length ? `<div class="tk-sug-h">ARK suggests</div><div class="tk-sug">${S.map(it => `<button class="tk-s" ${it.act ? `data-act="${it.act}"` : 'disabled'} ${it.tab ? `data-tab="${it.tab}"` : ''} ${it.seg ? `data-seg="${it.seg}"` : ''} ${it.skill ? `data-skill="${esc(it.skill)}"` : ''} style="--c:${it.c}">
+        <span class="ic">${icon(it.ic, 16)}</span><span class="tx"><b>${esc(it.t)}</b><small>${esc(it.st)}</small></span><span class="chev">${icon('chev', 14)}</span></button>`).join('')}</div>` : ''}
+  </section>`;
+  taskPop = '';
+  return out;
 }
 /** Every habit, tickable from Today — the ones left first. The same tick as Boards (time-stamped, amount remembered). */
 function habitStrip(v, t) {
@@ -312,55 +307,46 @@ function habitStrip(v, t) {
 function suppStrip(v, t) {
   const R = regulars(v, t); if (!R.length) return '';
   const amt = (v.bio[t] || {}).micros || {};
-  const rawToday = (rawView().doses || []).filter(x => L.dayKey(new Date(x.at)) === t), rawAmt = (rawView().bio[t] || {}).micros || {};
-  const rows = R.map(m => {
-    const real = rawToday.some(x => x.k === m.k) || (rawAmt[m.k] || 0) > 0, carried = !real && !!carriedDose(m.k, t) && (amt[m.k] || 0) > 0;
-    return { m, at: takenAt(m.k, t), taken: real || carried, carried, u: usualOf(m.k) };
-  }).sort((a, b) => (a.taken - b.taken) || (b.carried - a.carried));
-  const n = rows.filter(x => x.taken && !x.carried).length, nc = rows.filter(x => x.carried).length;
-  return `<div class="sec"><h2>Supplements</h2><button class="link" data-act="today-mic">${n} of ${rows.length} taken${nc ? ' · ' + nc + ' assumed' : ''}</button></div>
-    <div class="sstrip">${rows.map(({ m, at, taken, carried, u }) => carried
-      ? `<button class="ss on carry" style="--mc:${m.c}" data-act="dose-sheet" data-k="${m.k}" aria-label="${esc(m.name)} — assumed from an earlier day, tap to confirm"><span class="e">${m.icon}</span><span class="tx"><span class="n">${esc(m.name)}</span><small>↻ assumed ${at ? hm(at) : ''}</small></span></button>`
-      : taken
+  const rows = R.map(m => { const at = takenAt(m.k, t); return { m, at, taken: at != null || (amt[m.k] || 0) > 0, u: usualOf(m.k) }; }).sort((a, b) => a.taken - b.taken);
+  const n = rows.filter(x => x.taken).length;
+  return `<div class="sec"><h2>Supplements</h2><button class="link" data-act="today-mic">${n} of ${rows.length} taken</button></div>
+    <div class="sstrip">${rows.map(({ m, at, taken, u }) => taken
       ? `<button class="ss on" style="--mc:${m.c}" data-act="dose-sheet" data-k="${m.k}" aria-label="${esc(m.name)} — taken${at ? ' at ' + hm(at) : ''}"><span class="e">${m.icon}</span><span class="tx"><span class="n">${esc(m.name)}</span><small>✓ taken ${at ? hm(at) : 'today'}</small></span></button>`
       : `<button class="ss" style="--mc:${m.c}" data-act="${u ? 'dose-quick' : 'dose-sheet'}" data-k="${m.k}"${u ? ` data-v="${u.amount}"` : ''} aria-label="${u ? 'Log your usual ' + fmtAmt(u.amount, m.unit) + ' of ' : 'Log '}${esc(m.name)}"><span class="e">${m.icon}</span><span class="tx"><span class="n">${esc(m.name)}</span><b class="num">${u ? '+ ' + fmtAmt(u.amount, m.unit) : 'Log a dose'}</b></span><span class="add">${icon('plus', 14, 2.6)}</span></button>`).join('')}</div>`;
 }
-/** The week: habit ring, a dot on training days, and that day's readiness. */
+/** The week: habit ring, a dot on training days, and that day's readiness (a copied day's is faint). */
 function weekCard(v, t, total) {
-  return `<div class="sec"><h2>This week</h2><button class="link" data-act="review-sheet">Review</button></div><section class="card frost"><div class="week">` +
+  return `<section class="card frost"><div class="week">` +
     [6, 5, 4, 3, 2, 1, 0].map(i => {
       const k = shiftDay(t, -i), frac = total ? doneOn(v, k) / total : 0, rd = v.readiness[k];
       const trained = v.workouts.some(w => w.date === k);
       return `<div class="wd${i === 0 ? ' today' : ''}">${fmtDay(k, { weekday: 'narrow' })}
-        ${ringSvg(frac, C.habits, 34, 5)}<span class="pip${trained ? ' on' : ''}"></span><b class="rd num${rd != null && carriedInputs(v, k) ? ' c' : ''}" style="color:${readyCol(rd)}">${rd ?? '·'}</b></div>`;
-    }).join('') + `</div><div class="wk-key"><span><i style="background:${C.habits}"></i>habits done</span><span><i style="background:var(--orange)"></i>trained</span><span>numbers: readiness${[6, 5, 4, 3, 2, 1, 0].some(i => carriedInputs(v, shiftDay(t, -i))) ? ' · faint = carried' : ''}</span></div></section>`;
+        ${ringSvg(frac, C.habits, 34, 5)}<span class="pip${trained ? ' on' : ''}"></span><b class="rd num${rd != null && copiedDay(v, k) ? ' c' : ''}" style="color:${readyCol(rd)}">${rd ?? '·'}</b></div>`;
+    }).join('') + `</div><div class="wk-key"><span><i style="background:${C.habits}"></i>habits done</span><span><i style="background:var(--orange)"></i>trained</span><span>numbers: readiness${[6, 5, 4, 3, 2, 1, 0].some(i => copiedDay(v, shiftDay(t, -i))) ? ' · faint = copied from the day before' : ''}</span></div></section>
+    <button class="btn btn-glass block" style="margin-top:12px" data-act="review-sheet">${icon('chart', 16)} The week in review</button>`;
+}
+/** Everything else on one card — a line each, a tap for the whole thing (2026-10-31: "too many things on Today"). */
+function moreList(v, t) {
+  const rows = [];
+  const R = routineLine();
+  if (R) rows.push(['today-sheet', 'routine', '#40c8e0', R.icon, R.name + ' routine', R.total ? R.done + ' of ' + R.total + ' steps' + (R.done >= R.total ? ' ✓' : '') : 'No steps yet']);
+  const goals = (v.bioDefs || {}).goals || {}, F = L.fuelDay((v.bio || {})[t], { prot: goals.prot, cal: goals.cal });
+  rows.push(['today-sheet', 'fuel', '#ff9f0a', '🍽', 'Fuel', Math.round(F.prot || 0) + ' / ' + (F.protGoal || '—') + ' g protein · ' + Math.round(F.cal || 0).toLocaleString('en-US') + ' kcal']);
+  let ml = ''; try { ml = mindLine(); } catch (e) { ml = 'Focus and energy, estimated'; }
+  rows.push(['today-mind', '', '#bf5af2', '🧠', 'Mind', ml]);
+  const wk = [6, 5, 4, 3, 2, 1, 0].map(i => shiftDay(t, -i)), hd = wk.filter(k => doneOn(v, k) > 0).length, wo = v.workouts.filter(w => w.date >= wk[0] && w.date <= t).length;
+  rows.push(['today-sheet', 'week', '#30d158', '📅', 'This week', hd + ' of 7 days with habits · ' + wo + ' workout' + (wo === 1 ? '' : 's')]);
+  const J = (v.journal || [])[0];
+  rows.push(['journal-sheet', '', '#ffb340', '📝', 'Journal', J ? J.text : 'Your notes, workouts and habit days']);
+  const W = weatherLine();
+  rows.push(W ? ['wx-sheet', '', '#64d2ff', W.icon, 'Weather', W.text] : ['wx-city', '', '#64d2ff', '⛅', 'Weather', "Set a place once — the day's weather and what it means for you"]);
+  const h = v.health;
+  rows.push(['health-sheet', '', '#ff375f', '❤️', 'Apple Health', h && h.ts ? 'Last import ' + ago(Date.parse(h.ts)) : 'Connect — sleep, HRV and steps feed readiness']);
+  return `<section class="list frost more-today">${rows.map(([act, k, c, ic, title, sub]) => `<button class="li" data-act="${act}"${k ? ` data-k="${k}"` : ''} style="--c:${c}"><span class="ic">${esc(ic)}</span><span class="tx"><div class="tt">${esc(title)}</div><div class="st">${esc(sub)}</div></span><span class="chev">${icon('chev', 16)}</span></button>`).join('')}</section>`;
 }
 /** The "open anywhere" card shows on the PC-served copy once it is paired and nothing is waiting to sync. */
 function mv0() { const a = anywhere(); return a && !state.pending.length ? a : null; }
 
-/** What Apple Health sent (via the Shortcut) for today and last night. Only fields that arrived are shown. */
-function healthCard(v, t) {
-  const b = rawView().bio[t] || {}, h = v.health;
-  const fmtH = x => { const hh = Math.floor(x), mm = Math.round((x - hh) * 60); return hh + ':' + String(mm).padStart(2, '0'); };
-  const T = [
-    ['moon', '#7d7aff', 'Sleep', b.sleep, x => fmtH(x), 'h'],
-    ['heart', '#ff375f', 'Resting HR', b.rhr, x => Math.round(x), 'bpm'],
-    ['heart', '#30d158', 'HRV', b.hrv, x => Math.round(x), 'ms'],
-    ['target', '#30d158', 'Steps', b.steps, x => x >= 10000 ? fmt1(x / 1000) + 'k' : Math.round(x).toLocaleString(), ''],
-    ['flame', '#ff9f0a', 'Active', b.active, x => Math.round(x), 'kcal'],
-    ['sun', '#ffd60a', 'Daylight', b.daylight, x => Math.round(x), 'min'],
-    ['bolt', '#40c8e0', 'VO₂max', b.vo2, x => fmt1(x), ''],
-    ['timer', '#ff9f0a', 'Exercise', b.exmin, x => Math.round(x), 'min'],
-    ['moon', '#bf5af2', 'REM', b.rem, x => fmtH(x), 'h'],
-  ].filter(x => x[3] != null && x[3] !== 0);
-  if (!T.length && !h) return `<button class="card frost hl-cta slim-cta" data-act="health-sheet">
-    <span class="ic-dot" style="--c:#ff375f">${icon('heart', 17)}</span><span><b>Connect Apple Health</b><small>Sleep, HRV, steps and daylight feed readiness and the estimates</small></span>
-    <span class="chev">${icon('chev', 16)}</span></button>`;
-  const asOf = h && h.ts ? new Date(h.ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) + (h.day === t ? '' : ' · ' + fmtDay(h.day, { day: 'numeric', month: 'short' })) : '';
-  return `<div class="sec"><h2>Apple Health</h2><button class="link" data-act="health-sheet">${asOf ? 'as of ' + esc(asOf) : 'Set up'}</button></div>
-    <section class="card frost hl-grid">${T.length ? T.map(([ic, c, n, val, f, u]) => `<div style="--c:${c}"><span class="hi">${icon(ic, 14)}</span><b class="num">${f(val)}<small>${u ? ' ' + u : ''}</small></b><span>${n}</span></div>`).join('')
-      : '<div class="sub" style="grid-column:1/-1">Nothing from Apple Health for today yet — your Shortcut runs on its schedule.</div>'}</section>`;
-}
 const JICON = { log: '📝', win: '🏆', lesson: '🎓', idea: '💡' };
 /** One journal line; `del` adds a delete button to notes (not to the PC's automatic entries). */
 export function journalRow(e, del = false) {
@@ -535,6 +521,32 @@ export const actions = {
     bioPatch(t, { [d.f]: next || null });
   },
   'grow-seg'(d) { state.growSeg = d.seg; changed(); },
+  'task-add'() {
+    const el = document.querySelector('[data-task-in]'), t = el ? el.value.replace(/\s+/g, ' ').trim() : '';
+    if (!t) { if (el) el.focus(); return; }
+    el.value = '';
+    haptic();
+    emit('task.add', { task: { id: 't' + uid(), t: t.slice(0, 140), at: new Date().toISOString(), done: false, pri: false, due: null } });
+    requestAnimationFrame(() => requestAnimationFrame(() => document.querySelector('[data-task-in]')?.focus()));
+  },
+  'task-toggle'(d) {
+    const x = (view().tasks || []).find(y => y.id === d.id); if (!x) return;
+    haptic(); if (!x.done) taskPop = x.id;
+    emit('task.set', { id: x.id, fields: { done: !x.done } });
+  },
+  'task-pri'(d) { const x = (view().tasks || []).find(y => y.id === d.id); if (!x) return; haptic(); emit('task.set', { id: x.id, fields: { pri: !x.pri } }); },
+  'task-del'(d) { emitUndoable('task.del', { id: d.id }, 'Task deleted'); },
+  'today-sheet'(d) {
+    haptic();
+    const T = { routine: ['Routine', () => routineCard()], fuel: ['Fuel', () => fuelCard(view())], week: ['This week', () => { const v = view(); return weekCard(v, today(), v.habits.length); }] }[d.k];
+    if (T) openSheet({ id: 'today-' + d.k, title: T[0], render: T[1] });
+  },
+  'today-mind'() {
+    const o = state.settings.baOpen || (state.settings.baOpen = { 'ba-scan': true }); o['ba-mind'] = true;
+    document.querySelector('[data-act="tab"][data-tab="body"]')?.click();
+    const go = () => { const el = document.getElementById('ba-mind'); if (el) window.scrollTo({ top: window.scrollY + el.getBoundingClientRect().top - 70, behavior: 'instant' }); };
+    [120, 450].forEach(ms => setTimeout(go, ms));
+  },
   'today-mic'() {
     const o = state.settings.baOpen || (state.settings.baOpen = { 'ba-scan': true }); o['ba-mic'] = true;
     document.querySelector('[data-act="tab"][data-tab="body"]')?.click();

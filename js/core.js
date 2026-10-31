@@ -63,6 +63,11 @@ function load() {
 }
 export const state = load();
 if (!state.device) state.device = uid();
+// Every device called itself "iPhone" (the default), so an iPad and an iPhone looked the same on the PC and in each
+// other's device list. An iPad now names itself (2026-10-31); a name you chose is kept.
+if (state.deviceName === 'iPhone' && (/iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1))) {
+  state.deviceName = 'iPad'; if (state.relay) state.relay.sent = 'renamed';   // rewrite the inbox so the PC learns the name now
+}
 
 let ver = 0, viewCache = null, viewVer = -1, viewMin = -1, saveTm = null;
 const listeners = new Set();
@@ -176,7 +181,7 @@ export function pcAsOf() {
 
 /* ── sync ── */
 export const hubBase = () => (state.hub || location.origin).replace(/\/+$/, '');
-let inflight = false, again = false, syncTm = null, followTm = null;
+let inflight = false, inflightAt = 0, again = false, syncTm = null, followTm = null;
 export const syncState = { busy: false };
 
 export function scheduleSync(ms = 1500) {
@@ -199,8 +204,10 @@ async function post(path, body, auth = true, keepalive = false) {
 
 export async function syncNow({ keepalive = false } = {}) {
   if (!state.token) return false;
-  if (inflight) { again = true; return false; }
-  inflight = true; syncState.busy = true; changed({ status: true });
+  // A sync still "in flight" after 30 s is a request iOS dropped when it paused the app: start over rather than
+  // wait for an answer that will never come (2026-10-31 — it used to stop syncing until the app was restarted).
+  if (inflight && Date.now() - inflightAt < 30000) { again = true; return false; }
+  inflight = true; inflightAt = Date.now(); syncState.busy = true; changed({ status: true });
   let ok = false;
   try {
     const now = Date.now();

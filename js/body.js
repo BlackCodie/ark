@@ -300,26 +300,26 @@ function readinessCard(v, t) {
 }
 function hud(v, t) {
   const d = v.bio[t] || {}, y = v.bio[shiftDay(t, -1)] || {}, G = (v.bioDefs && v.bioDefs.goals) || { cal: 2500, water: 3, sleep: 8 };
-  const rd = v.readiness[t], ry = v.readiness[shiftDay(t, -1)], cf = (v.carry || {})[t] || {};
+  const rd = v.readiness[t], ry = v.readiness[shiftDay(t, -1)];
   // A zero for food, water or sleep means "not logged yet" — shown as — with no arrow, never as a drop.
   const lg = x => (x == null || x === 0 ? null : x);
   const T = [
-    ['HEALTH', '#ff6b5a', rd, rd, '%', ry, 100, false, ['sleep', 'energy', 'mood', 'stress', 'hrv', 'rhr'].some(f => cf[f])],
-    ['STAMINA', '#ffd60a', d.energy, d.energy, '/10', y.energy, 10, false, !!cf.energy],
-    ['FOOD', '#ff9f0a', lg(d.cal), lg(d.cal) != null && d.cal >= 1000 ? fmt1(d.cal / 1000) + 'k' : lg(d.cal), '', lg(y.cal), G.cal, false, !!cf.cal],
-    ['WATER', '#40c8e0', lg(d.water), lg(d.water) != null ? fmt1(d.water) : null, 'L', lg(y.water), G.water, false, !!cf.water],
-    ['OXYGEN', '#64d2ff', lg(d.sleep), lg(d.sleep) != null ? fmt1(d.sleep) : null, 'h', lg(y.sleep), G.sleep, false, !!cf.sleep],
-    ['TORPOR', '#bf5af2', d.stress, d.stress, '/10', y.stress, 10, true, !!cf.stress],
+    // Today's food, water and sleep read 0 until you log them (2026-10-31); scores you rate stay "—".
+    ['HEALTH', '#ff6b5a', rd, rd, '%', ry, 100],
+    ['STAMINA', '#ffd60a', d.energy, d.energy, '/10', y.energy, 10],
+    ['FOOD', '#ff9f0a', lg(d.cal) || 0, lg(d.cal) != null && d.cal >= 1000 ? fmt1(d.cal / 1000) + 'k' : (lg(d.cal) || 0), '', lg(y.cal), G.cal],
+    ['WATER', '#40c8e0', lg(d.water) || 0, lg(d.water) != null ? fmt1(d.water) : 0, 'L', lg(y.water), G.water],
+    ['OXYGEN', '#64d2ff', lg(d.sleep) || 0, lg(d.sleep) != null ? fmt1(d.sleep) : 0, 'h', lg(y.sleep), G.sleep],
+    ['TORPOR', '#bf5af2', d.stress, d.stress, '/10', y.stress, 10, true],
   ];
-  // ↻ = carried from an earlier day (logic/carry.ts), not logged today
-  return `<div class="hud">${T.map(([n, c, cur, shown, unit, prev, max, inv, car]) => {
+  return `<div class="hud">${T.map(([n, c, cur, shown, unit, prev, max, inv]) => {
     let dl = '';
-    if (cur != null && prev != null && !car) {
+    if (cur != null && prev != null && cur !== 0) {
       const diff = cur - prev, good = inv ? diff < 0 : diff > 0;
       dl = Math.abs(diff) < 0.05 ? '<span class="d flat">±0</span>' : `<span class="d ${good ? 'up' : 'down'}">${diff > 0 ? '▲' : '▼'}${Math.abs(diff) >= 1 ? Math.round(Math.abs(diff)) : Math.abs(diff).toFixed(1)}</span>`;
     }
     const pct = cur == null ? 0 : Math.max(0, Math.min(100, cur / (max || 1) * 100));
-    return `<div class="${car && cur != null ? 'cr' : ''}" style="--hc:${c}"><div class="n">${n}${car && cur != null ? ' <span class="cr-m" title="Carried from an earlier day">↻</span>' : ''}</div><div class="v num">${cur == null ? '—' : shown + '<small>' + unit + '</small>'}${dl}</div><div class="b"><i style="width:${pct}%"></i></div></div>`;
+    return `<div style="--hc:${c}"><div class="n">${n}</div><div class="v num">${cur == null ? '—' : shown + '<small>' + unit + '</small>'}${dl}</div><div class="b"><i style="width:${pct}%"></i></div></div>`;
   }).join('')}</div>`;
 }
 function secVitals(v) {
@@ -356,7 +356,7 @@ function secMicros(v) {
   const last = {}, daysOf = {}, cut30 = shiftDay(t, -30);
   const saw = (k, d) => { if (!d) return; if (!last[k] || d > last[k]) last[k] = d; if (d >= cut30) (daysOf[k] = daysOf[k] || new Set()).add(d); };
   // only real logs make a supplement one you take — carried days (logic/carry.ts) do not
-  const R0 = v.raw || v, rawToday = (R0.doses || []).filter(x => L.dayKey(new Date(x.at)) === t);
+  const R0 = v.raw || v;
   (R0.doses || []).forEach(x => saw(x.k, String(x.at || '').slice(0, 10)));
   Object.keys(R0.bio || {}).forEach(d => { const mc = (R0.bio[d] || {}).micros || {}; Object.keys(mc).forEach(k => { if (mc[k] > 0) saw(k, d); }); });
   const order = [...(D.cats || []).flatMap(c => D.micros.filter(m => m.cat === c)), ...D.micros.filter(m => !(D.cats || []).includes(m.cat))];
@@ -378,7 +378,7 @@ function secMicros(v) {
           <span class="ring">${slim ? `<span class="mic2-dot">${m.icon}</span>` : ringSvg(pct, col, 44, 5.5, m.limit ? (a ? fmtN(a) : '0') : over ? '!' : a >= m.goal ? '✓' : Math.round(pct * 100))}</span>
           <span class="tx"><span class="nm">${slim ? '' : m.icon + ' '}${esc(m.name)}</span>
             <span class="amt">${slim ? (last[m.k] ? 'last ' + fmtDay(last[m.k], { day: 'numeric', month: 'short' }) + ' · ' : '') + 'goal ' + fmtN(m.goal || 0) + ' ' + esc(m.unit)
-              : (m.limit ? (a ? fmtN(a) + ' ' + esc(m.unit) + ' today' : 'none today') + ' · keep at ' + fmtN(m.goal || 0) : fmtN(a) + ' / ' + fmtN(m.goal) + ' ' + esc(m.unit)) + (tk ? (rawToday.some(x => x.k === m.k) ? ' · <b class="tk">✓ ' + hm(tk) + '</b>' : ' · <b class="tk cr">↻ ' + hm(tk) + ' assumed</b>') : '')}</span>
+              : (m.limit ? (a ? fmtN(a) + ' ' + esc(m.unit) + ' today' : 'none today') + ' · keep at ' + fmtN(m.goal || 0) : fmtN(a) + ' / ' + fmtN(m.goal) + ' ' + esc(m.unit)) + (tk ? ' · <b class="tk">✓ ' + hm(tk) + '</b>' : '')}</span>
             ${est ? `<span class="est">${esc(est)}</span>` : ''}
             ${saf && !m.limit && a > 0 ? `<span class="warn ${saf.level}">⚠ ${esc(L.safetyLabel(saf))} · ${fmtN(saf.ul)} ${esc(saf.unit)}</span>` : ''}</span></button>
         ${step ? `<button class="mic2-add${u ? ' mine' : ''}" data-act="dose-quick" data-k="${m.k}" data-v="${step}" aria-label="Log ${u ? 'your usual ' : ''}${fmtN(step)} ${esc(m.unit)} of ${esc(m.name)} now">+${fmtN(step)}<small>${esc(m.unit)}</small></button>` : ''}</div>`;

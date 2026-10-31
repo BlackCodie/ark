@@ -11,7 +11,7 @@
        starting point, and the sheet says where it came from.
      • The check-in — mood faces and 1–10 meters for energy and stress.
    ══════════════════════════════════════════════════════════════════════ */
-import { view, rawView, carriedFrom, emit, esc, icon, today, shiftDay, fmtDay, haptic, toast, openSheet, topSheet, closeSheet } from './core.js';
+import { view, rawView, esc, icon, today, shiftDay, fmtDay, haptic, toast, openSheet, topSheet, closeSheet } from './core.js';
 import { bioPatch } from './views.js';
 
 /* add: a running total you add to through the day · set: one reading for the day.
@@ -45,25 +45,23 @@ function before(v, t, f) {
   for (let i = 1; i <= 7; i++) { const k = shiftDay(t, -i), n = (B[k] || {})[f]; if (n != null && n !== 0) return { n, k, i }; }
   return null;
 }
-const ago = p => (p.i === 1 ? 'yesterday' : fmtDay(p.k, { weekday: 'short' }));
-/** "yesterday", or the weekday of an earlier day (for "carried from …"). */
-export const dayName = (k, t = today()) => (k === shiftDay(t, -1) ? 'yesterday' : fmtDay(k, { weekday: 'short', day: 'numeric', month: 'short' }));
 
 /* ── Log today ── */
 export function logRows(v, t, only) {
-  const d = v.bio[t] || {}, G = (v.bioDefs && v.bioDefs.goals) || {}, cf = (v.carry || {})[t] || {};
+  // Today shows what you logged today — zero until you do (2026-10-31: "everything must be at 0, it confuses me").
+  const d = v.bio[t] || {}, G = (v.bioDefs && v.bioDefs.goals) || {};
   return `<div class="lg-list">${VIT.filter(x => !only || only.includes(x.f)).map(x => {
-    const cur = d[x.f], has = logged(x, cur), goal = x.goal ? G[x.goal] : null, carried = has ? cf[x.f] || null : null;
+    const cur = d[x.f], has = logged(x, cur), goal = x.goal ? G[x.goal] : null;
     const pct = goal && has ? Math.min(1, cur / goal) : 0;
-    const p = has ? null : x.f === 'weight' ? null : before(v, t, x.f);
     const lw = !has && x.f === 'weight' ? latestWeight(v) : null;
-    const hint = carried ? '↻ carried from ' + dayName(carried, t) : has ? (goal ? (cur >= goal ? 'goal reached' : Math.round(cur / goal * 100) + ' % of ' + fmtV(x, goal) + (unitOf(x) ? ' ' + unitOf(x) : '')) : 'logged today')
-      : p ? ago(p) + ' ' + fmtV(x, p.n) + (unitOf(x) ? ' ' + unitOf(x) : '') : lw ? 'last ' + fmtV(x, lw) + ' kg' : 'tap to log';
-    return `<div class="lg${has ? ' on' : ''}${carried ? ' carried' : ''}${goal && has && cur >= goal && !carried ? ' done' : ''}" style="--c:${x.c}">
+    const u = unitOf(x) ? ' ' + unitOf(x) : '';
+    const hint = has ? (goal ? (cur >= goal ? 'goal reached' : Math.round(cur / goal * 100) + ' % of ' + fmtV(x, goal) + u) : 'logged today')
+      : lw ? 'not weighed today · last ' + fmtV(x, lw) + ' kg' : goal ? 'not logged yet · goal ' + fmtV(x, goal) + u : 'not logged yet';
+    return `<div class="lg${has ? ' on' : ''}${goal && has && cur >= goal ? ' done' : ''}" style="--c:${x.c}">
       <button class="lg-main" data-act="lg-open" data-f="${x.f}" aria-label="${x.n}${has ? ' ' + fmtV(x, cur) + ' ' + x.u : ''} — open to log">
         <span class="lg-ic">${icon(x.ic, 18)}</span>
         <span class="lg-tx"><span class="lg-n">${x.n}</span><span class="lg-h">${esc(hint)}</span></span>
-        <span class="lg-v num">${has ? fmtV(x, cur) + (unitOf(x) ? `<small>${unitOf(x)}</small>` : '') : '<i>—</i>'}</span>
+        <span class="lg-v num${has ? '' : ' zero'}">${has ? fmtV(x, cur) + (unitOf(x) ? `<small>${unitOf(x)}</small>` : '') : x.f === 'weight' ? '<i>—</i>' : '0' + (unitOf(x) ? `<small>${unitOf(x)}</small>` : '')}</span>
         ${x.kind === 'add' ? '' : `<span class="lg-chev">${icon('chev', 15)}</span>`}
       </button>
       ${x.kind === 'add' ? `<button class="lg-add" data-act="lg-add" data-f="${x.f}" data-d="${x.quick}" aria-label="Add ${fmtV(x, x.quick)} ${x.u} ${x.n.toLowerCase()}">+${fmtV(x, x.quick)}<small>${x.u}</small></button>` : ''}
@@ -75,12 +73,11 @@ export function logRows(v, t, only) {
 /* ── the log sheet ── */
 let ls = { f: null, v: 0, from: '' };
 function startOf(v, t, x) {
-  const cur = (v.bio[t] || {})[x.f], cd = carriedFrom(t, x.f);
-  if (logged(x, cur)) return { v: cur, from: cd ? dayName(cd, t) + "'s, carried" : '' };
-  if (x.kind === 'add') return { v: 0, from: '' };
+  const cur = (v.bio[t] || {})[x.f];
+  if (logged(x, cur)) return { v: cur, from: '' };
+  // A weigh-in starts at your last one (a scale reading, not a stat of the day); everything else starts at 0.
   if (x.f === 'weight') { const w = latestWeight(v); return w ? { v: w, from: 'your last weigh-in' } : { v: 75, from: '' }; }
-  const p = before(v, t, x.f);
-  return p ? { v: p.n, from: ago(p) + "'s " + x.n.toLowerCase() } : { v: x.f === 'sleep' ? 7 : x.f === 'deep' ? 1.5 : 0, from: '' };
+  return { v: 0, from: '' };
 }
 function rangeOf(x) {
   if (x.f === 'weight') { const c = Math.round(ls.v); return [Math.max(x.min, c - x.span), Math.min(x.max, c + x.span)]; }
@@ -93,9 +90,7 @@ function note(x) {
   const parts = [];
   if (x.f === 'sleep' || x.f === 'deep') parts.push(hmin(ls.v));
   if (goal) parts.push(Math.round(ls.v / goal * 100) + ' % of your ' + fmtV(x, goal) + u + ' goal');
-  const cd = carriedFrom(t, x.f);
-  const head = cd ? (Math.abs(cur - ls.v) < 1e-9 ? '↻ Carried from ' + dayName(cd, t) + ' — Save to log it as today\'s' : '↻ ' + fmtV(x, cur) + u + ' carried from ' + dayName(cd, t) + ' — Save to log this instead')
-    : logged(x, cur) ? (Math.abs(cur - ls.v) < 1e-9 ? 'Saved today' : 'Saved today: ' + fmtV(x, cur) + u + ' — Save to change it')
+  const head = logged(x, cur) ? (Math.abs(cur - ls.v) < 1e-9 ? 'Saved today' : 'Saved today: ' + fmtV(x, cur) + u + ' — Save to change it')
     : x.kind === 'add' ? 'Today so far — add to it below' : ls.from ? 'Not logged today · starts at ' + ls.from : 'Not logged today';
   return `<b>${esc(head)}</b>${parts.length ? '<br>' + esc(parts.join(' · ')) : ''}`;
 }
@@ -103,7 +98,7 @@ function week(v, t, x) {
   const days = [6, 5, 4, 3, 2, 1, 0].map(i => shiftDay(t, -i)), vals = days.map(k => k === t ? ls.v : (v.bio[k] || {})[x.f]), cf = v.carry || {};
   const ok = vals.map(n => n != null && n !== 0), hi = Math.max(...vals.filter((n, i) => ok[i]), 1e-9);
   if (ok.filter(Boolean).length < 2) return '';
-  return `<div class="ls-week" style="--c:${x.c}"><div class="eyebrow">Your week${days.some(k => k !== t && (cf[k] || {})[x.f]) ? ' · faint = carried' : ''}</div><div class="ls-bars">${days.map((k, i) => `<span class="${k === t ? 't' : ''}${k !== t && (cf[k] || {})[x.f] ? ' c' : ''}">
+  return `<div class="ls-week" style="--c:${x.c}"><div class="eyebrow">Your week${days.some(k => k !== t && (cf[k] || {})[x.f]) ? ' · faint = copied from the day before' : ''}</div><div class="ls-bars">${days.map((k, i) => `<span class="${k === t ? 't' : ''}${k !== t && (cf[k] || {})[x.f] ? ' c' : ''}">
     <b class="num">${ok[i] ? fmtV(x, vals[i]) : ''}</b><i style="height:${ok[i] ? Math.max(6, vals[i] / hi * 54) : 3}px"></i>${fmtDay(k, { weekday: 'narrow' })}</span>`).join('')}</div></div>`;
 }
 function picks(v, t, x) {
@@ -139,7 +134,7 @@ export function logSheet(f) {
         <div class="ls-scale num"><span>${fmtV(x, lo)}</span><span>${fmtV(x, (lo + hi) / 2)}</span><span>${fmtV(x, hi)}</span></div>
         <div class="chips ls-picks" style="--accent:${x.c}">${picks(v, t, x)}</div>
         <button class="btn btn-prominent block ls-save" style="--accent:${x.c}" data-act="ls-save">Save ${x.n.toLowerCase()}</button>
-        ${logged(x, cur) ? `<button class="ls-clear" data-act="ls-clear">${carriedFrom(t, x.f) ? 'Not today — drop the carried value' : "Clear today's " + x.n.toLowerCase()}</button>` : ''}
+        ${logged(x, cur) ? `<button class="ls-clear" data-act="ls-clear">Clear today's ${x.n.toLowerCase()}</button>` : ''}
         ${week(v, t, x)}`;
     },
   });
@@ -166,15 +161,15 @@ export function onLogInput(el) {
 /* ── the check-in: mood faces, energy and stress meters ── */
 export const ENERGY_WORDS = ['Empty', 'Drained', 'Low', 'Low', 'OK', 'OK', 'Good', 'Good', 'Charged', 'Charged'];
 export const STRESS_WORDS = ['Calm', 'Calm', 'Light', 'Light', 'Moderate', 'Moderate', 'High', 'High', 'Overloaded', 'Overloaded'];
-export function meter(f, label, c, cur, words, carried = null) {
-  return `<div class="mtr-h"><span class="eyebrow">${label}</span><span class="mtr-v num" style="--c:${c}">${cur ? `<b>${cur}</b><small>/10</small> ${esc(words[cur - 1])}${carried ? `<small class="cf"> · ↻ ${esc(dayName(carried))} — tap to confirm</small>` : ''}` : '<small>tap a level</small>'}</span></div>
-    <div class="mtr${carried ? ' carried' : ''}" style="--c:${c}" role="group" aria-label="${label}">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n =>
+export function meter(f, label, c, cur, words) {
+  return `<div class="mtr-h"><span class="eyebrow">${label}</span><span class="mtr-v num" style="--c:${c}">${cur ? `<b>${cur}</b><small>/10</small> ${esc(words[cur - 1])}` : '<small>tap a level</small>'}</span></div>
+    <div class="mtr" style="--c:${c}" role="group" aria-label="${label}">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n =>
       `<button class="${cur && n <= cur ? 'f' : ''}${cur === n ? ' on' : ''}" style="--o:${(0.3 + n * 0.07).toFixed(2)}" data-act="bio-set" data-f="${f}" data-v="${n}" aria-label="${label} ${n} of 10" aria-pressed="${cur === n}"><span>${n}</span></button>`).join('')}</div>`;
 }
 /** levels: [{ e, n, c }] — the PC's mood levels when synced, else the phone's own six. */
-export function moodRow(levels, cur, carried = null) {
-  return `<div class="mood2${carried ? ' carried' : ''}">${levels.map((m, i) => `<button class="${cur === i ? 'on' : ''}" style="--c:${m.c || '#5ee6b5'}" data-act="bio-set" data-f="mood" data-v="${i}" aria-label="${esc(m.n)}" aria-pressed="${cur === i}"><span class="e">${m.e}</span></button>`).join('')}</div>
-    <div class="mood2-cap">${cur != null && levels[cur] ? esc(levels[cur].n) + (carried ? `<span class="cf">↻ ${esc(dayName(carried))} — tap to confirm</span>` : '') : 'How do you feel?'}</div>`;
+export function moodRow(levels, cur) {
+  return `<div class="mood2">${levels.map((m, i) => `<button class="${cur === i ? 'on' : ''}" style="--c:${m.c || '#5ee6b5'}" data-act="bio-set" data-f="mood" data-v="${i}" aria-label="${esc(m.n)}" aria-pressed="${cur === i}"><span class="e">${m.e}</span></button>`).join('')}</div>
+    <div class="mood2-cap">${cur != null && levels[cur] ? esc(levels[cur].n) : 'How do you feel?'}</div>`;
 }
 
 export const actions = {
@@ -199,9 +194,7 @@ export const actions = {
   },
   'ls-clear'() {
     const x = byF(ls.f); if (!x) return;
-    const t = today(), real = logged(x, (rawView().bio[t] || {})[x.f]);
-    // A logged value is cleared (the day before may then carry in, marked); a carried one is dropped for today.
-    if (real) bioPatch(t, { [x.f]: null }); else emit('bio.nocarry', { day: t, key: x.f, on: true });
-    haptic(); closeSheet(topSheet()); toast(real ? x.n + ' cleared for today' : 'Not today — ' + x.n.toLowerCase() + ' is no longer carried');
+    bioPatch(today(), { [x.f]: null });
+    haptic(); closeSheet(topSheet()); toast(x.n + ' cleared for today');
   },
 };

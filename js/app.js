@@ -65,7 +65,10 @@ function render() {
       if (html !== p.html) {
         // Side-scrolling strips keep their place across a redraw.
         const SCR = '.hstrip,.sstrip,.scroll1,.jump-in', keep = [].map.call(p.el.querySelectorAll(SCR), e => e.scrollLeft);
+        const ti = p.el.querySelector('[data-task-in]'), tv = ti ? ti.value : '', tf = !!ti && document.activeElement === ti;
         p.el.innerHTML = html; p.html = html;
+        // a sync landing while you type a task must not wipe it or drop the keyboard
+        if (tv || tf) { const n = p.el.querySelector('[data-task-in]'); if (n) { n.value = tv; if (tf) n.focus(); } }
         [].forEach.call(p.el.querySelectorAll(SCR), (e, j) => { if (keep[j]) e.scrollLeft = keep[j]; });
         if (after) after();
       }
@@ -203,6 +206,7 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => { if (onHabitInput(e.target, true)) return; if (e.target.matches('[data-ph-file]')) onPhotoInput(e.target); else if (e.target.matches('[data-strong-file]')) onStrongFile(e.target); });
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.id === 'pair-code') ACT['pair-go']();
+  if (e.key === 'Enter' && e.target.matches && e.target.matches('[data-task-in]')) { e.preventDefault(); ACT['task-add'](); return; }
   if (onWeatherKey(e)) return;
   if (e.key === 'Escape' && topSheet()) closeSheet(topSheet());
   // Non-button controls (the figure's muscles) answer Enter and Space like buttons.
@@ -281,8 +285,11 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') { onVisible(); syncNow(); restTick(); dataRev++; render(); }
   else onHidden();
 });
-setInterval(() => { if (document.visibilityState === 'visible' && state.token) syncNow(); }, 45000);
+// While you are looking: every 20 s, and the moment you come back to the app (2026-10-31: was every 45 s).
+setInterval(() => { if (document.visibilityState === 'visible' && state.token) syncNow(); }, 20000);
 window.addEventListener('online', () => scheduleSync(300));
+window.addEventListener('focus', () => scheduleSync(200));
+window.addEventListener('pageshow', () => scheduleSync(200));
 
 // The simulator (tools/iphone-sim.html) must always run the files on disk, not a cached shell.
 if ('serviceWorker' in navigator && /[?&]sim=/.test(location.search)) {

@@ -444,43 +444,53 @@ exports.carryForward = carryForward;
 exports.carriedFrom = carriedFrom;
 exports.isCarryKey = isCarryKey;
 /**
- * CARRY-FORWARD — a day you did not log takes your previous day's numbers
- * (the user, 2026-10-30: "when I don't log anything make it so it logs the previous day's stats").
+ * CARRY-FORWARD — a finished day you logged nothing on takes the previous day's stats.
  *
- * Nothing is stored. Carried values are worked out from your real logs every time they are needed, each one
- * marked with the real day it came from, and any real log replaces them at once. A chain of carried days stops
- * CARRY_DAYS after the real value it started from — after that a gap is a gap again, so a week away is not filled
- * with numbers from a week ago.
+ * the user, 2026-10-30: "when I don't log anything make it so it logs the previous day's stats"; 2026-10-31: "only
+ * make them log after the day passes and I haven't logged anything — everything must be at 0, it confuses me".
  *
- *   • Readings of the night and the morning (sleep, deep and REM sleep, bedtime, wake time, HRV, resting heart
- *     rate, energy, mood, stress) carry into today as well — last night happened whether or not you logged it.
- *   • Running totals (water, protein, calories, steps, active energy, exercise minutes, daylight) carry only into
- *     days that are over: today's total is what you have logged so far.
- *   • Supplements: each of the previous day's doses repeats at the same clock time, today only once that time has
- *     passed — the kinetics then run on the real clock. A real dose of a supplement that day replaces all of its
- *     carried ones.
- *   • A field or supplement you cleared for a day (`nocarry`) stays empty, and the chain stops there.
+ *   • Today is never filled in: it shows exactly what you have logged, zero until you log.
+ *   • A day that is over and has no stats logged at all (no vitals, no supplement) becomes a copy of the day before
+ *     it — the same readings and totals, the same supplements at the same clock times. If you logged anything that
+ *     day, the day stands exactly as you logged it.
+ *   • A chain of copied days stops CARRY_DAYS after the real day it copies — after that a gap is a gap again, so a
+ *     week away is not filled with numbers from a week ago.
+ *   • Nothing is stored: copies are worked out from your real logs every time, each value marked with the real day
+ *     it came from, and a late real log for that day replaces the copy at once.
+ *   • `nocarry` on a day leaves those fields or supplements ('dose:<k>') out of its copy.
  *
- * Things that are not stats are never carried: workouts, habits, tags, meals, body weight (a carried weigh-in
- * would draw a flat line on the weight trend).
+ * Things that are not stats are never copied: workouts, habits, tags, meals, body weight (a copied weigh-in would
+ * draw a flat line on the weight trend).
  */
 const dates_1 = require("./dates");
 const series_1 = require("./series");
 exports.CARRY_DAYS = 7;
-/** Night and morning readings — carried into today too. */
+/** Readings of the night and the morning. */
 exports.CARRY_SET = ['sleep', 'deep', 'rem', 'bed', 'wake', 'hrv', 'rhr', 'energy', 'mood', 'stress'];
-/** Running totals — carried only into days that are over. */
+/** The day's running totals. */
 exports.CARRY_ADD = ['water', 'prot', 'cal', 'steps', 'active', 'exmin', 'daylight'];
+exports.CARRY_KEYS = [...exports.CARRY_SET, ...exports.CARRY_ADD];
 /** For these a stored 0 means "not logged" (the PC stores 0 for an empty total); mood 0 and a 00:00 bedtime are real. */
 const ZERO_IS_EMPTY = new Set(['sleep', 'deep', 'rem', 'hrv', 'rhr', 'energy', 'stress', 'water', 'prot', 'cal', 'steps', 'active', 'exmin', 'daylight']);
 const isEmpty = (f, v) => v === null || v === undefined || v === '' || (ZERO_IS_EMPTY.has(f) && !(Number(v) > 0));
 const isDayKey = (k) => /^\d{4}-\d{2}-\d{2}$/.test(k);
+/** Any stat logged on this day: a vitals field or a supplement. */
+function logged(rec, doses) {
+    if (doses > 0)
+        return true;
+    if (!rec)
+        return false;
+    if (exports.CARRY_KEYS.some(f => !isEmpty(f, rec[f])))
+        return true;
+    const m = rec.micros || {};
+    return Object.keys(m).some(k => Number(m[k]) > 0);
+}
 /** The same local clock time as `atIso`, on `day`. */
 function sameClock(day, atIso) {
     const src = new Date(atIso), [y, m, d] = day.split('-').map(Number);
     return new Date(y, m - 1, d, src.getHours(), src.getMinutes(), src.getSeconds()).getTime();
 }
-function carryForward(bio0, doses0, today, now, opts = {}) {
+function carryForward(bio0, doses0, today, _now, opts = {}) {
     var _a;
     const LIMIT = (_a = opts.days) !== null && _a !== void 0 ? _a : exports.CARRY_DAYS;
     const dayOf = opts.dayKeyOf || ((t) => { const d = new Date(t); const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); });
@@ -491,100 +501,63 @@ function carryForward(bio0, doses0, today, now, opts = {}) {
     for (const k of Object.keys(bioIn))
         if (isDayKey(k))
             bio[k] = { ...bioIn[k], micros: { ...((bioIn[k] || {}).micros || {}) } };
-    // real doses by day and supplement
     const realBy = {};
-    for (const d of realDoses) {
-        const day = dayOf(Date.parse(d.at));
-        ((realBy[day] = realBy[day] || {})[d.k] = realBy[day][d.k] || []).push(d);
-    }
-    const days = [...Object.keys(bio), ...Object.keys(realBy)].filter(k => isDayKey(k) && k <= today).sort();
-    if (!days.length)
-        return { bio, doses: realDoses.slice().sort((a, b) => Date.parse(a.at) - Date.parse(b.at)), from };
+    for (const d of realDoses)
+        (realBy[dayOf(Date.parse(d.at))] = realBy[dayOf(Date.parse(d.at))] || []).push(d);
+    const days = [...Object.keys(bio), ...Object.keys(realBy)].filter(k => isDayKey(k) && k < today).sort();
+    const sorted = () => [...realDoses, ...carried].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
     const carried = [];
-    const dosesOn = {}; // real + carried, by day
+    if (!days.length)
+        return { bio, doses: sorted(), from };
+    const origin = {}; // the real day each day's numbers are
+    const dosesOn = {};
     let prev = null;
-    for (let day = days[0]; day <= today; day = (0, series_1.shiftDayKey)(day, 1)) {
-        const rec = bio[day] || { micros: {} };
-        const no = new Set(Array.isArray(rec.nocarry) ? rec.nocarry.map(String) : []);
-        const fr = {};
-        const p = prev ? bio[prev] : null, pf = prev ? (from[prev] || {}) : {};
-        const over = day < today;
-        if (p && prev) {
-            for (const f of [...exports.CARRY_SET, ...exports.CARRY_ADD]) {
-                if (!isEmpty(f, rec[f]) || no.has(f) || isEmpty(f, p[f]))
-                    continue;
-                if (!over && exports.CARRY_ADD.includes(f))
-                    continue;
-                const origin = pf[f] || prev;
-                if ((0, dates_1.daysBetween)(origin, day) > LIMIT)
-                    continue;
-                rec[f] = p[f];
-                fr[f] = origin;
+    for (let day = days[0]; day < today; day = (0, series_1.shiftDayKey)(day, 1)) {
+        const rec = bio[day];
+        if (logged(rec, (realBy[day] || []).length)) {
+            origin[day] = day;
+            dosesOn[day] = (realBy[day] || []).slice();
+        }
+        else if (prev && origin[prev] && (0, dates_1.daysBetween)(origin[prev], day) <= LIMIT) {
+            const src = bio[prev] || {}, o = origin[prev], fr = {};
+            const no = new Set(rec && Array.isArray(rec.nocarry) ? rec.nocarry.map(String) : []);
+            const out = { ...(rec || {}), micros: { ...((rec || {}).micros || {}) } };
+            for (const f of exports.CARRY_KEYS)
+                if (!isEmpty(f, src[f]) && !no.has(f)) {
+                    out[f] = src[f];
+                    fr[f] = (from[prev] && from[prev][f]) || o;
+                }
+            const copied = [];
+            (dosesOn[prev] || []).forEach((d, i) => {
+                if (no.has('dose:' + d.k))
+                    return;
+                copied.push({ id: 'carry:' + d.k + ':' + day + ':' + i, k: d.k, amount: Number(d.amount), at: new Date(sameClock(day, d.at)).toISOString(), src: 'carry', from: o });
+            });
+            const withDoses = new Set(copied.map(d => d.k));
+            copied.forEach(d => { out.micros[d.k] = Math.round(((out.micros[d.k] || 0) + d.amount) * 1000) / 1000; fr['dose:' + d.k] = o; });
+            const pm = src.micros || {};
+            for (const k of Object.keys(pm))
+                if (!withDoses.has(k) && Number(pm[k]) > 0 && !no.has('dose:' + k)) {
+                    out.micros[k] = Number(pm[k]);
+                    fr['micros:' + k] = o;
+                }
+            if (Object.keys(fr).length) {
+                bio[day] = out;
+                from[day] = fr;
+                origin[day] = o;
+                dosesOn[day] = copied;
+                carried.push(...copied);
             }
         }
-        // supplements: real doses stand; a supplement with none today repeats yesterday's at the same clock times
-        const mine = {};
-        for (const k of Object.keys(realBy[day] || {}))
-            mine[k] = realBy[day][k].slice();
-        if (prev) {
-            const pd = dosesOn[prev] || {};
-            for (const k of Object.keys(pd)) {
-                if (mine[k] && mine[k].length)
-                    continue;
-                if (no.has('dose:' + k))
-                    continue;
-                if (Number((rec.micros || {})[k]) > 0)
-                    continue; // a real day total logged without a time
-                const origin = pf['dose:' + k] || prev;
-                if ((0, dates_1.daysBetween)(origin, day) > LIMIT)
-                    continue;
-                const list = [];
-                pd[k].forEach((d, i) => {
-                    const at = sameClock(day, d.at);
-                    if (!over && at > now)
-                        return; // today: only once that time has passed
-                    list.push({ id: 'carry:' + k + ':' + day + ':' + i, k, amount: Number(d.amount), at: new Date(at).toISOString(), src: 'carry', from: origin });
-                });
-                if (list.length) {
-                    mine[k] = list;
-                    carried.push(...list);
-                    rec.micros = rec.micros || {};
-                    rec.micros[k] = Math.round(list.reduce((s, d) => s + d.amount, 0) * 1000) / 1000;
-                    fr['dose:' + k] = origin;
-                }
-            }
-            // day totals logged without dose times (older entries): closed days only
-            if (over && p) {
-                const pm = p.micros || {};
-                for (const k of Object.keys(pm)) {
-                    if (mine[k] || !(Number(pm[k]) > 0) || Number((rec.micros || {})[k]) > 0 || no.has('dose:' + k))
-                        continue;
-                    const origin = pf['micros:' + k] || pf['dose:' + k] || prev;
-                    if ((0, dates_1.daysBetween)(origin, day) > LIMIT)
-                        continue;
-                    rec.micros = rec.micros || {};
-                    rec.micros[k] = Number(pm[k]);
-                    fr['micros:' + k] = origin;
-                }
-            }
-        }
-        dosesOn[day] = mine;
-        if (Object.keys(fr).length)
-            from[day] = fr;
-        const has = Object.keys(rec).some(k => k !== 'micros' && rec[k] !== undefined) || Object.keys(rec.micros || {}).length;
-        if (has || bio[day])
-            bio[day] = rec;
         prev = day;
     }
-    const all = [...realDoses, ...carried].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-    return { bio, doses: all, from };
+    return { bio, doses: sorted(), from };
 }
-/** Was this field (or 'dose:<k>') carried on this day, and from which real day? */
+/** Was this field (or 'dose:<k>') copied onto this day, and from which real day? */
 function carriedFrom(res, day, key) {
     return (res && res.from[day] && res.from[day][key]) || null;
 }
-exports.CARRY_KEYS = [...exports.CARRY_SET, ...exports.CARRY_ADD];
-/** A key a `bio.nocarry` event may name: a carried field, or a supplement as 'dose:<k>'. */
+/** A key a `bio.nocarry` event may name: a stats field, or a supplement as 'dose:<k>'. */
 function isCarryKey(k) {
     return typeof k === 'string' && (exports.CARRY_KEYS.includes(k) || /^dose:[a-z0-9_-]{1,24}$/i.test(k));
 }
@@ -2775,6 +2748,7 @@ __exportStar(require("./muscle"), exports);
 __exportStar(require("./charts"), exports);
 __exportStar(require("./weekly"), exports);
 __exportStar(require("./carry"), exports);
+__exportStar(require("./tasks"), exports);
 
   },
   "./labs": function (exports, module, require) {
@@ -6241,7 +6215,7 @@ function rebuildModel(inp) {
  *   inbox/<device>.json    written by one phone — every event it has not seen acknowledged yet
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.b64ToText = exports.textToB64 = void 0;
+exports.RELAY_TIMEOUT_MS = exports.b64ToText = exports.textToB64 = void 0;
 exports.b64 = b64;
 exports.unb64 = unb64;
 exports.relayKey = relayKey;
@@ -6320,8 +6294,15 @@ function gh(c, path, opt = {}) {
         h['Content-Type'] = 'application/json';
     if (opt.etag)
         h['If-None-Match'] = opt.etag;
-    return fetch(API + path, { method: opt.method || 'GET', headers: h, body: opt.body !== undefined ? JSON.stringify(opt.body) : undefined, cache: 'no-store' });
+    // A request that never answers (iOS pausing the app mid-sync, a dropped connection) gives up after 15 s — before,
+    // one hung request kept that device's sync 'busy' until the app was restarted (2026-10-31).
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const tm = ctl ? setTimeout(() => ctl.abort(), exports.RELAY_TIMEOUT_MS) : null;
+    return fetch(API + path, { method: opt.method || 'GET', headers: h, body: opt.body !== undefined ? JSON.stringify(opt.body) : undefined, cache: 'no-store', signal: ctl ? ctl.signal : undefined })
+        .finally(() => { if (tm)
+        clearTimeout(tm); });
 }
+exports.RELAY_TIMEOUT_MS = 15000;
 async function json(r) {
     if (!r.ok)
         throw new Error('GitHub ' + r.status + ' ' + (await r.text()).slice(0, 120));
@@ -7962,6 +7943,7 @@ const bloodwork_1 = require("./bloodwork");
 const strong_1 = require("./strong");
 const habitlog_1 = require("./habitlog");
 const carry_1 = require("./carry");
+const tasks_1 = require("./tasks");
 function emptySnapshot() {
     return {
         v: 1, rev: 0, appliedSeq: 0, day: (0, dates_1.dayKey)(new Date()),
@@ -8541,6 +8523,12 @@ function applyEvent(s, e) {
                 s.bloodwork = s.bloodwork.filter((x) => x.id !== d.id);
             return;
         }
+        case 'task.add':
+        case 'task.set':
+        case 'task.del': {
+            (0, tasks_1.applyTaskEvent)(s.tasks || (s.tasks = []), e.type, d, e.ts);
+            return;
+        }
         case 'note.add': {
             const text = String(d.text || '').trim();
             if (!text || !Array.isArray(s.journal))
@@ -9061,6 +9049,80 @@ function sundayBodyLine(rows, age, habits) {
     if (slip.length)
         parts.push('slipped: ' + slip.map(h => h.name + ' ' + h.week + '/7').join(', '));
     return parts.join(' · ');
+}
+
+  },
+  "./tasks": function (exports, module, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.TASK_TEXT_MAX = void 0;
+exports.cleanTask = cleanTask;
+exports.applyTaskEvent = applyTaskEvent;
+exports.pruneTasks = pruneTasks;
+exports.tasksForToday = tasksForToday;
+const isDay = (k) => typeof k === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(k);
+const isIso = (k) => typeof k === 'string' && isFinite(Date.parse(k));
+exports.TASK_TEXT_MAX = 140;
+/** A task as it may be stored, or null if it is not one. */
+function cleanTask(x) {
+    if (!x || typeof x !== 'object')
+        return null;
+    const id = typeof x.id === 'string' && /^[A-Za-z0-9_-]{1,48}$/.test(x.id) ? x.id : null;
+    const t = typeof x.t === 'string' ? x.t.replace(/\s+/g, ' ').trim().slice(0, exports.TASK_TEXT_MAX) : '';
+    if (!id || !t)
+        return null;
+    const done = !!x.done;
+    return { id, t, done, at: isIso(x.at) ? x.at : new Date(0).toISOString(), doneAt: done && isIso(x.doneAt) ? x.doneAt : done ? (isIso(x.at) ? x.at : null) : null,
+        pri: !!x.pri, due: isDay(x.due) ? x.due : null };
+}
+/** Apply one task event to a list in place. Returns true if the list changed. */
+function applyTaskEvent(list, type, data, ts) {
+    const d = data || {};
+    if (type === 'task.add') {
+        const t = cleanTask(d.task);
+        if (!t || list.some(x => x.id === t.id))
+            return false;
+        list.push(t);
+        return true;
+    }
+    const i = list.findIndex(x => x.id === d.id);
+    if (i < 0)
+        return false;
+    if (type === 'task.del') {
+        list.splice(i, 1);
+        return true;
+    }
+    if (type !== 'task.set')
+        return false;
+    const f = d.fields || {}, cur = list[i], next = { ...cur };
+    if (typeof f.t === 'string') {
+        const t = f.t.replace(/\s+/g, ' ').trim().slice(0, exports.TASK_TEXT_MAX);
+        if (t)
+            next.t = t;
+    }
+    if (typeof f.done === 'boolean') {
+        next.done = f.done;
+        next.doneAt = f.done ? (isIso(ts) ? ts : new Date().toISOString()) : null;
+    }
+    if (typeof f.pri === 'boolean')
+        next.pri = f.pri;
+    if ('due' in f)
+        next.due = isDay(f.due) ? f.due : null;
+    if (JSON.stringify(next) === JSON.stringify(cur))
+        return false;
+    list[i] = next;
+    return true;
+}
+/** Done tasks are kept for 14 days after they were done; open ones always. */
+function pruneTasks(list, now = Date.now()) {
+    return (list || []).map(cleanTask).filter((t) => !!t && !(t.done && t.doneAt && now - Date.parse(t.doneAt) > 14 * 864e5));
+}
+/** What Today shows: open tasks (starred first, then due soonest, then oldest), then the ones finished today. */
+function tasksForToday(list, today, dayOf) {
+    const all = (list || []).map(cleanTask).filter((t) => !!t);
+    const open = all.filter(t => !t.done).sort((a, b) => (Number(b.pri) - Number(a.pri)) || (a.due || '9').localeCompare(b.due || '9') || a.at.localeCompare(b.at));
+    const doneToday = all.filter(t => t.done && t.doneAt && dayOf(t.doneAt) === today).sort((a, b) => String(b.doneAt).localeCompare(String(a.doneAt)));
+    return { open, doneToday, overdue: open.filter(t => t.due && t.due < today).length };
 }
 
   },
