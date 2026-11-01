@@ -9,13 +9,12 @@ import { renderLab } from './system.js';
 import { weatherLine } from './weather.js';
 import { fuelCard } from './daily.js';
 import {
-  L, state, view, rawView, emit, emitUndoable, uid, ago, openSheet, changed, esc, icon, today, shiftDay, fmt1, fmtMins, fmtDay, daysBetween, homeMove, anywhere, caState, checkCa, onPublicCopy, pair,
+  L, state, view, rawView, emit, emitUndoable, uid, ago, openSheet, topSheet, closeSheet, changed, esc, icon, today, shiftDay, fmt1, fmtMins, fmtDay, daysBetween, homeMove, anywhere, caState, checkCa, onPublicCopy, pair,
   ringsSvg, ringSvg, sparkSvg, barsSvg, syncLabel, paired, haptic, toast, scheduleSync,
 } from './core.js';
 import { staleNote } from './more.js';
 import { routineCard, routineLine, renderBooks } from './routines.js';
 import { mindLine } from './mind.js';
-import { regulars, usualOf, takenAt, fmtAmt, hm } from './doses.js';
 
 export const PILLAR = {
   body: ['Body', '#30d158'], mind: ['Mind', '#7d7aff'], income: ['Income', '#ff9f0a'],
@@ -182,9 +181,9 @@ export function renderToday() {
       <p>Everything you log here lands in ARK on your PC. Start with whatever is easiest today.</p></section>`;
   }
 
-  // 2026-10-31 ("too many things on Today — add a tasks list"): the day at a glance, your tasks (with ARK's suggestions
-  // for the day under them), habits and supplements to tick, quick logging — and everything else as one line each on a
-  // single card, a tap away. Today's numbers are what you logged today: zero until you log.
+  // 2026-10-31/11-01 ("too many things on Today"; "remove the supplements and habits"): the day at a glance, your tasks
+  // (with ARK's suggestions for the day under them), quick logging — and everything else as one line each on a single
+  // card, a tap away. Habits live on Boards, supplements in Body Arch. Today's numbers are what you logged today.
   H += dayHero(v, t, done, total, weekSessions, pm, s);
 
   /* ARK's suggestions for the day — each doable from here */
@@ -219,8 +218,6 @@ export function renderToday() {
       st: (d === null ? 'Not practiced yet' : d === 1 ? 'Last: yesterday' : 'Last: ' + d + ' days ago'), act: 'practice-sheet', skill: sk.id });
   }
   H += tasksCard(v, t, items);
-  H += habitStrip(v, t);
-  H += suppStrip(v, t);
 
   H += `<div class="sec"><h2>Quick log</h2></div><section class="qrow">
     ${quick('weigh-sheet', 'scale', '#40c8e0', 'Weigh-in', lastWeightLabel(v))}
@@ -269,50 +266,87 @@ function dayHero(v, t, done, total, weekSessions, pm, s) {
     ${streak > 1 ? `<div class="dh-streak">🔥 ${streak}-day habit streak${done ? '' : ' — tick one today to keep it'}</div>` : ''}
   </section>`;
 }
-/** The to-do list (logic/tasks.ts) — on every device; ARK's suggestions for the day sit under it. */
-let taskPop = '';
+/* ── Tasks (logic/tasks.ts), laid out like a Notion to-do database (2026-11-01: "upgrade the tasks list, inspiration
+   from Notion"): a page title, views (To do · Starred · Done), square checkboxes, soft coloured property tags, an inline
+   "+ New task" row, and a page per task for its status, priority and due date. On every device. ── */
+let taskPop = '', taskOpen = null;
+const TASK_VIEWS = [['open', 'To do', 'list'], ['starred', 'Starred', 'star'], ['done', 'Done', 'check']];
+function dueTag(due, t) {
+  if (!due) return '';
+  const d = daysBetween(t, due);
+  const txt = d === 0 ? 'Today' : d === 1 ? 'Tomorrow' : d === -1 ? 'Yesterday' : fmtDay(due, { weekday: 'short', day: 'numeric', month: 'short' });
+  return `<span class="nt-tag ${d < 0 ? 'red' : d === 0 ? 'orange' : d === 1 ? 'blue' : 'gray'}">${icon('cal', 11)}${txt}</span>`;
+}
+const tasksOf = v => (v.tasks || []).map(L.cleanTask).filter(Boolean);
 function tasksCard(v, t, sugg) {
-  const T = L.tasksForToday(v.tasks || [], t, iso => L.dayKey(new Date(iso)));
-  const all = T.open.length + T.doneToday.length, frac = all ? T.doneToday.length / all : 0;
-  const head = T.open.length ? T.open.length + ' to do' + (T.overdue ? ' · ' + T.overdue + ' late' : '') : T.doneToday.length ? 'All done ✓' : 'Nothing on your list';
-  const row = x => `<div class="tk${x.done ? ' done' : ''}${x.pri ? ' pri' : ''}${taskPop === x.id ? ' pop' : ''}">
-      <button class="tk-ck" data-act="task-toggle" data-id="${esc(x.id)}" aria-pressed="${x.done}" aria-label="${esc(x.t)} — mark ${x.done ? 'not done' : 'done'}">${icon('tick', 14, 3)}</button>
-      <span class="tk-t">${esc(x.t)}${x.due && !x.done ? `<span class="tk-due${x.due < t ? ' late' : ''}">${x.due === t ? 'today' : fmtDay(x.due, { day: 'numeric', month: 'short' })}</span>` : ''}</span>
-      <button class="tk-star" data-act="task-pri" data-id="${esc(x.id)}" aria-pressed="${x.pri}" aria-label="${x.pri ? 'Unstar' : 'Star'} ${esc(x.t)}">★</button>
-      <button class="tk-del" data-act="task-del" data-id="${esc(x.id)}" aria-label="Delete ${esc(x.t)}">${icon('x', 13)}</button></div>`;
-  const S = sugg.slice(0, 3);
-  const out = `<section class="card frost tasks">
-    <div class="tk-top">
-      <div class="tk-ring">${ringSvg(frac, '#30d158', 50, 5, all ? T.doneToday.length + '/' + all : '·')}</div>
-      <div class="tk-hd"><div class="eyebrow">Tasks · on every device</div><b>${esc(head)}</b></div>
+  const all = tasksOf(v), T = L.tasksForToday(all, t, iso => L.dayKey(new Date(iso)));
+  const vw = state.settings.taskView || 'open';
+  const done = all.filter(x => x.done).sort((a, b) => String(b.doneAt).localeCompare(String(a.doneAt)));
+  const list = vw === 'done' ? done : vw === 'starred' ? T.open.filter(x => x.pri) : [...T.open, ...T.doneToday];
+  const n = { open: T.open.length, starred: T.open.filter(x => x.pri).length, done: done.length };
+  const hhmm = iso => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const row = x => `<div class="nt-row${x.done ? ' done' : ''}${taskPop === x.id ? ' pop' : ''}">
+      <button class="nt-ck" data-act="task-toggle" data-id="${esc(x.id)}" aria-pressed="${x.done}" aria-label="${esc(x.t)} — mark ${x.done ? 'not done' : 'done'}">${icon('tick', 12, 3.4)}</button>
+      <button class="nt-t" data-act="task-open" data-id="${esc(x.id)}" aria-label="Open ${esc(x.t)}"><span class="nt-name">${esc(x.t)}</span>
+        <span class="nt-props">${x.pri ? `<span class="nt-tag yellow">${icon('star', 11)}Priority</span>` : ''}${x.done ? `<span class="nt-meta">${L.dayKey(new Date(x.doneAt)) === t ? 'Done ' + hhmm(x.doneAt) : 'Done ' + fmtDay(L.dayKey(new Date(x.doneAt)), { day: 'numeric', month: 'short' })}</span>` : dueTag(x.due, t)}</span></button>
+    </div>`;
+  const empty = vw === 'done' ? 'Nothing finished in the last two weeks.' : vw === 'starred' ? 'Nothing starred — open a task and give it Priority.' : 'Nothing to do. Add a task below — it shows on every device.';
+  const sugOpen = state.settings.taskSug !== false, S = sugg.slice(0, 4);
+  const out = `<section class="card frost tasks notion">
+    <div class="nt-head">
+      <span class="nt-icon" aria-hidden="true">☑️</span>
+      <div class="nt-hd"><h3 class="nt-title">Tasks</h3><div class="nt-sub">${n.open} open${T.doneToday.length ? ' · ' + T.doneToday.length + ' done today' : ''}${T.overdue ? ' · <b>' + T.overdue + ' late</b>' : ''} · on every device</div></div>
+      <div class="nt-ring">${ringSvg(T.open.length + T.doneToday.length ? T.doneToday.length / (T.open.length + T.doneToday.length) : 0, '#2f9bf0', 38, 4, '')}</div>
     </div>
-    <div class="tk-add"><input class="tk-in" data-task-in maxlength="140" placeholder="Add a task…" enterkeyhint="done" autocomplete="off" aria-label="New task"><button class="tk-go" data-act="task-add" aria-label="Add the task">${icon('plus', 18, 2.6)}</button></div>
-    ${all ? `<div class="tk-list">${T.open.map(row).join('')}${T.doneToday.map(row).join('')}</div>` : ''}
-    ${S.length ? `<div class="tk-sug-h">ARK suggests</div><div class="tk-sug">${S.map(it => `<button class="tk-s" ${it.act ? `data-act="${it.act}"` : 'disabled'} ${it.tab ? `data-tab="${it.tab}"` : ''} ${it.seg ? `data-seg="${it.seg}"` : ''} ${it.skill ? `data-skill="${esc(it.skill)}"` : ''} style="--c:${it.c}">
-        <span class="ic">${icon(it.ic, 16)}</span><span class="tx"><b>${esc(it.t)}</b><small>${esc(it.st)}</small></span><span class="chev">${icon('chev', 14)}</span></button>`).join('')}</div>` : ''}
+    <div class="nt-views" role="tablist">${TASK_VIEWS.map(([k, l, ic]) => `<button class="${vw === k ? 'on' : ''}" role="tab" aria-selected="${vw === k}" data-act="task-view" data-v="${k}">${icon(ic, 13)}${l}<small>${n[k] || ''}</small></button>`).join('')}</div>
+    <div class="nt-list">${list.length ? list.map(row).join('') : `<div class="nt-empty">${empty}</div>`}</div>
+    ${vw !== 'done' ? `<label class="nt-new"><span class="nt-plus">${icon('plus', 15, 2.2)}</span><input class="tk-in" data-task-in maxlength="140" placeholder="New task" enterkeyhint="done" autocomplete="off" aria-label="New task"><button class="nt-go" data-act="task-add">Add</button></label>` : ''}
+    ${S.length ? `<button class="nt-toggle${sugOpen ? ' open' : ''}" data-act="task-sug" aria-expanded="${sugOpen}">${icon('chev', 13)}ARK suggests <small>${S.length}</small></button>
+      ${sugOpen ? `<div class="nt-sugs">${S.map(it => `<div class="nt-sug" style="--c:${it.c}"><button class="nt-s" ${it.act ? `data-act="${it.act}"` : 'disabled'} ${it.tab ? `data-tab="${it.tab}"` : ''} ${it.seg ? `data-seg="${it.seg}"` : ''} ${it.skill ? `data-skill="${esc(it.skill)}"` : ''}>
+          <span class="ic">${icon(it.ic, 14)}</span><span class="tx"><b>${esc(it.t)}</b><small>${esc(it.st)}</small></span></button>
+          <button class="nt-sadd" data-act="task-add-text" data-t="${esc(it.t)}" aria-label="Add “${esc(it.t)}” as a task">${icon('plus', 13, 2.4)}</button></div>`).join('')}</div>` : ''}` : ''}
   </section>`;
   taskPop = '';
   return out;
 }
-/** Every habit, tickable from Today — the ones left first. The same tick as Boards (time-stamped, amount remembered). */
-function habitStrip(v, t) {
-  if (!v.habits.length) return '';
-  const L0 = v.habits.map((h, i) => ({ h, i, on: !!(v.habitLog[t] && v.habitLog[t][h.id]) })).sort((a, b) => a.on - b.on);
-  const n = L0.filter(x => x.on).length;
-  return `<div class="sec"><h2>Habits</h2><button class="link" data-act="tab" data-tab="habits">${n} of ${L0.length} · Boards</button></div>
-    <div class="hstrip">${L0.map(({ h, i, on }) => `<button class="hs${on ? ' on' : ''}" data-act="hb-tick" data-id="${esc(h.id)}" style="--hc:${esc(h.color || L.HABIT_COLORS[i % L.HABIT_COLORS.length])}" aria-pressed="${on}" aria-label="${esc(h.name)} today">
-      <span class="e">${esc(h.icon || '•')}</span><span class="n">${esc(h.name)}</span><span class="ck">${on ? icon('tick', 13, 3.2) : ''}</span></button>`).join('')}</div>`;
+/** A task's own page — Notion style: the title, then its properties (status, priority, due), then delete. */
+function taskSheet(id) {
+  taskOpen = id;
+  openSheet({
+    id: 'task', title: '', onClose: saveTaskTitle,
+    render: () => {
+      const x = tasksOf(view()).find(y => y.id === id);
+      if (!x) return '<div class="empty">This task was deleted.</div>';
+      const t = today(), chip = (act, val, on, label, cls) => `<button class="nt-tag nt-chip ${cls}${on ? ' on' : ''}" data-act="${act}" data-id="${esc(id)}" data-v="${val}">${label}</button>`;
+      const fd = k => fmtDay(k, { weekday: 'short', day: 'numeric', month: 'short' });
+      return `<div class="nt-page">
+        <div class="nt-picon">☑️</div>
+        <textarea class="nt-ptitle" data-task-title rows="2" maxlength="140" aria-label="Task">${esc(x.t)}</textarea>
+        <div class="nt-propsheet">
+          <div class="nt-prop"><span class="k">${icon('check', 14)}Status</span><span class="v">${chip('task-status', 0, !x.done, 'Not started', 'gray')}${chip('task-status', 1, x.done, 'Done', 'green')}</span></div>
+          <div class="nt-prop"><span class="k">${icon('star', 14)}Priority</span><span class="v">${chip('task-prio', 0, !x.pri, 'Normal', 'gray')}${chip('task-prio', 1, x.pri, 'Priority', 'yellow')}</span></div>
+          <div class="nt-prop"><span class="k">${icon('cal', 14)}Due</span><span class="v">${chip('task-due', '', !x.due, 'None', 'gray')}${chip('task-due', t, x.due === t, 'Today', 'orange')}${chip('task-due', shiftDay(t, 1), x.due === shiftDay(t, 1), 'Tomorrow', 'blue')}${chip('task-due', shiftDay(t, 7), x.due === shiftDay(t, 7), 'In a week', 'purple')}
+            <input type="date" class="nt-date" data-task-date value="${x.due || ''}" aria-label="Pick a due date"></span></div>
+          <div class="nt-prop"><span class="k">${icon('timer', 14)}Created</span><span class="v nt-ro">${fd(L.dayKey(new Date(x.at)))}</span></div>
+          ${x.done && x.doneAt ? `<div class="nt-prop"><span class="k">${icon('tick', 14)}Finished</span><span class="v nt-ro">${fd(L.dayKey(new Date(x.doneAt)))}</span></div>` : ''}
+        </div>
+        <button class="nt-delete" data-act="task-del" data-id="${esc(id)}">${icon('trash', 15)}Delete task</button>
+      </div>`;
+    },
+  });
 }
-/** The supplements you take (3+ days of the last 30): one tap logs your usual dose; taken ones show the time. */
-function suppStrip(v, t) {
-  const R = regulars(v, t); if (!R.length) return '';
-  const amt = (v.bio[t] || {}).micros || {};
-  const rows = R.map(m => { const at = takenAt(m.k, t); return { m, at, taken: at != null || (amt[m.k] || 0) > 0, u: usualOf(m.k) }; }).sort((a, b) => a.taken - b.taken);
-  const n = rows.filter(x => x.taken).length;
-  return `<div class="sec"><h2>Supplements</h2><button class="link" data-act="today-mic">${n} of ${rows.length} taken</button></div>
-    <div class="sstrip">${rows.map(({ m, at, taken, u }) => taken
-      ? `<button class="ss on" style="--mc:${m.c}" data-act="dose-sheet" data-k="${m.k}" aria-label="${esc(m.name)} — taken${at ? ' at ' + hm(at) : ''}"><span class="e">${m.icon}</span><span class="tx"><span class="n">${esc(m.name)}</span><small>✓ taken ${at ? hm(at) : 'today'}</small></span></button>`
-      : `<button class="ss" style="--mc:${m.c}" data-act="${u ? 'dose-quick' : 'dose-sheet'}" data-k="${m.k}"${u ? ` data-v="${u.amount}"` : ''} aria-label="${u ? 'Log your usual ' + fmtAmt(u.amount, m.unit) + ' of ' : 'Log '}${esc(m.name)}"><span class="e">${m.icon}</span><span class="tx"><span class="n">${esc(m.name)}</span><b class="num">${u ? '+ ' + fmtAmt(u.amount, m.unit) : 'Log a dose'}</b></span><span class="add">${icon('plus', 14, 2.6)}</span></button>`).join('')}</div>`;
+/** The title saves when the page closes (or on Enter). */
+function saveTaskTitle() {
+  const id = taskOpen; taskOpen = null;
+  const el = document.querySelector('[data-sheet="task"] [data-task-title]'); if (!id || !el) return;
+  const t = el.value.replace(/\s+/g, ' ').trim(), x = tasksOf(view()).find(y => y.id === id);
+  if (x && t && t !== x.t) emit('task.set', { id, fields: { t } });
+}
+/** Typing in a task page: Enter saves the title; a picked date is the due date. */
+export function onTaskInput(el, e) {
+  if (el.matches('[data-task-title]') && e && e.key === 'Enter') { e.preventDefault(); const id = taskOpen; saveTaskTitle(); taskOpen = id; el.blur(); return true; }
+  if (el.matches('[data-task-date]') && !e) { const id = taskOpen; if (id) emit('task.set', { id, fields: { due: el.value || null } }); return true; }
+  return false;
 }
 /** The week: habit ring, a dot on training days, and that day's readiness (a copied day's is faint). */
 function weekCard(v, t, total) {
@@ -534,8 +568,17 @@ export const actions = {
     haptic(); if (!x.done) taskPop = x.id;
     emit('task.set', { id: x.id, fields: { done: !x.done } });
   },
-  'task-pri'(d) { const x = (view().tasks || []).find(y => y.id === d.id); if (!x) return; haptic(); emit('task.set', { id: x.id, fields: { pri: !x.pri } }); },
-  'task-del'(d) { emitUndoable('task.del', { id: d.id }, 'Task deleted'); },
+  'task-view'(d) { haptic(); state.settings.taskView = d.v; changed({ now: true }); },
+  'task-sug'() { state.settings.taskSug = state.settings.taskSug === false; changed({ now: true }); },
+  'task-add-text'(d) { haptic(); emit('task.add', { task: { id: 't' + uid(), t: String(d.t || '').slice(0, 140), at: new Date().toISOString(), done: false, pri: false, due: today() } }); toast('Added to your tasks'); },
+  'task-open'(d) { haptic(); taskSheet(d.id); },
+  'task-status'(d) { haptic(); if (d.v === '1') taskPop = d.id; emit('task.set', { id: d.id, fields: { done: d.v === '1' } }); },
+  'task-prio'(d) { haptic(); emit('task.set', { id: d.id, fields: { pri: d.v === '1' } }); },
+  'task-due'(d) { haptic(); emit('task.set', { id: d.id, fields: { due: d.v || null } }); },
+  'task-del'(d) {
+    const s0 = topSheet(); if (s0 && s0.id === 'task') { taskOpen = null; closeSheet(s0); }
+    emitUndoable('task.del', { id: d.id }, 'Task deleted');
+  },
   'today-sheet'(d) {
     haptic();
     const T = { routine: ['Routine', () => routineCard()], fuel: ['Fuel', () => fuelCard(view())], week: ['This week', () => { const v = view(); return weekCard(v, today(), v.habits.length); }] }[d.k];
@@ -545,13 +588,6 @@ export const actions = {
     const o = state.settings.baOpen || (state.settings.baOpen = { 'ba-scan': true }); o['ba-mind'] = true;
     document.querySelector('[data-act="tab"][data-tab="body"]')?.click();
     const go = () => { const el = document.getElementById('ba-mind'); if (el) window.scrollTo({ top: window.scrollY + el.getBoundingClientRect().top - 70, behavior: 'instant' }); };
-    [120, 450].forEach(ms => setTimeout(go, ms));
-  },
-  'today-mic'() {
-    const o = state.settings.baOpen || (state.settings.baOpen = { 'ba-scan': true }); o['ba-mic'] = true;
-    document.querySelector('[data-act="tab"][data-tab="body"]')?.click();
-    // Body Arch draws, then settles its figure — land on Supplements after both, below the floating header.
-    const go = () => { const el = document.getElementById('ba-mic'); if (el) window.scrollTo({ top: window.scrollY + el.getBoundingClientRect().top - 70, behavior: 'instant' }); };
     [120, 450].forEach(ms => setTimeout(go, ms));
   },
   'ca-recheck'() { haptic(); caState.trusted = null; checkCa().then(() => toast(caState.trusted ? 'Certificate trusted ✓' : 'Not trusted yet — finish the steps in Settings')); },

@@ -833,50 +833,92 @@ html[data-theme="light"] .frost{box-shadow:inset 0 0 0 1px rgba(12,18,26,.06),in
 .devs .dev-dot{flex:none;width:9px;height:9px;border-radius:50%;background:var(--fill-3)}
 .devs .dev-dot.ok{background:#30d158;box-shadow:0 0 10px -1px #30d158}
 
-/* ══ Tasks (2026-10-31, logic/tasks.ts) — one to-do list on every device ══ */
-.tasks{position:relative;overflow:hidden;padding:16px 14px 12px}
-.tasks::before{content:"";position:absolute;inset:0;pointer-events:none;
-  background:radial-gradient(120% 80% at 0% 0%,rgba(48,209,88,.16),transparent 55%),radial-gradient(90% 70% at 100% 100%,rgba(64,200,224,.09),transparent 60%)}
-.tasks>*{position:relative}
-.tk-top{display:flex;align-items:center;gap:12px;margin-bottom:12px}
-.tk-ring{flex:none;color:#30d158;display:grid;place-items:center;filter:drop-shadow(0 0 10px rgba(48,209,88,.35))}
-.tk-hd{min-width:0}
-.tk-hd b{display:block;font-size:1.25rem;font-weight:800;letter-spacing:-.02em;margin-top:2px}
-.tk-add{display:flex;gap:8px;margin-bottom:10px}
-.tk-in{flex:1;min-width:0;height:46px;border:0;border-radius:15px;padding:0 14px;background:var(--fill-1);color:var(--t1);font-size:1rem;outline:none;
-  box-shadow:inset 0 0 0 .5px rgba(255,255,255,.08);transition:box-shadow .2s}
-.tk-in:focus{box-shadow:inset 0 0 0 1.5px rgba(48,209,88,.6),0 0 0 4px rgba(48,209,88,.12)}
-.tk-in::placeholder{color:var(--t3)}
-.tk-go{flex:none;width:46px;height:46px;border-radius:15px;display:grid;place-items:center;color:#03130d;
-  background:linear-gradient(180deg,#5ef08b,#30d158);box-shadow:0 6px 18px -8px #30d158,inset 0 1px 0 rgba(255,255,255,.45)}
-.tk-go:active{transform:scale(.92)}
-.tk-list{display:flex;flex-direction:column;gap:6px}
-.tk{display:flex;align-items:center;gap:10px;min-height:48px;padding:6px 4px 6px 10px;border-radius:15px;background:var(--fill-1);transition:background .25s,opacity .25s}
-.tk-ck{flex:none;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;color:transparent;
-  box-shadow:inset 0 0 0 2px rgba(48,209,88,.65);transition:background .2s,box-shadow .2s,color .2s}
-.tk.done .tk-ck{background:#30d158;color:#03130d;box-shadow:0 0 12px -2px #30d158}
-.tk.pop .tk-ck{animation:tkPop .45s cubic-bezier(.3,1.6,.5,1)}
-@keyframes tkPop{0%{transform:scale(.6)}100%{transform:scale(1)}}
-.tk-t{flex:1;min-width:0;font-size:.95rem;font-weight:550;line-height:1.3;overflow-wrap:anywhere}
-.tk.done{opacity:.62}
-.tk.done .tk-t{text-decoration:line-through;text-decoration-color:rgba(255,255,255,.4);color:var(--t2)}
-.tk-due{margin-left:8px;font-size:.68rem;font-weight:750;color:var(--t3);padding:2px 7px;border-radius:999px;background:var(--fill-2);white-space:nowrap}
-.tk-due.late{color:#ff6b5a;background:rgba(255,69,58,.14)}
-.tk-star,.tk-del{flex:none;width:34px;height:34px;border-radius:10px;display:grid;place-items:center;color:var(--t4)}
-.tk-star{font-size:1rem}
-.tk.pri .tk-star{color:#ffd60a;text-shadow:0 0 10px rgba(255,214,10,.5)}
-.tk.pri{box-shadow:inset 3px 0 0 #ffd60a}
-.tk-del:active,.tk-star:active{transform:scale(.86)}
-.tk-sug-h{margin:14px 2px 6px;font-size:.68rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--t3)}
-.tk-sug{display:flex;flex-direction:column;gap:6px}
-.tk-s{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border-radius:14px;text-align:left;color:inherit;
-  background:linear-gradient(100deg,color-mix(in srgb,var(--c) 12%,transparent),transparent 70%);box-shadow:inset 0 0 0 .5px color-mix(in srgb,var(--c) 30%,rgba(255,255,255,.05))}
-.tk-s .ic{flex:none;width:30px;height:30px;border-radius:10px;display:grid;place-items:center;color:var(--c);background:color-mix(in srgb,var(--c) 18%,transparent)}
-.tk-s .tx{flex:1;min-width:0;display:flex;flex-direction:column}
-.tk-s b{font-size:.86rem;font-weight:650}
-.tk-s small{font-size:.7rem;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tk-s .chev{color:var(--t4);display:grid}
-.tk-s:active{transform:scale(.98)}
+/* ══ Tasks — a Notion-style to-do database (2026-11-01, logic/tasks.ts) ══
+   Page title with an icon, views as underlined tabs, square checkboxes, soft coloured property tags, a ghost
+   "+ New task" row, a toggle for ARK's suggestions, and a page per task with a property table. */
+.notion{--nt-line:rgba(255,255,255,.07);--nt-hover:rgba(255,255,255,.045);--nt-text:rgba(255,255,255,.88);--nt-mute:rgba(255,255,255,.46);
+  padding:18px 16px 10px}
+html[data-theme="light"] .notion,html[data-theme="light"] .nt-page{--nt-line:rgba(55,53,47,.09);--nt-hover:rgba(55,53,47,.05);--nt-text:rgb(55,53,47);--nt-mute:rgba(55,53,47,.55)}
+.nt-head{display:flex;align-items:center;gap:12px}
+.nt-icon{font-size:1.9rem;line-height:1;flex:none}
+.nt-hd{flex:1;min-width:0}
+.nt-title{margin:0;font-size:1.55rem;font-weight:750;letter-spacing:-.025em;color:var(--nt-text);line-height:1.15}
+.nt-sub{font-size:.76rem;color:var(--nt-mute);margin-top:3px}
+.nt-sub b{color:#ff7a70;font-weight:650}
+.nt-ring{flex:none;color:#2f9bf0;display:grid;place-items:center}
+.nt-views{display:flex;gap:2px;margin:14px -4px 0;border-bottom:1px solid var(--nt-line)}
+.nt-views button{position:relative;display:flex;align-items:center;gap:6px;height:36px;padding:0 9px;font-size:.84rem;font-weight:550;color:var(--nt-mute);background:none;border-radius:6px 6px 0 0}
+.nt-views button small{font-size:.7rem;color:var(--nt-mute);font-weight:600}
+.nt-views button.on{color:var(--nt-text)}
+.nt-views button.on::after{content:"";position:absolute;left:6px;right:6px;bottom:-1px;height:2px;border-radius:2px;background:var(--nt-text)}
+.nt-views button:active{background:var(--nt-hover)}
+.nt-list{display:flex;flex-direction:column}
+.nt-row{display:flex;align-items:flex-start;gap:10px;padding:9px 4px;border-bottom:1px solid var(--nt-line)}
+.nt-ck{flex:none;width:19px;height:19px;margin-top:2px;border-radius:4px;display:grid;place-items:center;color:transparent;
+  box-shadow:inset 0 0 0 1.6px rgba(255,255,255,.42);transition:background .15s,box-shadow .15s}
+html[data-theme="light"] .nt-ck{box-shadow:inset 0 0 0 1.6px rgba(55,53,47,.45)}
+.nt-row.done .nt-ck{background:#2f9bf0;color:#fff;box-shadow:none}
+.nt-row.pop .nt-ck{animation:ntPop .4s cubic-bezier(.3,1.6,.5,1)}
+@keyframes ntPop{0%{transform:scale(.55)}100%{transform:scale(1)}}
+.nt-t{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;text-align:left;color:inherit;background:none;padding:0}
+.nt-name{font-size:.97rem;font-weight:500;line-height:1.35;color:var(--nt-text);overflow-wrap:anywhere}
+.nt-row.done .nt-name{color:var(--nt-mute);text-decoration:line-through;text-decoration-color:var(--nt-mute)}
+.nt-props{display:flex;flex-wrap:wrap;gap:5px}
+.nt-props:empty{display:none}
+.nt-tag{display:inline-flex;align-items:center;gap:4px;height:21px;padding:0 7px;border-radius:4px;font-size:.72rem;font-weight:550;white-space:nowrap;
+  background:rgba(255,255,255,.08);color:rgba(255,255,255,.7)}
+.nt-tag svg{flex:none}
+.nt-tag.gray{background:rgba(255,255,255,.08);color:rgba(255,255,255,.68)}
+.nt-tag.orange{background:rgba(255,159,10,.17);color:#ffb84d}
+.nt-tag.red{background:rgba(255,69,58,.17);color:#ff8278}
+.nt-tag.yellow{background:rgba(255,214,10,.15);color:#ffd95e}
+.nt-tag.blue{background:rgba(47,155,240,.18);color:#7cc0ff}
+.nt-tag.purple{background:rgba(191,90,242,.18);color:#d6a3ff}
+.nt-tag.green{background:rgba(48,209,88,.16);color:#6be592}
+html[data-theme="light"] .nt-tag.gray{background:rgba(55,53,47,.08);color:rgba(55,53,47,.75)}
+html[data-theme="light"] .nt-tag.orange{background:rgba(255,159,10,.18);color:#a85d00}
+html[data-theme="light"] .nt-tag.red{background:rgba(255,69,58,.15);color:#c4281c}
+html[data-theme="light"] .nt-tag.yellow{background:rgba(255,204,0,.22);color:#8a6d00}
+html[data-theme="light"] .nt-tag.blue{background:rgba(47,155,240,.15);color:#0b6bb5}
+html[data-theme="light"] .nt-tag.purple{background:rgba(191,90,242,.15);color:#7b2fb0}
+html[data-theme="light"] .nt-tag.green{background:rgba(48,209,88,.16);color:#1d7d3a}
+.nt-meta{font-size:.72rem;color:var(--nt-mute)}
+.nt-empty{padding:16px 4px;font-size:.86rem;color:var(--nt-mute)}
+.nt-new{display:flex;align-items:center;gap:8px;padding:6px 4px;margin-top:2px;border-radius:6px;cursor:text}
+.nt-new:active,.nt-new:focus-within{background:var(--nt-hover)}
+.nt-plus{flex:none;width:19px;display:grid;place-items:center;color:var(--nt-mute)}
+.nt-new .tk-in{flex:1;min-width:0;height:34px;border:0;background:transparent;color:var(--nt-text);font-size:.97rem;outline:none;padding:0}
+.nt-new .tk-in::placeholder{color:var(--nt-mute)}
+.nt-go{flex:none;height:28px;padding:0 10px;border-radius:5px;font-size:.78rem;font-weight:650;color:#fff;background:#2f9bf0;opacity:0;pointer-events:none;transition:opacity .15s}
+.nt-new:focus-within .nt-go{opacity:1;pointer-events:auto}
+.nt-toggle{display:flex;align-items:center;gap:6px;margin:12px 0 4px;padding:4px 2px;font-size:.8rem;font-weight:600;color:var(--nt-mute);background:none}
+.nt-toggle svg{transition:transform .2s}
+.nt-toggle.open svg{transform:rotate(90deg)}
+.nt-toggle small{font-size:.7rem;padding:1px 6px;border-radius:4px;background:rgba(255,255,255,.08)}
+.nt-sugs{display:flex;flex-direction:column;padding-left:6px;margin-bottom:4px}
+.nt-sug{display:flex;align-items:center;gap:6px;border-radius:6px}
+.nt-s{flex:1;min-width:0;display:flex;align-items:center;gap:10px;padding:7px 4px;text-align:left;color:inherit;background:none;border-radius:6px}
+.nt-s:active,.nt-sadd:active{background:var(--nt-hover)}
+.nt-s .ic{flex:none;width:24px;height:24px;border-radius:6px;display:grid;place-items:center;color:var(--c);background:color-mix(in srgb,var(--c) 16%,transparent)}
+.nt-s .tx{min-width:0;display:flex;flex-direction:column}
+.nt-s b{font-size:.86rem;font-weight:550;color:var(--nt-text)}
+.nt-s small{font-size:.72rem;color:var(--nt-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nt-sadd{flex:none;width:30px;height:30px;border-radius:6px;display:grid;place-items:center;color:var(--nt-mute);background:none}
+/* a task's own page */
+.nt-page{padding:2px 2px 6px;--nt-line:rgba(255,255,255,.07);--nt-text:rgba(255,255,255,.9);--nt-mute:rgba(255,255,255,.5);--nt-hover:rgba(255,255,255,.05)}
+.nt-picon{font-size:2.6rem;line-height:1;margin:2px 0 8px}
+.nt-ptitle{display:block;width:100%;border:0;outline:none;resize:none;background:transparent;color:var(--nt-text);font:inherit;font-size:1.7rem;font-weight:750;letter-spacing:-.025em;line-height:1.2;padding:0;margin-bottom:14px}
+.nt-propsheet{display:flex;flex-direction:column;border-top:1px solid var(--nt-line);border-bottom:1px solid var(--nt-line);padding:6px 0}
+.nt-prop{display:grid;grid-template-columns:104px minmax(0,1fr);align-items:center;gap:8px;min-height:40px}
+.nt-prop .k{display:flex;align-items:center;gap:7px;font-size:.85rem;color:var(--nt-mute)}
+.nt-prop .v{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.nt-chip{height:26px;padding:0 9px;font-size:.78rem;cursor:pointer;opacity:.5}
+.nt-chip.on{opacity:1;box-shadow:inset 0 0 0 1px currentColor}
+.nt-ro{font-size:.86rem;color:var(--nt-text)}
+.nt-date{height:26px;border:0;border-radius:4px;padding:0 6px;font-size:.78rem;background:rgba(255,255,255,.06);color:var(--nt-mute);color-scheme:dark}
+html[data-theme="light"] .nt-date{color-scheme:light;background:rgba(55,53,47,.06)}
+.nt-delete{display:flex;align-items:center;gap:8px;margin-top:18px;padding:10px 6px;border-radius:6px;font-size:.88rem;font-weight:550;color:#ff6b5a;background:none}
+.nt-delete:active{background:rgba(255,69,58,.1)}
 .more-today .li .ic{font-size:1rem}
 .more-today .st{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-html[data-theme="light"] .tk.done .tk-t{text-decoration-color:rgba(0,0,0,.35)}
+

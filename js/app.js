@@ -1,7 +1,7 @@
 /* ARK Mobile — boot, navigation, event wiring. */
 import {
   state, changed, onChange, icon, esc, syncNow, scheduleSync, syncLabel, closeSheet, topSheet, refreshSheets, paired, haptic, toast, applyTheme, L, onPublicCopy } from './core.js';
-import { renderToday, renderHabits, renderGrow, actions as viewActions } from './views.js';
+import { renderToday, renderHabits, renderGrow, actions as viewActions, onTaskInput } from './views.js';
 import { renderTrain, actions as trainActions, onSetInput, pickerSearch, restTick, openWorkout, onPlatesInput, onStrongFile } from './train.js';
 import { actions as sheetActions, onWeighInput } from './sheets.js';
 import { renderBodyArch, mountFigure, onTimeline, patchBodyArch, actions as bodyActions } from './body.js';
@@ -203,10 +203,11 @@ document.addEventListener('input', e => {
   else if (onHabitInput(el, false) || onHabitSearch(el)) { /* handled */ }
   else if (onWhatIfInput(el) || onPhotoInput(el)) { /* handled */ }
 });
-document.addEventListener('change', e => { if (onHabitInput(e.target, true)) return; if (e.target.matches('[data-ph-file]')) onPhotoInput(e.target); else if (e.target.matches('[data-strong-file]')) onStrongFile(e.target); });
+document.addEventListener('change', e => { if (onHabitInput(e.target, true)) return; if (e.target.matches && e.target.matches('[data-task-date]') && onTaskInput(e.target)) return; if (e.target.matches('[data-ph-file]')) onPhotoInput(e.target); else if (e.target.matches('[data-strong-file]')) onStrongFile(e.target); });
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.id === 'pair-code') ACT['pair-go']();
   if (e.key === 'Enter' && e.target.matches && e.target.matches('[data-task-in]')) { e.preventDefault(); ACT['task-add'](); return; }
+  if (e.target.matches && e.target.matches('[data-task-title]') && onTaskInput(e.target, e)) return;
   if (onWeatherKey(e)) return;
   if (e.key === 'Escape' && topSheet()) closeSheet(topSheet());
   // Non-button controls (the figure's muscles) answer Enter and Space like buttons.
