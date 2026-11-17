@@ -957,6 +957,7 @@ const ROWS = [
     ['Spider Curl (Dumbbell)', 'dumbbell', 'curl'],
     ['Bayesian Curl (Cable)', 'cable', 'curl', { biceps_t: 0.7 }],
     ['Reverse Curl (EZ Bar)', 'ez', 'hammer', { forearm: 1, elbow: 0.6 }, ['Reverse Curl', 'Reverse Barbell Curl']],
+    ['Reverse Curl (Barbell)', 'barbell', 'hammer', { forearm: 1, elbow: 0.6 }],
     ['Drag Curl (Barbell)', 'barbell', 'curl'],
     ['Triceps Pushdown (Cable)', 'cable', 'triext', undefined, ['Triceps Pushdown', 'Tricep Pushdown', 'Cable Pushdown', 'Tricep Pushdown Triangle', 'Triceps Pushdown - V-Bar']],
     // Strong keeps the straight bar apart from the V-bar/triangle (own records) — so does ARK.
